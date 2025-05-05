@@ -9,6 +9,11 @@ RUN npm ci
 
 # 复制前端源代码并构建
 COPY front/ ./
+
+# 设置API基础URL环境变量，用于前端构建时
+ENV VITE_API_BASE_URL="/api/v1"
+
+# 使用修改后的构建命令，跳过类型检查
 RUN npm run build
 
 # 后端构建阶段
