@@ -1,0 +1,130 @@
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+
+
+class Message(BaseModel):
+    """聊天消息"""
+    content: str = Field(..., description="消息内容")
+
+
+class ChatRequest(BaseModel):
+    """聊天请求"""
+    content: str = Field(..., description="用户消息内容")
+    stream: Optional[bool] = Field(False, description="是否启用流式响应")
+    conversation_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
+    agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
+
+
+class AskAgainRequest(BaseModel):
+    """重新提问请求"""
+    message_index: int = Field(..., description="重新提问的消息索引")
+    content: Optional[str] = Field(None, description="新的消息内容，如果为空则仅截断记忆")
+    stream: Optional[bool] = Field(False, description="是否启用流式响应")
+    agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
+    is_user_message: bool = Field(True, description="是否是用户消息，True表示编辑用户输入，False表示编辑AI回复")
+    rerun: bool = Field(True, description="编辑用户消息时是否重新执行，True表示编辑后重新执行，False表示仅编辑不重新执行")
+
+
+class ChatCompletionResponse(BaseModel):
+    """聊天完成响应"""
+    message: Message = Field(..., description="AI生成的消息")
+    usage: Optional[Dict[str, Any]] = Field(None, description="token使用统计")
+    conversation_id: Optional[int] = Field(None, description="聊天会话ID")
+
+
+class ChatMemory(BaseModel):
+    """聊天记忆类，用于保存会话上下文"""
+    messages: List[Dict[str, str]] = []  # 包含角色和内容的消息列表
+    
+    def add_user_message(self, content: str):
+        """添加用户消息到记忆中"""
+        self.messages.append({"role": "user", "content": content})
+    
+    def add_assistant_message(self, content: str):
+        """添加助手消息到记忆中"""
+        self.messages.append({"role": "assistant", "content": content})
+    
+    def get_messages(self) -> List[Dict[str, str]]:
+        """获取所有消息"""
+        return self.messages
+    
+    def clear(self):
+        """清空记忆"""
+        self.messages = []
+
+
+class ChatStreamRequest(BaseModel):
+    """流式聊天请求"""
+    content: str = Field(..., description="用户消息内容")
+    conversation_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
+    agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
+
+
+class ChatMessageBase(BaseModel):
+    """聊天消息基础模型"""
+    role: str
+    content: str
+
+
+class ChatMessageCreate(ChatMessageBase):
+    """创建聊天消息的请求模型"""
+    conversation_id: int
+
+
+class ChatMessageResponse(ChatMessageBase):
+    """聊天消息响应模型"""
+    id: int
+    conversation_id: int
+    created_at: Optional[datetime] = None
+    tokens: Optional[int] = None
+    prompt_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    agent_id: Optional[int] = None
+    agent_info: Optional[Dict[str, Any]] = None  # 包含agent名称、头像等信息
+
+    class Config:
+        orm_mode = True
+
+
+class ChatBase(BaseModel):
+    """聊天会话基础模型"""
+    title: Optional[str] = None
+
+
+class ChatCreate(ChatBase):
+    """创建聊天会话的请求模型"""
+    title: Optional[str] = "新对话"
+
+
+class ChatUpdate(ChatBase):
+    """更新聊天会话的请求模型"""
+    title: str
+
+
+class ChatResponse(ChatBase):
+    """聊天会话响应模型"""
+    id: int
+    user_id: int
+    agent_id: Optional[int] = None
+    title: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    messages: Optional[List[ChatMessageResponse]] = []
+
+    class Config:
+        orm_mode = True
+
+
+class ChatListResponse(BaseModel):
+    """聊天会话列表响应模型"""
+    id: int
+    title: str
+    agent_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    message_count: int = 0
+    last_message: Optional[str] = None
+
+    class Config:
+        orm_mode = True 
