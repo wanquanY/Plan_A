@@ -45,6 +45,70 @@ alembic upgrade head
 uvicorn backend.main:app --reload
 ```
 
+## Docker部署
+
+本项目支持使用Docker进行部署，配置了完整的Docker环境。项目使用远程PostgreSQL数据库，本地仅需部署Redis和应用服务。前后端已合并到一个容器中运行。
+
+### 准备工作
+
+1. 确保安装了Docker和Docker Compose
+2. 复制环境变量示例文件并根据需要修改
+
+```bash
+cp .env.example .env
+```
+
+3. 修改`.env`文件中的配置，特别是OpenAI API密钥
+
+### 构建和启动
+
+使用以下命令构建并启动所有服务：
+
+```bash
+docker-compose up -d
+```
+
+这将启动以下服务：
+- Redis缓存
+- 应用服务（含前端和后端）
+
+> 注意：项目配置使用远程PostgreSQL数据库，确保数据库连接信息正确
+
+### 查看服务状态
+
+```bash
+docker-compose ps
+```
+
+### 查看日志
+
+```bash
+# 查看所有服务日志
+docker-compose logs
+
+# 查看应用服务日志
+docker-compose logs app
+```
+
+### 停止服务
+
+```bash
+docker-compose down
+```
+
+如果需要同时删除卷（会删除数据库数据）：
+
+```bash
+docker-compose down -v
+```
+
+### 访问应用
+
+部署完成后，可以通过以下方式访问应用：
+
+- 前端界面：http://localhost/
+- 后端API：http://localhost/api/v1/
+
 ## API文档
 
 启动服务后，可以访问以下URL查看API文档：

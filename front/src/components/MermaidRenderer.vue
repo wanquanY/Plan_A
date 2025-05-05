@@ -7,9 +7,13 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
 import mermaid from 'mermaid';
+import { renderMermaidDynamically, setupMermaidAutoRender } from '../services/renderService';
+import { isMermaidContent } from '../services/markdownService';
 
 // 在组件挂载时初始化并渲染mermaid图表
 let mermaidObserver = null;
+let errorCheckInterval = null; // 声明错误检查定时器
+
 onMounted(() => {
   // 初始化mermaid配置
   mermaid.initialize({
@@ -20,49 +24,45 @@ onMounted(() => {
     fontSize: 14,
     flowchart: {
       htmlLabels: true,
-      curve: 'basis'
+      curve: 'basis',
+      useMaxWidth: false
+    },
+    sequence: {
+      useMaxWidth: false,
+      diagramMarginX: 50,
+      diagramMarginY: 10
     }
   });
   
   // 立即渲染当前页面中的所有mermaid图表
   renderAllMermaidDiagrams();
   
-  // 创建MutationObserver来监听DOM变化并渲染新增的mermaid图表
-  mermaidObserver = new MutationObserver(mutations => {
-    let shouldRenderMermaid = false;
-    
-    mutations.forEach(mutation => {
-      if (mutation.type === 'childList' && mutation.addedNodes.length) {
-        mutation.addedNodes.forEach(node => {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node.classList?.contains('mermaid') || 
-                node.querySelector?.('.mermaid, code.language-mermaid, pre > code')) {
-              shouldRenderMermaid = true;
-            }
-          }
-        });
-      }
-    });
-    
-    if (shouldRenderMermaid) {
-      setTimeout(() => {
-        renderAllMermaidDiagrams();
-      }, 100);
-    }
-  });
+  // 使用renderService中的自动渲染监听功能
+  mermaidObserver = setupMermaidAutoRender();
   
-  // 开始监听整个文档的变化
-  mermaidObserver.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
+  // 添加防错定时器，每30秒检查一次是否有失败的mermaid渲染，并尝试修复
+  errorCheckInterval = setInterval(() => {
+    const errorElements = document.querySelectorAll('.mermaid svg:not(.mermaid-success)');
+    if (errorElements.length > 0) {
+      console.log(`检测到${errorElements.length}个可能渲染失败的mermaid元素，尝试修复`);
+      // 导入修复函数
+      import('../services/renderService').then(({ renderMermaidDynamically }) => {
+        renderMermaidDynamically();
+      });
+    }
+  }, 30000);
 });
 
-// 在组件卸载时清理observer
+// 在组件卸载时清理observer和定时器
 onUnmounted(() => {
   if (mermaidObserver) {
     mermaidObserver.disconnect();
     mermaidObserver = null;
+  }
+  
+  if (errorCheckInterval) {
+    clearInterval(errorCheckInterval);
+    errorCheckInterval = null;
   }
 });
 
@@ -70,6 +70,9 @@ onUnmounted(() => {
 const renderAllMermaidDiagrams = async () => {
   try {
     console.log('MermaidRenderer: 尝试渲染所有Mermaid图表...');
+    
+    // 处理已存在的mermaid标记元素
+    processMermaidElements();
     
     // 查找所有未处理的代码块
     const preElements = document.querySelectorAll('pre:not(.mermaid-processed)');
@@ -83,13 +86,8 @@ const renderAllMermaidDiagrams = async () => {
       // 获取代码内容
       const code = codeElement.textContent || '';
       
-      // 检查是否是mermaid图表
-      if (code.trim().startsWith('flowchart') || 
-          code.trim().startsWith('graph') || 
-          code.trim().includes('-->') ||
-          code.trim().includes('->') ||
-          /[A-Z]\s*-+>\s*[A-Z]/i.test(code)) {
-        
+      // 使用markdownService中的函数检查是否是mermaid图表
+      if (isMermaidContent(code)) {
         // 标记为已处理
         preElement.classList.add('mermaid-processed');
         
@@ -128,14 +126,96 @@ const renderAllMermaidDiagrams = async () => {
     
     if (processedCount > 0) {
       console.log(`MermaidRenderer: 处理了${processedCount}个mermaid代码块`);
-      
-      // 渲染所有mermaid图表
-      await mermaid.run({
-        querySelector: '.mermaid',
-      });
     }
+    
+    // 延迟渲染确保DOM完全更新
+    setTimeout(() => {
+      // 使用renderService中的动态渲染函数
+      renderMermaidDynamically();
+      
+      // 再次确保所有渲染的SVG居中显示
+      setTimeout(() => {
+        const renderedSvgs = document.querySelectorAll('svg[id^="mermaid-"]');
+        renderedSvgs.forEach(svg => {
+          // 只给SVG元素本身添加居中样式
+          svg.setAttribute('style', 'display: block !important; margin: 0 auto !important; max-width: 100% !important; width: fit-content !important;');
+          
+          // 为SVG的g元素添加适当的样式
+          const svgChildElements = svg.querySelectorAll('g');
+          svgChildElements.forEach(el => {
+            const currentTransform = el.getAttribute('transform') || '';
+            if (!currentTransform.includes('translateX(-50%)')) {
+              el.setAttribute('style', 'margin: 0 auto !important;');
+            }
+          });
+        });
+        console.log('已确保所有mermaid图表居中显示');
+      }, 300);
+    }, 100);
   } catch (error) {
     console.error('MermaidRenderer: 渲染Mermaid图表失败:', error);
+  }
+};
+
+// 处理已有的mermaid元素
+const processMermaidElements = () => {
+  try {
+    // 首先尝试查找所有.mermaid元素但不包括已经创建过的.mermaid-container中的元素
+    const mermaidElements = document.querySelectorAll('.mermaid:not(.mermaid-processed)');
+    let processedCount = 0;
+    
+    mermaidElements.forEach(mermaidEl => {
+      // 跳过已经在mermaid容器中的元素
+      if (mermaidEl.closest('.mermaid-container')) {
+        return;
+      }
+      
+      // 标记为已处理
+      mermaidEl.classList.add('mermaid-processed');
+      
+      // 检查是否需要包装
+      const needsWrapping = !mermaidEl.closest('.mermaid-block');
+      
+      if (needsWrapping) {
+        const code = mermaidEl.textContent || '';
+        
+        // 创建mermaid容器
+        const mermaidContainer = document.createElement('div');
+        mermaidContainer.className = 'mermaid-container';
+        
+        // 添加复制按钮
+        const copyButton = document.createElement('button');
+        copyButton.className = 'copy-button';
+        copyButton.textContent = '复制';
+        copyButton.onclick = () => {
+          navigator.clipboard.writeText(code);
+          copyButton.textContent = '已复制';
+          setTimeout(() => {
+            copyButton.textContent = '复制';
+          }, 2000);
+        };
+        
+        // 确保mermaid元素有ID
+        if (!mermaidEl.id) {
+          mermaidEl.id = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        }
+        
+        // 克隆原始元素
+        const clonedEl = mermaidEl.cloneNode(true);
+        mermaidContainer.appendChild(clonedEl);
+        mermaidContainer.appendChild(copyButton);
+        
+        // 替换原始元素
+        mermaidEl.replaceWith(mermaidContainer);
+        processedCount++;
+      }
+    });
+    
+    if (processedCount > 0) {
+      console.log(`MermaidRenderer: 处理了${processedCount}个已有mermaid元素`);
+    }
+  } catch (error) {
+    console.error('处理已有mermaid元素失败:', error);
   }
 };
 
@@ -153,21 +233,20 @@ defineExpose({
   padding: 15px;
   border: 1px solid #eaecef;
   position: relative;
-  text-align: center;
 }
 
 :deep(.mermaid) {
-  display: inline-block !important;
-  text-align: center;
+  display: block !important;
   overflow: visible;
   max-width: 100%;
   margin: 0 auto;
 }
 
 :deep(.mermaid svg) {
-  display: inline-block !important;
+  display: block !important;
   margin: 0 auto !important;
   max-width: 100%;
+  width: fit-content !important;
 }
 
 :deep(.copy-button) {
@@ -192,6 +271,12 @@ defineExpose({
 /* 全局样式，确保所有mermaid图表居中 */
 :global(svg[id^="mermaid-"]) {
   display: block !important;
+  margin: 0 auto !important;
+  max-width: 100% !important;
+  width: fit-content !important;
+}
+
+:global(svg[id^="mermaid-"] > *) {
   margin: 0 auto !important;
 }
 </style> 

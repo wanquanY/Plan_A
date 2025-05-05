@@ -7,6 +7,7 @@
     @keydown="handleKeyDown"
     @compositionstart="handleCompositionStart"
     @compositionend="handleCompositionEnd"
+    @click="handleEditorClick"
   ></div>
 </template>
 
@@ -108,6 +109,44 @@ const updateEditorContent = (content) => {
     // 如果没有不可编辑内容，直接设置
     editorRef.value.innerHTML = cleanContent;
   }
+  
+  // 在内容更新后强制运行ensureBottomSpace
+  nextTick(() => {
+    ensureBottomSpace();
+    
+    // 查找所有代码块，确保在最后一个代码块后有段落
+    setTimeout(() => {
+      const codeBlocks = editorRef.value?.querySelectorAll('.code-block-wrapper, pre');
+      if (codeBlocks && codeBlocks.length > 0) {
+        const lastCodeBlock = codeBlocks[codeBlocks.length - 1];
+        let nextElement = lastCodeBlock.nextElementSibling;
+        let hasContentAfterCodeBlock = false;
+        
+        while (nextElement) {
+          if (!nextElement.classList.contains('bottom-placeholder')) {
+            hasContentAfterCodeBlock = true;
+            break;
+          }
+          nextElement = nextElement.nextElementSibling;
+        }
+        
+        if (!hasContentAfterCodeBlock) {
+          const emptyParagraph = document.createElement('p');
+          emptyParagraph.innerHTML = '<br>';
+          emptyParagraph.className = 'after-code-block-paragraph';
+          
+          // 获取底部占位元素
+          const bottomPlaceholder = editorRef.value.querySelector('.bottom-placeholder');
+          
+          if (bottomPlaceholder && bottomPlaceholder.parentNode) {
+            bottomPlaceholder.parentNode.insertBefore(emptyParagraph, bottomPlaceholder);
+          } else {
+            editorRef.value.appendChild(emptyParagraph);
+          }
+        }
+      }
+    }, 200);
+  });
 };
 
 // 计算字数
@@ -128,6 +167,14 @@ const getFullContent = () => {
 // 处理输入事件
 const handleInput = (event) => {
   if (isComposing.value || !editorRef.value) return;
+  
+  // 保存当前滚动位置
+  const scrollTop = editorRef.value.scrollTop;
+  const scrollHeight = editorRef.value.scrollHeight;
+  
+  // 保存当前选择范围
+  const selection = window.getSelection();
+  const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
   
   // 获取当前内容
   const currentContent = getFullContent();
@@ -172,7 +219,6 @@ const handleInput = (event) => {
   });
   
   // 检查是否刚输入了@符号
-  const selection = window.getSelection();
   if (selection && selection.rangeCount > 0 && !props.showAgentSelector) {
     const range = selection.getRangeAt(0);
     
@@ -188,6 +234,35 @@ const handleInput = (event) => {
       }
     }
   }
+  
+  // 在更新完成后恢复滚动位置
+  nextTick(() => {
+    if (editorRef.value) {
+      // 首先恢复滚动位置
+      editorRef.value.scrollTop = scrollTop;
+      
+      // 如果有选择范围，并且在编辑器底部，确保光标可见
+      if (range) {
+        const container = range.startContainer;
+        let node = container;
+        
+        // 查找包含节点的元素
+        while (node && node.nodeType !== Node.ELEMENT_NODE) {
+          node = node.parentNode;
+        }
+        
+        if (node && editorRef.value.contains(node) && node !== editorRef.value) {
+          // 如果节点在编辑器底部，确保它可见
+          const nodeRect = (node as HTMLElement).getBoundingClientRect();
+          const editorRect = editorRef.value.getBoundingClientRect();
+          
+          if (nodeRect.bottom > editorRect.bottom || nodeRect.top < editorRect.top) {
+            (node as HTMLElement).scrollIntoView({ block: 'center', behavior: 'auto' });
+          }
+        }
+      }
+    }
+  });
 };
 
 // 防止在只读区域编辑
@@ -230,7 +305,7 @@ const preventEditInReadOnlyArea = (event) => {
 // 处理键盘事件
 const handleKeyDown = (event: KeyboardEvent) => {
   // 如果正在输入中文，不拦截任何键盘事件
-  if (isComposing.value) return;
+  if (isComposing.value || !editorRef.value) return;
   
   // 检查并防止在只读区域编辑
   if (preventEditInReadOnlyArea(event)) {
@@ -252,28 +327,110 @@ const handleKeyDown = (event: KeyboardEvent) => {
     }, 0);
   }
   
-  // 处理连续回车键，避免产生过多空行
+  // 处理在文档末尾的回车键
   if (event.key === 'Enter' && !event.shiftKey) {
     const selection = window.getSelection();
     if (selection && selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
-      let node = range.startContainer;
       
-      // 找到当前段落元素
+      // 检查光标是否在文档末尾
+      const isAtEnd = isSelectionAtDocumentEnd(selection);
+      
+      if (isAtEnd) {
+        console.log('检测到在文档末尾按回车键');
+        
+        // 保存当前滚动位置
+        const scrollTop = editorRef.value.scrollTop;
+        const scrollHeight = editorRef.value.scrollHeight;
+        
+        // 记住当前光标位置的相关信息，以便在内容更新后恢复
+        const currentNode = range.startContainer;
+        const currentOffset = range.startOffset;
+        
+        // 为了在更新后能找到同一位置，给最后一个节点添加一个临时标记
+        const lastParagraph = getLastParagraph();
+        if (lastParagraph) {
+          lastParagraph.setAttribute('data-end-marker', 'true');
+        }
+        
+        // 使用setTimeout确保这个事件处理完成后再处理恢复光标位置
+        setTimeout(() => {
+          // 找到带有标记的段落
+          const markedParagraph = editorRef.value?.querySelector('[data-end-marker="true"]');
+          if (markedParagraph) {
+            // 移除标记
+            markedParagraph.removeAttribute('data-end-marker');
+            
+            // 获取下一个段落（即新创建的段落）
+            let newParagraph = markedParagraph.nextElementSibling;
+            
+            // 如果下一个元素不是段落，尝试查找其他新创建的段落
+            if (!newParagraph || newParagraph.nodeName !== 'P') {
+              const allParagraphs = editorRef.value?.querySelectorAll('p');
+              if (allParagraphs && allParagraphs.length > 0) {
+                newParagraph = allParagraphs[allParagraphs.length - 1] as HTMLElement;
+              }
+            }
+            
+            // 如果找到了新段落，将光标设置到其中
+            if (newParagraph) {
+              // 恢复滚动位置，保持末尾可见
+              if (editorRef.value) {
+                // 首先尝试保持之前的位置，防止跳回顶部
+                editorRef.value.scrollTop = scrollTop;
+                
+                // 然后确保新段落可见
+                ensureElementVisible(newParagraph as HTMLElement);
+              }
+              
+              // 设置光标位置
+              const selection = window.getSelection();
+              if (selection) {
+                const range = document.createRange();
+                range.selectNodeContents(newParagraph);
+                range.collapse(true); // 光标在开始位置
+                
+                selection.removeAllRanges();
+                selection.addRange(range);
+                
+                // 确保编辑器获得焦点
+                editorRef.value?.focus();
+              }
+            }
+          }
+        }, 0);
+      }
+      
+      // 检查当前段落是否为空
+      let node = range.startContainer;
       while (node && node.nodeType !== Node.ELEMENT_NODE) {
         node = node.parentNode;
       }
       
-      // 检查当前段落是否为空
       if (node && (node as HTMLElement).tagName === 'P' && 
           (!node.textContent || node.textContent.trim() === '')) {
-        // 如果已经是空段落，则阻止创建新段落
-        const prevNode = node.previousSibling;
-        if (prevNode && (prevNode as HTMLElement).tagName === 'P' && 
-            (!prevNode.textContent || prevNode.textContent.trim() === '')) {
+        
+        // 计算连续空段落的数量
+        let emptyParagraphCount = 1; // 当前段落已经是空的
+        let prevNode = node.previousSibling;
+        
+        // 向上计数空段落
+        while (prevNode) {
+          if (prevNode.nodeType === Node.ELEMENT_NODE && 
+              (prevNode as HTMLElement).tagName === 'P' && 
+              (!prevNode.textContent || prevNode.textContent.trim() === '')) {
+            emptyParagraphCount++;
+          } else {
+            // 一旦遇到非空段落，停止计数
+            break;
+          }
+          prevNode = prevNode.previousSibling;
+        }
+        
+        // 如果已经有3个或更多连续空段落，阻止创建新段落
+        if (emptyParagraphCount >= 3) {
           event.preventDefault();
-          // 可选：删除前一个空段落
-          node.parentNode?.removeChild(prevNode);
+          console.log('已达到最大空行数量(3)，阻止创建新空行');
         }
       }
     }
@@ -285,6 +442,45 @@ const handleKeyDown = (event: KeyboardEvent) => {
     editorRef: editorRef.value,
     selection: window.getSelection()
   });
+};
+
+// 添加一个辅助函数，判断选区是否在文档末尾
+const isSelectionAtDocumentEnd = (selection) => {
+  if (!selection || selection.rangeCount === 0 || !editorRef.value) return false;
+  
+  const range = selection.getRangeAt(0);
+  const lastParagraph = getLastParagraph();
+  
+  if (!lastParagraph) return false;
+  
+  // 检查光标是否在最后一个段落内
+  let node = range.startContainer;
+  while (node && node !== editorRef.value) {
+    if (node === lastParagraph) {
+      // 在最后一个段落内，检查是否在最后位置
+      if (range.startContainer.nodeType === Node.TEXT_NODE) {
+        // 光标在文本节点中，检查是否在文本末尾
+        return range.startOffset === (range.startContainer.textContent || '').length;
+      } else {
+        // 光标在元素节点中，检查是否在最后一个子节点之后
+        return range.startOffset === range.startContainer.childNodes.length;
+      }
+    }
+    node = node.parentNode;
+  }
+  
+  return false;
+};
+
+// 添加一个辅助函数，获取文档中的最后一个段落
+const getLastParagraph = () => {
+  if (!editorRef.value) return null;
+  
+  // 获取所有段落
+  const paragraphs = editorRef.value.querySelectorAll('p');
+  
+  // 返回最后一个段落，如果没有则返回null
+  return paragraphs.length > 0 ? paragraphs[paragraphs.length - 1] : null;
 };
 
 // 处理中文输入开始
@@ -366,8 +562,187 @@ onMounted(() => {
         }
       }
     });
+    
+    // 确保末尾有一个可以点击的空白区域
+    ensureBottomSpace();
   }
 });
+
+// 修改处理编辑器点击事件的函数
+const handleEditorClick = (event) => {
+  // 跳过如果编辑器不存在
+  if (!editorRef.value) return;
+  
+  const target = event.target;
+  
+  // 处理底部占位元素的点击
+  if (target.classList.contains('bottom-placeholder') || 
+      target.closest('.bottom-placeholder')) {
+    
+    event.preventDefault();
+    event.stopPropagation();
+    console.log('检测到底部占位区域点击，创建新段落');
+    
+    // 插入新段落
+    insertNewParagraphAtBottom();
+    return;
+  }
+  
+  // 处理代码块后的段落点击
+  if (target.classList.contains('after-code-block-paragraph') ||
+      target.closest('.after-code-block-paragraph')) {
+    
+    const paragraph = target.classList.contains('after-code-block-paragraph') 
+                     ? target 
+                     : target.closest('.after-code-block-paragraph');
+    
+    // 设置光标到这个段落
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      range.collapse(true); // 光标在开始位置
+      
+      selection.removeAllRanges();
+      selection.addRange(range);
+      
+      // 确保编辑器获得焦点
+      editorRef.value.focus();
+    }
+    return;
+  }
+  
+  // 其余的点击处理逻辑保持不变
+  // ... existing code ...
+};
+
+// 修改确保底部有足够空白区域的函数
+const ensureBottomSpace = () => {
+  if (!editorRef.value) return;
+  
+  // 检查是否已经存在底部占位段落
+  let bottomPlaceholder = editorRef.value.querySelector('.bottom-placeholder');
+  
+  // 如果不存在，则创建一个
+  if (!bottomPlaceholder) {
+    // 创建底部占位元素
+    bottomPlaceholder = document.createElement('div');
+    bottomPlaceholder.className = 'bottom-placeholder';
+    
+    // 添加到编辑器末尾
+    editorRef.value.appendChild(bottomPlaceholder);
+    
+    // 为底部占位元素添加点击事件
+    bottomPlaceholder.addEventListener('click', (event) => {
+      console.log('底部占位元素点击事件触发');
+      event.preventDefault();
+      event.stopPropagation();
+      
+      // 创建一个新段落
+      insertNewParagraphAtBottom();
+    });
+  }
+  
+  // 检查是否有代码块元素
+  const codeBlocks = editorRef.value.querySelectorAll('.code-block-wrapper, pre');
+  
+  // 如果存在代码块，检查最后一个代码块后是否有段落
+  if (codeBlocks.length > 0) {
+    const lastCodeBlock = codeBlocks[codeBlocks.length - 1];
+    
+    // 找到这个代码块后的所有兄弟元素
+    let nextElement = lastCodeBlock.nextElementSibling;
+    let hasContentAfterCodeBlock = false;
+    
+    // 检查代码块后是否有内容（除了底部占位符）
+    while (nextElement) {
+      if (!nextElement.classList.contains('bottom-placeholder')) {
+        hasContentAfterCodeBlock = true;
+        break;
+      }
+      nextElement = nextElement.nextElementSibling;
+    }
+    
+    // 如果最后一个代码块后没有内容，添加一个新段落
+    if (!hasContentAfterCodeBlock) {
+      console.log('检测到代码块是最后一个元素，添加一个空段落');
+      const emptyParagraph = document.createElement('p');
+      emptyParagraph.innerHTML = '<br>';
+      emptyParagraph.className = 'after-code-block-paragraph';
+      
+      // 将空段落插入到代码块后，底部占位符前
+      if (bottomPlaceholder.parentNode) {
+        bottomPlaceholder.parentNode.insertBefore(emptyParagraph, bottomPlaceholder);
+      }
+    }
+  }
+  
+  // 确保底部占位符不会被其他操作删除
+  setTimeout(() => {
+    if (editorRef.value && !editorRef.value.querySelector('.bottom-placeholder')) {
+      ensureBottomSpace();
+    }
+  }, 500);
+};
+
+// 添加一个辅助函数，用于在底部插入新段落
+const insertNewParagraphAtBottom = () => {
+  if (!editorRef.value) return;
+  
+  // 获取底部占位元素
+  const bottomPlaceholder = editorRef.value.querySelector('.bottom-placeholder');
+  if (!bottomPlaceholder) return;
+  
+  // 创建新段落
+  const newParagraph = document.createElement('p');
+  newParagraph.innerHTML = '<br>';
+  
+  // 插入到底部占位元素之前
+  if (bottomPlaceholder.parentNode) {
+    bottomPlaceholder.parentNode.insertBefore(newParagraph, bottomPlaceholder);
+    
+    // 设置光标到新段落
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(newParagraph);
+      range.collapse(true); // 光标在开始位置
+      
+      selection.removeAllRanges();
+      selection.addRange(range);
+      
+      // 确保编辑器获得焦点
+      editorRef.value.focus();
+      
+      // 触发内容更新
+      emit('update:modelValue', getFullContent());
+    }
+  }
+};
+
+// 添加一个新的辅助函数，确保元素在视口中可见
+const ensureElementVisible = (element: HTMLElement) => {
+  if (!editorRef.value || !element) return;
+  
+  const editorRect = editorRef.value.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  
+  // 检查元素是否在视口之下（需要向下滚动）
+  if (elementRect.bottom > editorRect.bottom) {
+    // 滚动到元素完全可见的位置
+    element.scrollIntoView({ block: 'center', behavior: 'auto' });
+    return;
+  }
+  
+  // 检查元素是否在视口之上（需要向上滚动）
+  if (elementRect.top < editorRect.top) {
+    // 滚动到元素可见的位置
+    element.scrollIntoView({ block: 'center', behavior: 'auto' });
+    return;
+  }
+  
+  // 元素已经可见，不需要滚动
+};
 </script>
 
 <style scoped>
@@ -375,12 +750,62 @@ onMounted(() => {
   flex: 1;
   outline: none;
   padding: 20px;
+  padding-bottom: 60vh; /* 增加大量底部内边距，确保有足够的空白区域可以点击 */
   font-size: 16px;
   line-height: 1.7;
   color: #333;
   overflow-y: auto;
   white-space: normal;
   word-break: break-word;
+  min-height: 100%; /* 确保至少占满容器高度 */
+  position: relative; /* 添加相对定位，便于定位底部占位元素 */
+}
+
+/* 底部占位元素样式 - 修改为可见的样式 */
+.bottom-placeholder {
+  min-height: 300px; /* 固定高度的底部占位区域 */
+  width: 100%;
+  position: relative; /* 作为定位上下文 */
+  cursor: text; /* 显示文本光标 */
+  pointer-events: auto; /* 允许捕获事件 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 40px; /* 与上方内容保持距离 */
+}
+
+/* 添加一个明显的新行按钮 */
+.bottom-placeholder::before {
+  content: "+ 点击此处添加新行";
+  display: block;
+  width: 200px;
+  text-align: center;
+  padding: 10px 15px;
+  background-color: #f5f5f5;
+  border: 1px dashed #ccc;
+  border-radius: 4px;
+  color: #666;
+  margin-bottom: 20px;
+  font-size: 14px;
+  opacity: 0.7;
+  transition: opacity 0.2s, background-color 0.2s;
+}
+
+.bottom-placeholder:hover::before {
+  opacity: 1;
+  background-color: #e6f7ff;
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+/* 在底部占位区域中添加一个可见的分隔线 */
+.bottom-placeholder::after {
+  content: '';
+  display: block;
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(to right, transparent, rgba(0, 0, 0, 0.1), transparent);
+  margin-top: 20px;
 }
 
 /* 只读内容样式 */

@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # Redis 缓存
+  redis:
+    image: redis:alpine
+    container_name: freewrite-redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+
+  # 应用服务（前后端合并）
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: freewrite-app
+    restart: always
+    depends_on:
+      - redis
+    ports:
+      - "80:80"
+      - "1314:1314"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - API_V1_STR=${API_V1_STR}
+      - SECRET_KEY=${SECRET_KEY}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - CONSOLE_LOG_LEVEL=${CONSOLE_LOG_LEVEL}
+      - FILE_LOG_LEVEL=${FILE_LOG_LEVEL}
+      - LOG_DIR=${LOG_DIR}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - VITE_API_BASE_URL=/api/v1
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  redis_data:

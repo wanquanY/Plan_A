@@ -113,7 +113,7 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
       });
       
       // 发送请求
-      const response = await fetch('http://127.0.0.1:1314/api/v1/chat/chat/stream', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/chat/chat/stream`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

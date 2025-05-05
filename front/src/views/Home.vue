@@ -7,11 +7,13 @@ import authService from '../services/auth';
 import chatService from '../services/chat';
 import Editor from '../components/Editor.vue';
 import Sidebar from '../components/Sidebar.vue';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
 import MermaidRenderer from '@/components/MermaidRenderer.vue';
 import MarkMap from '@/components/MarkMap.vue';
+import { isMindMapContent as isMindMapContentFromService, 
+         formatMessageContent as formatMessageContentFromService, 
+         formatMessagesToHtml as formatMessagesToHtmlFromService } from '../services/markdownService';
+import { renderCodeBlocks } from '../services/renderService';
 
 // 初始化mermaid配置
 mermaid.initialize({
@@ -22,95 +24,8 @@ mermaid.initialize({
   fontSize: 14
 });
 
-// 用于生成思维导图的正则表达式
-const mindMapRegex = /^# .+(\n[#]+ .+)+$/m;
-
-// 检查内容是否可能是思维导图
-const isMindMapContent = (content) => {
-  // 检查是否符合思维导图格式：以#开头的多行内容，至少有一个二级标题
-  return mindMapRegex.test(content) || 
-         // 至少包含一个一级标题和多个层级标题
-         (content.match(/^#\s+.+/m) && content.match(/^#{2,}\s+.+/m));
-};
-
-// 配置DOMPurify，允许代码块的语言类和样式
-DOMPurify.addHook('afterSanitizeAttributes', function(node) {
-  // 为代码块添加类属性
-  if (node.nodeName === 'CODE' && node.parentNode && node.parentNode.nodeName === 'PRE') {
-    // 保留language-*类，用于语法高亮
-    node.className = node.className.replace(/language-\w+/, match => match);
-  }
-  
-  // 保留pre标签的data-language属性
-  if (node.nodeName === 'PRE' && node.hasAttribute('data-language')) {
-    // 确保data-language属性被保留
-    const lang = node.getAttribute('data-language');
-    node.setAttribute('data-language', lang);
-  }
-});
-
-// marked的renderer扩展，添加复制按钮
-const renderer = new marked.Renderer();
-const originalCodeRenderer = renderer.code;
-renderer.code = function(code, language, isEscaped) {
-  // 获取语言显示名称
-  const displayLang = language || 'text';
-  
-  // 特殊处理mermaid图表
-  if (language === 'mermaid') {
-    try {
-      // 创建唯一ID
-      const mermaidId = `mermaid-diagram-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      
-      // 返回mermaid图表的容器
-      return `<div class="mermaid-wrapper">
-        <div class="mermaid" id="${mermaidId}">${code}</div>
-        <div class="code-copy-button" title="复制代码">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-          </svg>
-        </div>
-      </div>`;
-    } catch (error) {
-      console.error('Mermaid解析失败', error);
-      // 如果mermaid解析失败，回退到普通代码块
-      return originalCodeRenderer.call(this, code, 'text', isEscaped);
-    }
-  }
-  
-  // 检查markdown代码块是否包含思维导图内容
-  if ((language === 'markdown' || language === 'md') && isMindMapContent(code)) {
-    // 标记为思维导图，将在后续处理中转换为MarkMap组件
-    return `<pre class="markmap-content" data-content="${encodeURIComponent(code)}"><code class="language-markdown">${code}</code></pre>`;
-  }
-  
-  // 为普通代码块创建pre标签时添加data-language属性
-  const originalHtml = originalCodeRenderer.call(this, code, language, isEscaped);
-  
-  // 添加复制按钮和语言标识
-  return `<div class="code-block-wrapper">
-    ${originalHtml.replace(/<pre>/, `<pre data-language="${displayLang}"><div class="code-copy-button" title="复制代码">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-      </svg>
-    </div>`)}
-  </div>`;
-};
-
-// 配置marked选项
-marked.setOptions({
-  breaks: true,      // 将换行符转换为<br>
-  gfm: true,         // 启用GitHub风格Markdown
-  headerIds: false,  // 避免自动生成header IDs
-  xhtml: false,      // 不使用自闭合标签
-  renderer: renderer, // 使用自定义渲染器
-  highlight: function(code, lang) {
-    // 简单的语法高亮处理，为代码块添加语言标记的class
-    return `<code class="language-${lang || 'plaintext'}">${code}</code>`;
-  }
-});
+// 使用从markdownService导入的函数
+const isMindMapContent = (content) => isMindMapContentFromService(content);
 
 const router = useRouter();
 const username = ref('用户');
@@ -188,52 +103,107 @@ const fetchSessionDetail = async (sessionId) => {
           return cleanedMsg;
         });
         
-        const messagesHtml = formatMessagesToHtml(cleanedMessages, sessionData.title);
+        const messagesHtml = formatMessagesToHtmlFromService(cleanedMessages, sessionData.title);
         editorContent.value = messagesHtml;
         editorTitle.value = sessionData.title || '未命名会话';
         
-        // 在DOM更新后处理代码块
+        // 在DOM更新后处理代码块和图表
+        // 延长等待时间以确保DOM完全渲染，并执行两次渲染以捕获所有元素
         setTimeout(() => {
-          ensureCodeBlocksHaveLanguage();
-          
-          // 添加代码块复制按钮事件监听
-          document.removeEventListener('click', handleCodeCopyClick);
-          document.addEventListener('click', handleCodeCopyClick);
-          
-          // 渲染mermaid图表
-          renderMermaidDiagrams();
-          
-          // 检查普通段落中是否有思维导图内容
-          const paragraphs = document.querySelectorAll('p');
-          paragraphs.forEach(p => {
-            const content = p.textContent || '';
-            if (isMindMapContent(content)) {
-              console.log('在普通段落中检测到思维导图内容');
-              
-              // 创建MarkMap组件容器
-              const markMapContainer = document.createElement('div');
-              markMapContainer.className = 'markmap-component-wrapper';
-              
-              // 替换原始段落元素
-              p.replaceWith(markMapContainer);
-              
-              // 使用Vue创建MarkMap组件
-              const markMapApp = createApp({
-                render() {
-                  return h(MarkMap, {
-                    content: content,
-                    height: '400px'
-                  });
-                }
+          // 第一次处理：代码块及语言检测
+          import('../services/renderService').then(({ ensureCodeBlocksHaveLanguage }) => {
+            ensureCodeBlocksHaveLanguage();
+            
+            // 第二次处理：特别针对mermaid图表
+            setTimeout(() => {
+              import('../services/renderService').then(({ renderMermaidDynamically }) => {
+                renderMermaidDynamically();
+                
+                // 最后尝试强制重新初始化所有mermaid元素
+                setTimeout(() => {
+                  // 查找所有mermaid元素并重新初始化
+                  const mermaidElements = document.querySelectorAll('.mermaid:not([data-processed])');
+                  if (mermaidElements.length > 0) {
+                    console.log(`再次尝试渲染${mermaidElements.length}个mermaid图表`);
+                    
+                    // 确保每个元素都有id和原始内容备份
+                    mermaidElements.forEach(el => {
+                      const element = el as HTMLElement;
+                      
+                      // 添加ID如果没有
+                      if (!element.id) {
+                        element.id = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+                      }
+                      
+                      // 备份原始内容如果没有
+                      if (!element.hasAttribute('data-original-content')) {
+                        const content = element.textContent || '';
+                        element.setAttribute('data-original-content', content);
+                      }
+                      
+                      // 移除可能的错误标记
+                      element.removeAttribute('data-processed');
+                      element.classList.remove('mermaid-processed');
+                    });
+                    
+                    // 重新初始化mermaid并渲染
+                    mermaid.initialize({
+                      startOnLoad: false,
+                      theme: 'default',
+                      securityLevel: 'loose'
+                    });
+                    
+                    // 尝试使用新API渲染
+                    try {
+                      if (typeof mermaid.run === 'function') {
+                        mermaid.run({
+                          querySelector: '.mermaid:not([data-processed])'
+                        }).catch(err => {
+                          console.log('降级使用init方法渲染mermaid', err);
+                          try {
+                            mermaid.init(undefined, mermaidElements);
+                          } catch (initErr) {
+                            console.error('init方法也失败，尝试单独渲染', initErr);
+                            // 逐个尝试渲染
+                            mermaidElements.forEach(async (el) => {
+                              try {
+                                if (el.id) {
+                                  const content = el.textContent || '';
+                                  // 跳过已经包含SVG的元素
+                                  if (!content.includes('<svg')) {
+                                    await mermaid.render(el.id, content);
+                                  }
+                                }
+                              } catch (renderErr) {
+                                console.error(`单个元素渲染失败: ${el.id}`, renderErr);
+                              }
+                            });
+                          }
+                        });
+                      } else {
+                        // 降级使用传统API
+                        try {
+                          mermaid.init(undefined, mermaidElements);
+                        } catch (err) {
+                          console.error('所有渲染方法都失败', err);
+                        }
+                      }
+                    } catch (err) {
+                      console.log('使用init方法渲染mermaid', err);
+                      try {
+                        mermaid.init(undefined, mermaidElements);
+                      } catch (initErr) {
+                        console.error('所有渲染方法都失败', initErr);
+                      }
+                    }
+                  }
+                }, 300);
               });
-              
-              // 挂载组件到DOM
-              markMapApp.mount(markMapContainer);
-            }
+            }, 300);
           });
           
           console.log('已处理会话历史记录中的代码块、图表和思维导图');
-        }, 500);
+        }, 800);
       }
     } else {
       throw new Error('获取会话详情失败');
@@ -248,50 +218,8 @@ const fetchSessionDetail = async (sessionId) => {
 const formatMessagesToHtml = (messages, title) => {
   if (!messages || messages.length === 0) return '<p>没有会话内容</p>';
   
-  // 标题部分（如果需要）
-  const titleHtml = title ? `<h1>${title}</h1>` : '';
-  
-  // 将每条消息转换为Markdown渲染后的HTML，并减少空行
-  const messageParagraphs = messages.map(msg => {
-    const isUserMessage = msg.role === 'user';
-    
-    // 对内容进行预处理
-    // 1. 移除多余的换行符
-    let cleanContent = msg.content.replace(/\n{3,}/g, '\n\n');
-    
-    // 2. 去除消息首尾的换行符
-    cleanContent = cleanContent.trim();
-    
-    // 3. 处理代码块前后的空行问题
-    // 代码块前的多余空行
-    cleanContent = cleanContent.replace(/\n+```/g, '\n```');
-    // 代码块后的多余空行
-    cleanContent = cleanContent.replace(/```\n+/g, '```\n');
-    // 单独一行的代码块标记前后紧凑处理
-    cleanContent = cleanContent.replace(/\n```\n/g, '\n```\n\n');
-    // 处理连续代码块间的多余空行
-    cleanContent = cleanContent.replace(/```\n\n\n```/g, '```\n\n```');
-    
-    // 4. 代码块后如果没有空行，添加一个空行
-    cleanContent = cleanContent.replace(/```\n(?!\n)/g, '```\n\n');
-    
-    // 5. 处理@Web指令的特殊情况
-    if (cleanContent.includes('@Web')) {
-      cleanContent = cleanContent.replace(/@Web\s+/g, '@Web ');
-    }
-    
-    const formattedContent = formatMessageContent(cleanContent);
-    
-    // 用户消息使用普通段落，AI消息使用带样式的div
-    if (isUserMessage) {
-      return `<div class="history-user-message">${formattedContent}</div>`;
-    } else {
-      return `<div class="history-agent-message">${formattedContent}</div>`;
-    }
-  }).join('');
-  
-  // 连接标题和内容
-  return `${titleHtml}<div class="history-messages">${messageParagraphs}</div>`;
+  // 使用markdownService中的formatMessagesToHtml函数
+  return formatMessagesToHtmlFromService(messages, title);
 };
 
 // 格式化消息时间
@@ -300,116 +228,10 @@ const formatMessageTime = (dateString) => {
   return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 };
 
-// 格式化消息内容，处理Markdown和代码块
+// 格式化消息内容，处理Markdown和代码块（替换原有函数）
 const formatMessageContent = (content) => {
-  try {
-    // 自动检测代码块语言
-    let processedContent = content;
-    if (content.includes('```')) {
-      // 正则表达式匹配代码块，判断是否有语言指定
-      processedContent = content.replace(/```(?:([\w#+.]+)?\n)?([\s\S]+?)```/g, (match, lang, code) => {
-        // 代码块前后不应有多余空行
-        code = code.trim();
-        
-        // 检查是否为mermaid图表，通过内容特征判断
-        if (lang === 'mermaid' || code.trim().startsWith('graph ') || code.trim().startsWith('sequenceDiagram') || 
-            code.trim().startsWith('classDiagram') || code.trim().startsWith('flowchart')) {
-          return '```mermaid\n' + code + '\n```';
-        }
-        
-        // 如果没有指定语言，根据内容猜测语言
-        if (!lang) {
-          // HTML检测 - 优先检查和表单相关的标签和属性
-          if (
-            // 基础HTML标签
-            code.includes('<html') || code.includes('<!DOCTYPE') || 
-            code.includes('<head') || code.includes('<body') ||
-            // 表单元素
-            code.includes('<form') || code.includes('</form>') || 
-            code.includes('<input') || code.includes('<button') || 
-            code.includes('<select') || code.includes('<option') ||
-            code.includes('<textarea') || code.includes('<label') ||
-            // 表单属性
-            code.includes('type="text"') || code.includes('type="password"') || 
-            code.includes('type="submit"') || code.includes('name="') ||
-            code.includes('method="post"') || code.includes('action="') || 
-            code.includes('required') || code.includes('value="') ||
-            // 常见HTML元素
-            code.includes('<div') || code.includes('</div>') || 
-            code.includes('<span') || code.includes('</span>') || 
-            code.includes('<p>') || code.includes('</p>') ||
-            code.includes('<h1>') || code.includes('<h2>') ||
-            code.includes('<ul>') || code.includes('<li>') ||
-            code.includes('<br>') || code.includes('<br/>')
-          ) {
-            lang = 'html';
-          }
-          // 使用正则表达式匹配HTML标签模式
-          else if (/<[a-z][a-z0-9]*(\s+[a-z0-9-]+(=["'][^"']*["'])?)*\s*>/i.test(code)) {
-            lang = 'html';
-          }
-          // 登录和注册表单的专门检测
-          else if ((code.toLowerCase().includes('login') || 
-                   code.toLowerCase().includes('登录') || 
-                   code.toLowerCase().includes('注册') || 
-                   code.toLowerCase().includes('sign')) && 
-                   (code.includes('<') && code.includes('>'))) {
-            lang = 'html';
-          }
-          // 其他语言检测
-          else if (code.includes('def ') || code.includes('import ') || code.includes('print(')) {
-            lang = 'python';
-          } else if (code.includes('function ') || code.includes('const ') || code.includes('var ') || code.includes('let ') || code.includes('=>')) {
-            lang = 'javascript';
-          } else if (code.match(/[{};]\s*$/m) && (code.includes('margin:') || code.includes('padding:') || code.includes('#') && code.includes('{'))) {
-            lang = 'css';
-          } else if (code.includes('class ') && code.includes('{')) {
-            if (code.includes('public static void main')) {
-              lang = 'java';
-            } else {
-              lang = 'java';
-            }
-          } else if (code.includes('#include')) {
-            lang = 'cpp';
-          } else if (code.includes('<template') || code.includes('export default') || code.includes('Vue.')) {
-            lang = 'vue';
-          }
-        }
-        
-        // 如果是Web相关内容，更偏向于使用HTML
-        if ((lang === 'text' || !lang) && 
-            (code.toLowerCase().includes('web') || code.includes('<') && code.includes('>'))) {
-          lang = 'html';
-        }
-        
-        console.log(`代码块语言检测结果: ${lang || 'text'}`);
-        
-        // 返回带有语言标记的代码块
-        return `\`\`\`${lang || 'text'}\n${code}\`\`\``;
-      });
-    }
-    
-    // 移除多余的空行
-    processedContent = processedContent.replace(/\n{3,}/g, '\n\n');
-    
-    // 将Markdown转换为HTML
-    const htmlContent = marked(processedContent);
-    
-    // 移除多余的空段落
-    let cleanedHtml = htmlContent.replace(/<p>\s*<\/p>/g, '');
-    
-    // 安全处理防止XSS攻击
-    const sanitizedContent = DOMPurify.sanitize(cleanedHtml, {
-      ADD_ATTR: ['class', 'data-language', 'id'], // 允许class和data-language属性以及id属性
-      ADD_TAGS: ['code', 'pre', 'div'] // 确保代码标签保留
-    });
-    
-    return sanitizedContent;
-  } catch (error) {
-    console.error('Markdown渲染失败:', error);
-    // 如果渲染失败，回退到简单的文本处理
-    return content.replace(/\n/g, '<br>');
-  }
+  // 使用markdownService中的formatMessageContent函数
+  return formatMessageContentFromService(content);
 };
 
 // 格式化日期
@@ -543,211 +365,20 @@ const handleCodeCopyClick = (event) => {
   }
 };
 
-// 确保在历史记录中加载后处理代码块
-const ensureCodeBlocksHaveLanguage = () => {
-  try {
-    // 首先处理可能的思维导图内容
-    const markmapElements = document.querySelectorAll('.markmap-content');
-    markmapElements.forEach(element => {
-      try {
-        // 获取编码的内容
-        const encodedContent = element.getAttribute('data-content');
-        if (encodedContent) {
-          const content = decodeURIComponent(encodedContent);
-          
-          console.log('找到思维导图内容，创建MarkMap组件');
-          
-          // 创建MarkMap组件容器
-          const markMapContainer = document.createElement('div');
-          markMapContainer.className = 'markmap-component-wrapper';
-          
-          // 替换原始pre元素
-          element.replaceWith(markMapContainer);
-          
-          // 使用Vue创建MarkMap组件
-          const markMapApp = createApp({
-            render() {
-              return h(MarkMap, {
-                content: content,
-                height: '400px'
-              });
-            }
-          });
-          
-          // 挂载组件到DOM
-          markMapApp.mount(markMapContainer);
-        }
-      } catch (error) {
-        console.error('处理思维导图失败:', error);
-      }
-    });
-    
-    // 导入需要的组件
-    import('../components/CodeBlock.vue').then(CodeBlockModule => {
-      const CodeBlock = CodeBlockModule.default;
-      
-      // 处理代码块的函数
-      const processCodeBlock = (block, preElement, code, language) => {
-        console.log(`处理代码块，语言: ${language}`);
-        
-        // 检查是否为mermaid语言，需要特殊处理
-        if (language === 'mermaid') {
-          return; // mermaid图表已由mermaid库处理
-        }
-        
-        // 检查是否为markdown代码块，可能包含思维导图
-        if ((language === 'markdown' || language === 'md') && !block.closest('.markmap-content')) {
-          if (isMindMapContent(code)) {
-            console.log('在markdown代码块中检测到思维导图内容');
-            
-            // 创建MarkMap组件容器
-            const markMapContainer = document.createElement('div');
-            markMapContainer.className = 'markmap-component-wrapper';
-            
-            // 替换原始pre元素
-            preElement.replaceWith(markMapContainer);
-            
-            // 使用Vue创建MarkMap组件
-            const markMapApp = createApp({
-              render() {
-                return h(MarkMap, {
-                  content: code,
-                  height: '400px'
-                });
-              }
-            });
-            
-            // 挂载组件到DOM
-            markMapApp.mount(markMapContainer);
-            return;
-          }
-        }
-        
-        // 对于普通代码块，创建CodeBlock组件
-        try {
-          // 创建包装div替代pre标签
-          const wrapperDiv = document.createElement('div');
-          wrapperDiv.className = 'code-block-component-wrapper';
-          
-          // 在pre标签之后插入包装div
-          if (preElement.parentNode) {
-            preElement.parentNode.insertBefore(wrapperDiv, preElement.nextSibling);
-            
-            // 使用Vue创建CodeBlock组件
-            const codeBlockApp = createApp({
-              render() {
-                return h(CodeBlock, {
-                  code: code,
-                  language: language
-                });
-              }
-            });
-            
-            // 挂载组件到DOM
-            codeBlockApp.mount(wrapperDiv);
-            
-            // 隐藏原始pre标签
-            preElement.style.display = 'none';
-            preElement.classList.add('replaced-by-component');
-          }
-        } catch (error) {
-          console.error('创建CodeBlock组件失败:', error);
-        }
-      };
-      
-       // 处理普通代码块
-       const codeBlocks = document.querySelectorAll('pre > code:not(.processed-code-block)');
-       console.log(`找到${codeBlocks.length}个未处理的代码块`);
-       
-       codeBlocks.forEach(block => {
-         // 标记为已处理，避免重复处理
-         block.classList.add('processed-code-block');
-         
-         // 获取代码内容和语言
-         const code = block.textContent || '';
-         let language = 'text';
-         
-         // 从class中提取语言
-         const classList = block.className.split(' ');
-         for (const cls of classList) {
-           if (cls.startsWith('language-')) {
-             language = cls.replace('language-', '');
-             break;
-           }
-         }
-         
-         // 找到pre标签
-         const preElement = block.parentElement;
-         if (!preElement) {
-           console.warn('无法找到代码块的父元素，跳过处理');
-           return;
-         }
-         
-         // 如果语言仍然是text，尝试通过内容猜测语言
-         if (language === 'text') {
-           try {
-             // 检查是否是mermaid图表，通过内容特征判断
-             if (code.trim().startsWith('graph ') || 
-                 code.trim().startsWith('sequenceDiagram') || 
-                 code.trim().startsWith('classDiagram') || 
-                 code.trim().startsWith('flowchart')) {
-               language = 'mermaid';
-               // 继续处理已知语言的代码块
-               processCodeBlock(block, preElement, code, language);
-             } else {
-               // 使用highlight.js的自动检测
-               import('highlight.js').then(module => {
-                 const hljs = module.default;
-                 try {
-                   const result = hljs.highlightAuto(code);
-                   language = result.language || 'text';
-                   console.log(`自动检测语言结果: ${language}`);
-                   
-                   // 继续处理代码块
-                   processCodeBlock(block, preElement, code, language);
-                 } catch (error) {
-                   console.error('语言检测失败:', error);
-                   processCodeBlock(block, preElement, code, 'text');
-                 }
-               }).catch(error => {
-                 console.error('导入highlight.js失败:', error);
-                 processCodeBlock(block, preElement, code, 'text');
-               });
-               
-               // 提前返回，等异步操作完成后再处理
-               return;
-             }
-           } catch (error) {
-             console.error('语言检测失败:', error);
-             processCodeBlock(block, preElement, code, 'text');
-           }
-         } else {
-           // 对于已知语言的代码块，直接处理
-           processCodeBlock(block, preElement, code, language);
-         }
-       });
-    }).catch(error => {
-      console.error('导入CodeBlock组件失败:', error);
-    });
-    
-    // 渲染mermaid图表
-    renderMermaidDiagrams();
-  } catch (error) {
-    console.error('处理代码块语言失败:', error);
-  }
-};
-
 // 添加渲染mermaid图表的功能
 const renderMermaidDiagrams = () => {
-  try {
-    const mermaidDivs = document.querySelectorAll('.mermaid');
-    if (mermaidDivs.length > 0) {
-      console.log(`找到${mermaidDivs.length}个mermaid图表，开始渲染`);
-      mermaid.init(undefined, mermaidDivs);
-    }
-  } catch (error) {
-    console.error('渲染mermaid图表失败:', error);
-  }
+  // 这个函数已经移动到renderService.ts中，不再需要
+  import('../services/renderService').then(({ renderMermaidDiagrams }) => {
+    renderMermaidDiagrams();
+  });
+};
+
+// 确保在历史记录中加载后处理代码块
+const ensureCodeBlocksHaveLanguage = () => {
+  // 这个函数已经移动到renderService.ts中，不再需要
+  import('../services/renderService').then(({ ensureCodeBlocksHaveLanguage }) => {
+    ensureCodeBlocksHaveLanguage();
+  });
 };
 
 // 在全局对象上添加刷新会话列表的方法，允许其他组件和服务调用
@@ -840,6 +471,8 @@ if (typeof window !== 'undefined') {
   flex-direction: column;
   overflow: hidden;
   padding: 16px 32px 0;
+  width: 90%;  /* 将宽度减少为原来的90% */
+  margin: 0 auto;  /* 居中显示 */
 }
 
 /* 编辑器滚动条样式 */
@@ -1139,6 +772,33 @@ if (typeof window !== 'undefined') {
   background-color: #dcffe4;
   color: #28a745;
   opacity: 1;
+}
+
+/* 确保mermaid图表SVG居中显示 */
+svg[id^="mermaid-"] {
+  display: block !important;
+  margin: 0 auto !important;
+  max-width: 100% !important;
+  width: fit-content !important;
+}
+
+/* 移除mermaid容器的强制居中样式 */
+.mermaid-container, 
+.mermaid-wrapper, 
+.mermaid-block,
+div[class*="mermaid"] {
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.mermaid {
+  max-width: 100%;
+  margin: 0 auto !important;
+}
+
+/* 确保SVG元素本身也被正确居中 */
+svg[id^="mermaid-"] > * {
+  margin: 0 auto !important;
 }
 </style>
 

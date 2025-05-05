@@ -1,9 +1,15 @@
 import axios from 'axios';
 import type { AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 
+// 获取API基础URL
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:1314/api/v1';
+
+// 输出当前使用的API基础URL
+console.log(`API服务配置: 使用基础URL ${apiBaseUrl}`);
+
 // 创建axios实例
 const apiClient = axios.create({
-  baseURL: 'http://127.0.0.1:1314/api/v1',
+  baseURL: apiBaseUrl, // 使用环境变量配置API基础URL
   headers: {
     'Content-Type': 'application/json',
   },

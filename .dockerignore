@@ -1,0 +1,47 @@
+# 版本控制
+.git
+.gitignore
+.github
+
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+.venv
+env/
+venv/
+ENV/
+logs/*
+
+# 前端相关
+front/node_modules/
+front/dist/
+front/.vscode/
+front/npm-debug.log
+front/.DS_Store
+
+# IDE相关
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 数据库相关
+*.db
+*.sqlite3
+
+# Docker相关
+.dockerignore
+docker-compose*
+Dockerfile*
+
+# 系统相关
+.DS_Store
+Thumbs.db 
