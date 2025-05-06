@@ -1,3 +1,10 @@
+# 多阶段构建 - 通用Dockerfile
+# 使用ARG BUILD_TARGET来决定构建前端还是后端
+# 构建前端: docker build --build-arg BUILD_TARGET=frontend -t freewrite-frontend .
+# 构建后端: docker build --build-arg BUILD_TARGET=backend -t freewrite-backend .
+
+ARG BUILD_TARGET=all
+
 # 前端构建阶段
 FROM node:20-alpine AS frontend-build
 
@@ -11,9 +18,10 @@ RUN npm ci
 COPY front/ ./
 
 # 设置API基础URL环境变量，用于前端构建时
-ENV VITE_API_BASE_URL="/api/v1"
+ARG API_BASE_URL="/api/v1"
+ENV VITE_API_BASE_URL=${API_BASE_URL}
 
-# 使用修改后的构建命令，跳过类型检查
+# 构建前端
 RUN npm run build && ls -la dist
 
 # 后端构建阶段
@@ -28,8 +36,30 @@ COPY pip.conf /etc/pip.conf
 COPY pyproject.toml alembic.ini ./
 RUN pip install --no-cache-dir -e . -i https://mirrors.aliyun.com/pypi/simple/ --timeout 300
 
-# 生产阶段
-FROM python:3.11-slim
+# 前端生产阶段
+FROM nginx:alpine AS frontend
+
+# 复制nginx配置
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# 从前端构建阶段复制构建产物
+COPY --from=frontend-build /app/frontend/dist /usr/share/nginx/html
+
+# 创建启动脚本，动态替换环境变量
+RUN echo '#!/bin/sh\n\
+envsubst \'\$BACKEND_API_URL\' < /etc/nginx/conf.d/default.conf > /etc/nginx/conf.d/default.conf.tmp && \
+mv /etc/nginx/conf.d/default.conf.tmp /etc/nginx/conf.d/default.conf && \
+nginx -g "daemon off;"\n\
+' > /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
+
+# 暴露端口
+EXPOSE 80
+
+# 启动命令
+CMD ["/docker-entrypoint.sh"]
+
+# 后端生产阶段
+FROM python:3.11-slim AS backend
 
 WORKDIR /app
 
@@ -44,27 +74,8 @@ COPY --from=backend-build /usr/local/bin /usr/local/bin
 COPY backend/ ./backend/
 COPY pyproject.toml alembic.ini ./
 
-# 从前端构建阶段复制构建产物
-COPY --from=frontend-build /app/frontend/dist /app/static
-
-# 安装Nginx
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends nginx && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# 设置Nginx默认配置，防止使用默认欢迎页
-RUN rm -f /etc/nginx/sites-enabled/default
-
-# 复制Nginx配置
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# 检查静态文件
-RUN ls -la /app/static || echo "Static directory does not exist!"
-
 # 设置环境变量
 ENV PYTHONPATH=/app
-ENV STATIC_FILES_DIR=/app/static
 
 # 设置时区
 RUN ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
@@ -73,14 +84,10 @@ RUN ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 RUN mkdir -p /app/logs
 
 # 暴露端口
-EXPOSE 80 1314
+EXPOSE 1314
 
-# 创建启动脚本
-RUN echo '#!/bin/bash\n\
-nginx -t && \n\
-nginx &\n\
-uvicorn backend.main:app --host 0.0.0.0 --port 1314\n\
-' > /app/start.sh && chmod +x /app/start.sh
+# 启动命令
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "1314"]
 
-# 设置启动命令
-CMD ["/app/start.sh"] 
+# 根据BUILD_TARGET选择最终镜像
+FROM ${BUILD_TARGET} AS final 

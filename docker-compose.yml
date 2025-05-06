@@ -12,20 +12,18 @@ services:
       - "6379:6379"
     command: redis-server --appendonly yes
 
-  # 应用服务（前后端合并）
-  app:
+  # 后端服务
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        - BUILDKIT_INLINE_CACHE=1
-        - VITE_API_BASE_URL=/api/v1
-    container_name: freewrite-app
+        - BUILD_TARGET=backend
+    container_name: freewrite-backend
     restart: always
     depends_on:
       - redis
     ports:
-      - "8080:80"
       - "1314:1314"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
@@ -40,14 +38,34 @@ services:
       - CONSOLE_LOG_LEVEL=${CONSOLE_LOG_LEVEL}
       - FILE_LOG_LEVEL=${FILE_LOG_LEVEL}
       - LOG_DIR=${LOG_DIR}
+      - LOG_ROTATION=${LOG_ROTATION}
+      - LOG_MAX_BYTES=${LOG_MAX_BYTES}
+      - LOG_BACKUP_COUNT=${LOG_BACKUP_COUNT}
+      - SQLALCHEMY_ECHO=${SQLALCHEMY_ECHO}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - OPENAI_MODEL=${OPENAI_MODEL}
-      - VITE_API_BASE_URL=/api/v1
     volumes:
       - ./logs:/app/logs
     mem_limit: 4g
     memswap_limit: 8g
+
+  # 前端服务
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BUILD_TARGET=frontend
+        - API_BASE_URL=/api/v1
+    container_name: freewrite-frontend
+    restart: always
+    ports:
+      - "80:80"
+    environment:
+      - BACKEND_API_URL=http://backend:1314/api/
+    depends_on:
+      - backend
 
 volumes:
   redis_data:

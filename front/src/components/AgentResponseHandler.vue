@@ -5,12 +5,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, createApp } from 'vue';
 import chatService from '@/services/chat';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import * as agentResponseService from '@/services/agentResponseService';
 import { setupMermaidAutoRender } from '@/services/renderService';
+import LoadingAnimation from './LoadingAnimation.vue';
 
 // 全局注册一个MutationObserver来检测新添加的Mermaid图表并自动渲染
 let mermaidObserver = null;
@@ -41,9 +42,62 @@ onUnmounted(() => {
 // 事件声明
 const emit = defineEmits(['agent-response']);
 
-// 用于存储会话ID
+// 用于存储会话ID和笔记ID
 const conversationId = ref('');
+const currentNoteId = ref('');
 const isProcessing = ref(false);
+
+// 设置当前会话ID
+const setConversationId = (id) => {
+  console.log(`AgentResponseHandler设置会话ID: ${id || 'null'}`);
+  conversationId.value = id || '';
+};
+
+// 设置当前笔记ID
+const setCurrentNoteId = (id) => {
+  console.log(`AgentResponseHandler设置笔记ID: ${id || 'null'}`);
+  currentNoteId.value = id || '';
+};
+
+// 获取当前笔记ID
+const getCurrentNoteId = () => {
+  return currentNoteId.value;
+};
+
+// 创建加载动画元素
+const createLoadingElement = () => {
+  // 创建一个包裹元素
+  const wrapper = document.createElement('span');
+  wrapper.className = 'loading-animation-container';
+  
+  // 创建一个新的Vue应用
+  const loadingApp = createApp(LoadingAnimation, { 
+    type: 'dots',
+    inline: true
+  });
+  
+  // 将Vue应用挂载到包裹元素
+  loadingApp.mount(wrapper);
+  
+  return wrapper;
+};
+
+// 移除加载动画
+const removeLoadingElement = (element) => {
+  if (!element) return;
+  
+  // 获取可能已挂载的Vue应用实例
+  const vueApp = element.__vue_app__;
+  if (vueApp) {
+    // 卸载Vue应用
+    vueApp.unmount();
+  }
+  
+  // 从DOM中移除元素
+  if (element.parentNode) {
+    element.parentNode.removeChild(element);
+  }
+};
 
 // 用于处理与AI助手的聊天
 const handleChat = async (agentId: string, userInput: string, editorRef: HTMLElement) => {
@@ -57,7 +111,7 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
   
   try {
     isProcessing.value = true;
-    console.log(`发送消息到助手，agentId: ${agentId}, 会话ID: ${conversationId.value || '新会话'}, 内容长度: ${processedInput.length}`);
+    console.log(`发送消息到助手，agentId: ${agentId}, 会话ID: ${conversationId.value || '新会话'}, 笔记ID: ${currentNoteId.value || '无'}, 内容长度: ${processedInput.length}`);
     
     // 保存当前光标位置
     const selection = window.getSelection();
@@ -78,8 +132,9 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
     const range = selection.getRangeAt(0);
     range.insertNode(responseParagraph);
     
-    // 初始文本提示
-    responseParagraph.textContent = "加载中...";
+    // 创建并添加加载动画，而不是静态文本
+    const loadingElement = createLoadingElement();
+    responseParagraph.appendChild(loadingElement);
     
     // 确保编辑器内容更新
     setTimeout(() => {
@@ -89,6 +144,33 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
       }
     }, 0);
     
+    // 准备聊天请求
+    const chatRequest = {
+      content: processedInput,
+      stream: true
+    };
+    
+    // 如果有会话ID，则添加到请求中
+    if (conversationId.value && conversationId.value !== 'null' && conversationId.value !== 'undefined') {
+      chatRequest.conversation_id = parseInt(conversationId.value);
+      console.log(`使用已有会话ID: ${chatRequest.conversation_id}`);
+    } else {
+      // 无会话ID或会话ID无效，则传0表示创建新会话
+      chatRequest.conversation_id = 0; 
+      console.log(`新建笔记使用conversation_id=0表示创建新会话`);
+      
+      // 如果没有会话ID但有笔记ID，则添加笔记ID到请求中
+      if (currentNoteId.value) {
+        console.log(`正在创建新会话，关联到笔记ID: ${currentNoteId.value}`);
+        chatRequest.note_id = parseInt(currentNoteId.value);
+      }
+    }
+    
+    // 添加agent_id
+    chatRequest.agent_id = parseInt(agentId);
+    
+    console.log(`发送聊天请求:`, chatRequest);
+    
     // 处理流式响应的回调函数
     let previousContent = '';
     const streamCallback = async (response, isComplete, convId) => {
@@ -97,6 +179,8 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
         const data = response.data?.data || {};
         const content = data.full_content || '';
         const isEnd = data.done || isComplete;
+        
+        console.log(`收到流响应: convId=${convId}, isEnd=${isEnd}, 内容长度=${content.length}`);
         
         // 提取agent信息并发送事件
         if (data.agent_info) {
@@ -113,8 +197,9 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
           return;
         }
         
-        // 如果文本仍然是"加载中..."，即使内容没变也需要更新（清除加载提示）
-        const shouldForceUpdate = responseParagraph.textContent === "加载中...";
+        // 检查是否仍有加载动画
+        const loadingElement = responseParagraph.querySelector('.loading-animation-container');
+        const shouldForceUpdate = !!loadingElement; // 如果存在加载动画，则需要强制更新
         
         // 如果内容没有变化，不更新DOM（但如果是结束消息或需要强制更新，则始终更新）
         if (content === previousContent && !isEnd && !shouldForceUpdate) {
@@ -138,12 +223,20 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
             });
           }
           
-          // 更新内容并移除"加载中..."提示
-          if (responseParagraph.textContent === "加载中...") {
-            responseParagraph.textContent = "";
+          // 移除加载动画（如果存在）
+          if (loadingElement) {
+            removeLoadingElement(loadingElement);
           }
+          
+          // 更新内容
           responseParagraph.innerHTML = htmlContent || "无响应内容";
           previousContent = content;
+          
+          // 如果内容正在生成中（非结束状态），添加加载动画到内容末尾
+          if (!isEnd) {
+            const newLoadingElement = createLoadingElement();
+            responseParagraph.appendChild(newLoadingElement);
+          }
           
           // 处理渲染后的HTML内容，替换为组件
           await agentResponseService.processRenderedHtml(htmlContent, responseParagraph, isEnd);
@@ -198,63 +291,37 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
                       mermaidObserver.renderPending();
                     } else {
                       // 如果mermaidObserver不可用，则使用服务中的方法直接渲染
-                      console.log('mermaidObserver不可用，直接调用renderMermaidDiagrams');
                       agentResponseService.renderMermaidDiagrams();
                     }
-                    
-                    // 添加额外的Mermaid图表渲染保障机制
-                    setTimeout(() => {
-                      // 使用服务中的强制渲染方法确保图表正确渲染
-                      agentResponseService.forceRenderDiagrams();
-                    }, 500);
-                  } catch (error) {
-                    console.error('最终处理代码块时出错:', error);
-                  } finally {
-                    isProcessing.value = false;
+                  } catch (codeBlockError) {
+                    console.error('处理代码块或图表时出错:', codeBlockError);
                   }
-                }, 300);
-              } catch (error) {
-                console.error('最终更新编辑器内容时出错:', error);
-                isProcessing.value = false;
+                }, 500);
+              } catch (eventError) {
+                console.error('触发内容更新事件时出错:', eventError);
               }
-            } else {
-              isProcessing.value = false;
             }
-          } else {
-            console.warn(`响应完成但没有有效会话ID: ${convId}`);
-            isProcessing.value = false; // 即使没有会话ID也要结束处理状态
-          }
-          
-          // 标记最后使用的@提及元素为已处理，防止重复触发
-          const lastMention = agentResponseService.findLastActiveMention(editorRef);
-          if (lastMention) {
-            lastMention.setAttribute('data-processed', 'true');
-            console.log('已标记@提及元素为已处理状态');
           }
         }
       } catch (error) {
         console.error('处理流式响应时出错:', error);
+      } finally {
+        // 响应完成时结束处理状态
         if (isComplete) {
           isProcessing.value = false;
+          
+          // 确保最后移除所有加载动画
+          const responseParagraph = document.getElementById(responseId);
+          if (responseParagraph) {
+            const loadingElements = responseParagraph.querySelectorAll('.loading-animation-container');
+            loadingElements.forEach(el => removeLoadingElement(el));
+          }
         }
       }
     };
     
-    // 发送请求并处理流式响应
-    console.log(`准备发送聊天请求，使用会话ID: ${conversationId.value || '未设置'}`);
-    
-    // 确保会话ID是数字
-    let currentConvId = undefined;
-    if (conversationId.value && conversationId.value !== '0' && conversationId.value !== '') {
-      currentConvId = parseInt(conversationId.value);
-      console.log(`使用现有会话ID: ${currentConvId}`);
-    }
-    
-    await chatService.chatWithAgent({
-      content: processedInput, // 使用处理后的输入
-      agent_id: parseInt(agentId),
-      conversation_id: currentConvId
-    }, streamCallback);
+    // 调用chatWithAgent发送请求
+    await chatService.chatWithAgent(chatRequest, streamCallback);
     
     // 防止永久加载状态：设置一个安全超时，确保即使回调没有正确完成，也会清除加载状态
     const safetyTimeout = setTimeout(() => {
@@ -262,9 +329,12 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
       if (isProcessing.value) {
         console.warn('检测到流式响应处理超时，强制结束处理状态');
         
-        // 清除"加载中..."文本
+        // 移除加载动画并显示错误信息
         const responseParagraph = document.getElementById(responseId);
-        if (responseParagraph && responseParagraph.textContent === "加载中...") {
+        if (responseParagraph) {
+          const loadingElements = responseParagraph.querySelectorAll('.loading-animation-container');
+          loadingElements.forEach(el => removeLoadingElement(el));
+          
           responseParagraph.textContent = "响应超时，请重试";
         }
         
@@ -278,19 +348,6 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
   }
 };
 
-// 设置会话ID
-const setConversationId = (id) => {
-  console.log(`AgentResponseHandler.setConversationId被调用，值：${id || 'null'}`);
-  if (id) {
-    conversationId.value = id.toString();
-    console.log(`AgentResponseHandler会话ID已设置: ${conversationId.value}`);
-  } else {
-    // 当id为null时，清空会话ID
-    conversationId.value = null;
-    console.log('AgentResponseHandler会话ID已清空');
-  }
-};
-
 // 暴露给父组件的方法
 defineExpose({
   findLastMention: agentResponseService.findLastMention,
@@ -298,6 +355,8 @@ defineExpose({
   handleChat,
   isProcessing,
   setConversationId,
+  setCurrentNoteId,
+  getCurrentNoteId,
   ensureCodeBlocksHaveLanguage: agentResponseService.ensureCodeBlocksHaveLanguage,
   renderMermaidDiagrams: agentResponseService.renderMermaidDiagrams,
   setupCodeCopyButtons: agentResponseService.setupCodeCopyButtons,
@@ -565,5 +624,27 @@ defineExpose({
   display: block !important;
   margin: 0 auto !important;
   max-width: 100%;
+}
+
+:deep(.loading-animation-container) {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 6px;
+  color: #1677ff;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background-color: rgba(22, 119, 255, 0.08);
+  animation: pulse-bg 2s infinite ease-in-out;
+}
+
+@keyframes pulse-bg {
+  0%, 100% {
+    background-color: rgba(22, 119, 255, 0.08);
+  }
+  50% {
+    background-color: rgba(22, 119, 255, 0.15);
+  }
 }
 </style> 

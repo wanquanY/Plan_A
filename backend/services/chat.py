@@ -82,7 +82,38 @@ async def generate_chat_response(
             # 获取或创建聊天会话
             if not conversation_id:
                 # 创建新的聊天会话
-                chat = await create_chat(db, user_id, agent_id=agent_id)
+                if hasattr(chat_request, "note_id") and chat_request.note_id:
+                    # 查询笔记信息，获取标题
+                    from backend.models.note import Note
+                    from sqlalchemy import select
+                    
+                    # 查询笔记是否存在
+                    note_stmt = select(Note).where(
+                        Note.id == chat_request.note_id,
+                        Note.user_id == user_id,
+                        Note.is_deleted == False
+                    )
+                    note_result = await db.execute(note_stmt)
+                    note = note_result.scalar_one_or_none()
+                    
+                    # 创建聊天对象并传递note_id
+                    from backend.schemas.chat import ChatCreate
+                    
+                    # 不使用笔记标题，让系统自动生成会话标题
+                    chat_data = ChatCreate(title="新对话")
+                    api_logger.info(f"从笔记创建新会话，使用默认标题'新对话'，后续将自动生成")
+                    
+                    chat = await create_chat(db, user_id, chat_data=chat_data, agent_id=agent_id)
+                    
+                    # 如果创建成功，将会话ID关联到笔记
+                    if chat and chat_request.note_id and note:
+                        note.session_id = chat.id
+                        await db.commit()
+                        api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {chat.id}")
+                else:
+                    # 常规创建会话
+                    chat = await create_chat(db, user_id, agent_id=agent_id)
+                    
                 conversation_id = chat.id
                 api_logger.info(f"创建新聊天会话: conversation_id={conversation_id}, user_id={user_id}, agent_id={agent_id}")
             else:
@@ -334,6 +365,11 @@ async def generate_chat_stream(
         # 获取或确认聊天会话ID
         conversation_id = chat_request.conversation_id
         new_session_created = False
+        note_id = None
+        
+        # 检查是否有笔记ID需要关联
+        if hasattr(chat_request, "note_id") and chat_request.note_id:
+            note_id = chat_request.note_id
         
         # 获取Agent信息
         agent_id = chat_request.agent_id
@@ -360,7 +396,38 @@ async def generate_chat_stream(
             # 获取或创建聊天会话
             if not conversation_id:
                 # 创建新的聊天会话
-                chat = await create_chat(db, user_id, agent_id=agent_id)
+                if note_id:
+                    # 查询笔记信息，获取标题
+                    from backend.models.note import Note
+                    from sqlalchemy import select
+                    
+                    # 查询笔记是否存在
+                    note_stmt = select(Note).where(
+                        Note.id == note_id,
+                        Note.user_id == user_id,
+                        Note.is_deleted == False
+                    )
+                    note_result = await db.execute(note_stmt)
+                    note = note_result.scalar_one_or_none()
+                    
+                    # 创建聊天对象并传递note_id
+                    from backend.schemas.chat import ChatCreate
+                    
+                    # 不使用笔记标题，让系统自动生成会话标题
+                    chat_data = ChatCreate(title="新对话")
+                    api_logger.info(f"从笔记创建新会话，使用默认标题'新对话'，后续将自动生成")
+                    
+                    chat = await create_chat(db, user_id, chat_data=chat_data, agent_id=agent_id)
+                    
+                    # 如果创建成功，将会话ID关联到笔记
+                    if chat and note_id and note:
+                        note.session_id = chat.id
+                        await db.commit()
+                        api_logger.info(f"流式API: 笔记ID {note_id} 已关联到会话ID {chat.id}")
+                else:
+                    # 常规创建会话
+                    chat = await create_chat(db, user_id, agent_id=agent_id)
+                
                 conversation_id = chat.id
                 new_session_created = True
                 api_logger.info(f"创建新聊天会话: conversation_id={conversation_id}, user_id={user_id}, agent_id={agent_id}")

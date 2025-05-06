@@ -3,7 +3,6 @@ import { ref, computed, onMounted } from 'vue';
 import { message, Modal, Tabs } from 'ant-design-vue';
 import { PlusOutlined } from '@ant-design/icons-vue';
 import CreateAgentForm from '@/components/CreateAgentForm.vue';
-import MainLayout from '@/components/MainLayout.vue';
 import agentService from '@/services/agent';
 import userService from '@/services/user';
 import type { Agent } from '@/services/agent';
@@ -95,90 +94,88 @@ onMounted(async () => {
 </script>
 
 <template>
-  <MainLayout :username="username" editorTitle="Agent 管理">
-    <div class="agent-management">
-      <div class="page-header">
-        <h1>Agent 管理</h1>
-        <button class="create-agent-btn" @click="showCreateAgentModal">
-          <PlusOutlined />
-          <span>创建新 Agent</span>
-        </button>
-      </div>
-
-      <div class="agent-tabs-container" v-if="!loading">
-        <Tabs v-model:activeKey="activeTab" @change="handleTabChange">
-          <Tabs.TabPane key="publicAgents" tab="公开 Agent">
-            <div v-if="publicAgents.length === 0" class="empty-state">
-              暂无公开的 Agent
-            </div>
-            
-            <div v-else class="agent-grid">
-              <div v-for="agent in publicAgents" :key="agent.id" class="agent-card">
-                <div class="agent-header">
-                  <div class="agent-avatar">
-                    <img :src="agent.avatar_url" alt="Agent Avatar" />
-                  </div>
-                  <div class="agent-title">
-                    <h3 class="agent-name">{{ agent.name }}</h3>
-                    <span class="agent-visibility">公开</span>
-                  </div>
-                </div>
-                <div class="agent-info">
-                  <div class="agent-model">{{ agent.model }}</div>
-                  <div class="agent-prompt-preview">{{ agent.system_prompt.substring(0, 50) }}{{ agent.system_prompt.length > 50 ? '...' : '' }}</div>
-                  <div class="agent-meta">
-                    <span class="agent-created">创建于: {{ formatDateTime(agent.created_at) }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Tabs.TabPane>
-          
-          <Tabs.TabPane key="myAgents" tab="我的 Agent">
-            <div v-if="myAgents.length === 0" class="empty-state">
-              暂无个人 Agent，点击"创建新 Agent"按钮创建您的第一个 Agent
-            </div>
-            
-            <div v-else class="agent-grid">
-              <div v-for="agent in myAgents" :key="agent.id" class="agent-card">
-                <div class="agent-header">
-                  <div class="agent-avatar">
-                    <img :src="agent.avatar_url" alt="Agent Avatar" />
-                  </div>
-                  <div class="agent-title">
-                    <h3 class="agent-name">{{ agent.name }}</h3>
-                    <span class="agent-visibility">{{ agent.is_public ? '公开' : '私有' }}</span>
-                  </div>
-                </div>
-                <div class="agent-info">
-                  <div class="agent-model">{{ agent.model }}</div>
-                  <div class="agent-prompt-preview">{{ agent.system_prompt.substring(0, 50) }}{{ agent.system_prompt.length > 50 ? '...' : '' }}</div>
-                  <div class="agent-meta">
-                    <span class="agent-created">创建于: {{ formatDateTime(agent.created_at) }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Tabs.TabPane>
-        </Tabs>
-      </div>
-      
-      <div v-else class="loading-state">
-        加载中...
-      </div>
-
-      <!-- 创建 Agent 弹窗 -->
-      <Modal
-        v-model:visible="createModalVisible"
-        title="创建新 Agent"
-        width="700px"
-        :footer="null"
-        @cancel="createModalVisible = false"
-      >
-        <CreateAgentForm @success="handleAgentCreated" @cancel="createModalVisible = false" />
-      </Modal>
+  <div class="agent-management">
+    <div class="page-header">
+      <h1>Agent 管理</h1>
+      <button class="create-agent-btn" @click="showCreateAgentModal">
+        <PlusOutlined />
+        <span>创建新 Agent</span>
+      </button>
     </div>
-  </MainLayout>
+
+    <div class="agent-tabs-container" v-if="!loading">
+      <Tabs v-model:activeKey="activeTab" @change="handleTabChange">
+        <Tabs.TabPane key="publicAgents" tab="公开 Agent">
+          <div v-if="publicAgents.length === 0" class="empty-state">
+            暂无公开的 Agent
+          </div>
+          
+          <div v-else class="agent-grid">
+            <div v-for="agent in publicAgents" :key="agent.id" class="agent-card">
+              <div class="agent-header">
+                <div class="agent-avatar">
+                  <img :src="agent.avatar_url" alt="Agent Avatar" />
+                </div>
+                <div class="agent-title">
+                  <h3 class="agent-name">{{ agent.name }}</h3>
+                  <span class="agent-visibility">公开</span>
+                </div>
+              </div>
+              <div class="agent-info">
+                <div class="agent-model">{{ agent.model }}</div>
+                <div class="agent-prompt-preview">{{ agent.system_prompt.substring(0, 50) }}{{ agent.system_prompt.length > 50 ? '...' : '' }}</div>
+                <div class="agent-meta">
+                  <span class="agent-created">创建于: {{ formatDateTime(agent.created_at) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Tabs.TabPane>
+        
+        <Tabs.TabPane key="myAgents" tab="我的 Agent">
+          <div v-if="myAgents.length === 0" class="empty-state">
+            暂无个人 Agent，点击"创建新 Agent"按钮创建您的第一个 Agent
+          </div>
+          
+          <div v-else class="agent-grid">
+            <div v-for="agent in myAgents" :key="agent.id" class="agent-card">
+              <div class="agent-header">
+                <div class="agent-avatar">
+                  <img :src="agent.avatar_url" alt="Agent Avatar" />
+                </div>
+                <div class="agent-title">
+                  <h3 class="agent-name">{{ agent.name }}</h3>
+                  <span class="agent-visibility">{{ agent.is_public ? '公开' : '私有' }}</span>
+                </div>
+              </div>
+              <div class="agent-info">
+                <div class="agent-model">{{ agent.model }}</div>
+                <div class="agent-prompt-preview">{{ agent.system_prompt.substring(0, 50) }}{{ agent.system_prompt.length > 50 ? '...' : '' }}</div>
+                <div class="agent-meta">
+                  <span class="agent-created">创建于: {{ formatDateTime(agent.created_at) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Tabs.TabPane>
+      </Tabs>
+    </div>
+    
+    <div v-else class="loading-state">
+      加载中...
+    </div>
+
+    <!-- 创建 Agent 弹窗 -->
+    <Modal
+      v-model:visible="createModalVisible"
+      title="创建新 Agent"
+      width="700px"
+      :footer="null"
+      @cancel="createModalVisible = false"
+    >
+      <CreateAgentForm @success="handleAgentCreated" @cancel="createModalVisible = false" />
+    </Modal>
+  </div>
 </template>
 
 <style scoped>

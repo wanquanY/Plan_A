@@ -11,7 +11,6 @@ import {
   CheckCircleOutlined
 } from '@ant-design/icons-vue';
 import type { UploadChangeParam } from 'ant-design-vue';
-import MainLayout from '@/components/MainLayout.vue';
 import userService from '@/services/user';
 import type { User, UserUpdate, PasswordChange } from '@/services/user';
 
@@ -201,227 +200,225 @@ onMounted(() => {
 </script>
 
 <template>
-  <MainLayout :username="userInfo.username || '用户'" editorTitle="用户信息">
-    <div class="user-profile">
-      <div class="page-header">
-        <h1>个人资料</h1>
-        <p class="subtitle">管理您的账户信息和密码</p>
-      </div>
-      
-      <div v-if="loading" class="loading-container">
-        <div class="loading-spinner"></div>
-        <p>加载中，请稍候...</p>
-      </div>
-      
-      <div v-else class="profile-content">
-        <Row :gutter="24">
-          <!-- 左侧个人信息 -->
-          <Col :xs="24" :md="14">
-            <Card class="profile-card info-card" :bordered="false">
-              <template #title>
-                <div class="card-title">
-                  <UserOutlined />
-                  <span>基本信息</span>
-                </div>
-              </template>
-              
-              <div class="avatar-section">
-                <div class="avatar-container">
-                  <Avatar 
-                    :size="100" 
-                    :src="userInfo.avatar_url" 
-                    v-if="userInfo.avatar_url"
-                    class="user-avatar"
-                  />
-                  <Avatar 
-                    :size="100" 
-                    :icon="UserOutlined" 
-                    v-else 
-                    class="user-avatar"
-                  />
-                  
-                  <Upload
-                    name="file"
-                    :multiple="false"
-                    :action="'http://101.42.168.191:18000/api/upload'"
-                    :data="{ folder: 'avatar' }"
-                    :showUploadList="false"
-                    :beforeUpload="beforeUpload"
-                    @change="handleChange"
-                  >
-                    <div class="upload-overlay">
-                      <UploadOutlined />
-                      <span>更换头像</span>
-                    </div>
-                  </Upload>
-                </div>
+  <div class="user-profile">
+    <div class="page-header">
+      <h1>个人资料</h1>
+      <p class="subtitle">管理您的账户信息和密码</p>
+    </div>
+    
+    <div v-if="loading" class="loading-container">
+      <div class="loading-spinner"></div>
+      <p>加载中，请稍候...</p>
+    </div>
+    
+    <div v-else class="profile-content">
+      <Row :gutter="24">
+        <!-- 左侧个人信息 -->
+        <Col :xs="24" :md="14">
+          <Card class="profile-card info-card" :bordered="false">
+            <template #title>
+              <div class="card-title">
+                <UserOutlined />
+                <span>基本信息</span>
+              </div>
+            </template>
+            
+            <div class="avatar-section">
+              <div class="avatar-container">
+                <Avatar 
+                  :size="100" 
+                  :src="userInfo.avatar_url" 
+                  v-if="userInfo.avatar_url"
+                  class="user-avatar"
+                />
+                <Avatar 
+                  :size="100" 
+                  :icon="UserOutlined" 
+                  v-else 
+                  class="user-avatar"
+                />
                 
-                <div class="user-meta">
-                  <h2>{{ userInfo.username }}</h2>
-                  <p>账号创建于: {{ formatDate(userInfo.created_at) }}</p>
-                </div>
+                <Upload
+                  name="file"
+                  :multiple="false"
+                  :action="'http://101.42.168.191:18000/api/upload'"
+                  :data="{ folder: 'avatar' }"
+                  :showUploadList="false"
+                  :beforeUpload="beforeUpload"
+                  @change="handleChange"
+                >
+                  <div class="upload-overlay">
+                    <UploadOutlined />
+                    <span>更换头像</span>
+                  </div>
+                </Upload>
               </div>
               
-              <Divider />
-              
-              <Form
-                ref="formRef"
-                :model="userInfo"
-                layout="vertical"
-                class="profile-form"
-              >
-                <Row :gutter="16">
-                  <Col :span="24">
-                    <Form.Item
-                      label="用户名"
-                      name="username"
-                      :rules="[{ required: true, message: '请输入用户名' }]"
+              <div class="user-meta">
+                <h2>{{ userInfo.username }}</h2>
+                <p>账号创建于: {{ formatDate(userInfo.created_at) }}</p>
+              </div>
+            </div>
+            
+            <Divider />
+            
+            <Form
+              ref="formRef"
+              :model="userInfo"
+              layout="vertical"
+              class="profile-form"
+            >
+              <Row :gutter="16">
+                <Col :span="24">
+                  <Form.Item
+                    label="用户名"
+                    name="username"
+                    :rules="[{ required: true, message: '请输入用户名' }]"
+                  >
+                    <Input 
+                      v-model:value="userInfo.username" 
+                      placeholder="请输入用户名" 
+                      size="large"
                     >
-                      <Input 
-                        v-model:value="userInfo.username" 
-                        placeholder="请输入用户名" 
-                        size="large"
-                      >
-                        <template #prefix>
-                          <UserOutlined />
-                        </template>
-                      </Input>
-                    </Form.Item>
-                  </Col>
-                  
-                  <Col :span="24">
-                    <Form.Item
-                      label="手机号"
-                      name="phone"
-                      :rules="[
-                        { required: true, message: '请输入手机号' },
-                        { pattern: /^1[3-9]\d{9}$/, message: '请输入有效的手机号码' }
-                      ]"
+                      <template #prefix>
+                        <UserOutlined />
+                      </template>
+                    </Input>
+                  </Form.Item>
+                </Col>
+                
+                <Col :span="24">
+                  <Form.Item
+                    label="手机号"
+                    name="phone"
+                    :rules="[
+                      { required: true, message: '请输入手机号' },
+                      { pattern: /^1[3-9]\d{9}$/, message: '请输入有效的手机号码' }
+                    ]"
+                  >
+                    <Input 
+                      v-model:value="userInfo.phone" 
+                      placeholder="请输入手机号" 
+                      size="large"
                     >
-                      <Input 
-                        v-model:value="userInfo.phone" 
-                        placeholder="请输入手机号" 
-                        size="large"
-                      >
-                        <template #prefix>
-                          <MobileOutlined />
-                        </template>
-                      </Input>
-                    </Form.Item>
-                  </Col>
-                </Row>
-                
-                <Form.Item class="form-actions">
-                  <Button 
-                    type="primary" 
-                    @click="saveUserInfo" 
-                    :loading="saveLoading"
-                    size="large"
-                    class="save-button"
-                  >
-                    <template #icon>
-                      <SaveOutlined />
-                    </template>
-                    保存修改
-                  </Button>
-                </Form.Item>
-              </Form>
-            </Card>
-          </Col>
-          
-          <!-- 右侧密码修改 -->
-          <Col :xs="24" :md="10">
-            <Card class="profile-card password-card" :bordered="false">
-              <template #title>
-                <div class="card-title">
-                  <KeyOutlined />
-                  <span>修改密码</span>
-                </div>
-              </template>
+                      <template #prefix>
+                        <MobileOutlined />
+                      </template>
+                    </Input>
+                  </Form.Item>
+                </Col>
+              </Row>
               
-              <Form
-                ref="passwordFormRef"
-                :model="passwordForm"
-                layout="vertical"
-                class="password-form"
+              <Form.Item class="form-actions">
+                <Button 
+                  type="primary" 
+                  @click="saveUserInfo" 
+                  :loading="saveLoading"
+                  size="large"
+                  class="save-button"
+                >
+                  <template #icon>
+                    <SaveOutlined />
+                  </template>
+                  保存修改
+                </Button>
+              </Form.Item>
+            </Form>
+          </Card>
+        </Col>
+        
+        <!-- 右侧密码修改 -->
+        <Col :xs="24" :md="10">
+          <Card class="profile-card password-card" :bordered="false">
+            <template #title>
+              <div class="card-title">
+                <KeyOutlined />
+                <span>修改密码</span>
+              </div>
+            </template>
+            
+            <Form
+              ref="passwordFormRef"
+              :model="passwordForm"
+              layout="vertical"
+              class="password-form"
+            >
+              <Form.Item
+                label="当前密码"
+                name="current_password"
+                :rules="[{ required: true, message: '请输入当前密码' }]"
               >
-                <Form.Item
-                  label="当前密码"
-                  name="current_password"
-                  :rules="[{ required: true, message: '请输入当前密码' }]"
+                <Input.Password 
+                  v-model:value="passwordForm.current_password" 
+                  placeholder="请输入当前密码" 
+                  size="large"
                 >
-                  <Input.Password 
-                    v-model:value="passwordForm.current_password" 
-                    placeholder="请输入当前密码" 
-                    size="large"
-                  >
-                    <template #prefix>
-                      <KeyOutlined />
-                    </template>
-                  </Input.Password>
-                </Form.Item>
-                
-                <Form.Item
-                  label="新密码"
-                  name="new_password"
-                  :rules="[
-                    { required: true, message: '请输入新密码' },
-                    { min: 6, message: '密码长度不能少于6个字符' }
-                  ]"
+                  <template #prefix>
+                    <KeyOutlined />
+                  </template>
+                </Input.Password>
+              </Form.Item>
+              
+              <Form.Item
+                label="新密码"
+                name="new_password"
+                :rules="[
+                  { required: true, message: '请输入新密码' },
+                  { min: 6, message: '密码长度不能少于6个字符' }
+                ]"
+              >
+                <Input.Password 
+                  v-model:value="passwordForm.new_password" 
+                  placeholder="请输入新密码" 
+                  size="large"
                 >
-                  <Input.Password 
-                    v-model:value="passwordForm.new_password" 
-                    placeholder="请输入新密码" 
-                    size="large"
-                  >
-                    <template #prefix>
-                      <KeyOutlined />
-                    </template>
-                  </Input.Password>
-                </Form.Item>
-                
-                <Form.Item
-                  label="确认新密码"
-                  name="confirm_password"
-                  :rules="[
-                    { required: true, message: '请确认新密码' },
-                    { validator: (_, value) => 
-                      value === passwordForm.new_password ? Promise.resolve() : Promise.reject('两次输入的密码不一致')
-                    }
-                  ]"
+                  <template #prefix>
+                    <KeyOutlined />
+                  </template>
+                </Input.Password>
+              </Form.Item>
+              
+              <Form.Item
+                label="确认新密码"
+                name="confirm_password"
+                :rules="[
+                  { required: true, message: '请确认新密码' },
+                  { validator: (_, value) => 
+                    value === passwordForm.new_password ? Promise.resolve() : Promise.reject('两次输入的密码不一致')
+                  }
+                ]"
+              >
+                <Input.Password 
+                  v-model:value="passwordForm.confirm_password" 
+                  placeholder="请确认新密码" 
+                  size="large"
                 >
-                  <Input.Password 
-                    v-model:value="passwordForm.confirm_password" 
-                    placeholder="请确认新密码" 
-                    size="large"
-                  >
-                    <template #prefix>
-                      <KeyOutlined />
-                    </template>
-                  </Input.Password>
-                </Form.Item>
-                
-                <Form.Item class="form-actions">
-                  <Button 
-                    type="primary" 
-                    @click="changePassword" 
-                    :loading="passwordLoading"
-                    size="large"
-                    class="change-password-button"
-                  >
-                    <template #icon>
-                      <CheckCircleOutlined />
-                    </template>
-                    修改密码
-                  </Button>
-                </Form.Item>
-              </Form>
-            </Card>
-          </Col>
-        </Row>
-      </div>
+                  <template #prefix>
+                    <KeyOutlined />
+                  </template>
+                </Input.Password>
+              </Form.Item>
+              
+              <Form.Item class="form-actions">
+                <Button 
+                  type="primary" 
+                  @click="changePassword" 
+                  :loading="passwordLoading"
+                  size="large"
+                  class="change-password-button"
+                >
+                  <template #icon>
+                    <CheckCircleOutlined />
+                  </template>
+                  修改密码
+                </Button>
+              </Form.Item>
+            </Form>
+          </Card>
+        </Col>
+      </Row>
     </div>
-  </MainLayout>
+  </div>
 </template>
 
 <style scoped>

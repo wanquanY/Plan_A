@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     CONSOLE_LOG_LEVEL: str = os.getenv("CONSOLE_LOG_LEVEL", "debug")
     FILE_LOG_LEVEL: str = os.getenv("FILE_LOG_LEVEL", "info")
     LOG_DIR: str = os.getenv("LOG_DIR", "logs")
+    LOG_ROTATION: str = os.getenv("LOG_ROTATION", "size")  # "size" 或 "time"
+    LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))  # 默认10MB
+    LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "30"))  # 默认保留30个备份
+    
+    # SQLAlchemy日志配置
+    SQLALCHEMY_ECHO: bool = os.getenv("SQLALCHEMY_ECHO", "false").lower() == "true"
     
     # OpenAI配置
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
@@ -51,7 +57,7 @@ class Settings(BaseSettings):
     REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
     REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
     REDIS_TTL: int = int(os.getenv("REDIS_TTL", "86400"))  # 默认记忆保存1天
-    REDIS_MAX_MEMORY_MESSAGES: int = int(os.getenv("REDIS_MAX_MEMORY_MESSAGES", "50"))  # 默认每个会话最多保存50条消息
+    REDIS_MAX_MEMORY_MESSAGES: int = int(os.getenv("REDIS_MAX_MEMORY_MESSAGES", "100"))  # 默认每个会话最多保存100条消息
     REDIS_MAX_USER_MEMORIES: int = int(os.getenv("REDIS_MAX_USER_MEMORIES", "5"))  # 默认每个用户最多保留5个会话的记忆
     
     @property

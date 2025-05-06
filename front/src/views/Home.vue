@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router';
-import { ref, onMounted, reactive, nextTick, h, getCurrentInstance } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+import { ref, onMounted, reactive, nextTick, h, getCurrentInstance, computed, onBeforeMount, inject, watch } from 'vue';
 import { createApp } from 'vue';
 import { message } from 'ant-design-vue';
 import authService from '../services/auth';
 import chatService from '../services/chat';
+import noteService from '../services/note';
 import Editor from '../components/Editor.vue';
-import Sidebar from '../components/Sidebar.vue';
 import mermaid from 'mermaid';
 import MermaidRenderer from '@/components/MermaidRenderer.vue';
 import MarkMap from '@/components/MarkMap.vue';
@@ -14,6 +14,7 @@ import { isMindMapContent as isMindMapContentFromService,
          formatMessageContent as formatMessageContentFromService, 
          formatMessagesToHtml as formatMessagesToHtmlFromService } from '../services/markdownService';
 import { renderCodeBlocks } from '../services/renderService';
+import { debounce } from 'lodash';
 
 // 初始化mermaid配置
 mermaid.initialize({
@@ -28,52 +29,155 @@ mermaid.initialize({
 const isMindMapContent = (content) => isMindMapContentFromService(content);
 
 const router = useRouter();
-const username = ref('用户');
-const editorContent = ref('<p>哈哈哈哈，你可以做什么？</p>');
-const editorTitle = ref('AI对人们生活的影响');
+const route = useRoute();
+const editorContent = ref('<p>请输入内容...</p>');
+const editorTitle = ref('新笔记');
 const wordCount = ref(0);
 const saved = ref(true);
-const sessions = ref([]);
-const activeTab = ref('notes'); // 'notes' 或 'sessions'
-const currentSessionId = ref(null);
-const sidebarCollapsed = ref(false);
 const editorRef = ref(null);
 
-// 从token中解析用户名（简化示例）
-onMounted(() => {
-  const token = localStorage.getItem('access_token') || '';
-  if (token) {
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      if (payload.sub) {
-        username.value = payload.sub;
-      }
-    } catch (e) {
-      console.error('解析token失败', e);
-    }
-  }
-  
-  // 获取会话列表
-  fetchSessions();
-  
-  // 添加复制代码功能
-  document.addEventListener('click', handleCodeCopyClick);
-});
+// 从全局布局获取会话ID和会话列表
+const currentSessionId = inject('currentSessionId');
+const sessions = inject('sessions');
+const fetchSessions = inject('fetchSessions');
+const fetchNotes = inject('fetchNotes');
 
-// 获取会话列表
-const fetchSessions = async () => {
+// 笔记相关数据
+const currentNoteId = ref<number | null>(null);
+const isAutoSaveEnabled = ref(true);
+const lastSavedContent = ref('');
+const firstUserInputDetected = ref(false);
+
+// 自动保存的防抖函数
+const debouncedSave = debounce(async (content: string) => {
+  if (!isAutoSaveEnabled.value || !currentNoteId.value) return;
+  
   try {
-    console.log('开始请求会话列表...');
-    const sessionsData = await chatService.getSessions();
-    console.log('会话列表请求完成，结果:', sessionsData ? '成功' : '失败', sessionsData ? `获取到${sessionsData.length}条会话记录` : '');
-    if (sessionsData) {
-      sessions.value = sessionsData;
-      console.log('会话列表更新成功，当前会话数量:', sessions.value.length);
+    // 只有当内容变化时才保存
+    if (content !== lastSavedContent.value) {
+      // 检测是否有标题变化（用户的第一句话）
+      let title = editorTitle.value;
+      
+      // 如果检测到第一行输入，并且之前没有检测到用户输入
+      if (!firstUserInputDetected.value) {
+        // 从内容中提取第一行作为标题
+        const firstLine = content.replace(/<(?:.|\n)*?>/gm, '')
+                                 .trim()
+                                 .split('\n')[0]
+                                 .substring(0, 50);
+        
+        if (firstLine && firstLine.length > 0) {
+          title = firstLine;
+          editorTitle.value = title;
+          firstUserInputDetected.value = true;
+        }
+      }
+      
+      console.log('自动保存笔记内容...');
+      await noteService.autoSaveNote(currentNoteId.value, content, title);
+      lastSavedContent.value = content;
+      saved.value = true;
+      
+      // 保存成功后刷新笔记列表
+      if (fetchNotes) {
+        console.log('刷新侧边栏笔记列表...');
+        fetchNotes();
+      }
     }
   } catch (error) {
-    console.error('获取会话列表失败:', error);
+    console.error('自动保存失败:', error);
+    saved.value = false;
   }
-};
+}, 2000);
+
+// 监听路由参数变化
+onBeforeMount(() => {
+  // 首先检查URL中是否有笔记ID参数
+  if (route.query.note) {
+    // 无论是否有会话ID，只要有笔记ID就加载笔记内容
+    const noteId = parseInt(route.query.note as string);
+    if (!isNaN(noteId)) {
+      console.log(`从URL参数设置笔记ID: ${noteId}`);
+      currentNoteId.value = noteId;
+      
+      // 如果同时有会话ID，也设置会话ID，但优先加载笔记内容
+      if (route.query.id) {
+        const sessionId = parseInt(route.query.id as string);
+        if (!isNaN(sessionId)) {
+          currentSessionId.value = sessionId;
+          console.log(`URL中同时有会话ID: ${sessionId}，但优先加载笔记内容`);
+        }
+      } else {
+        currentSessionId.value = null;
+      }
+      
+      // 加载笔记内容
+      fetchNoteDetail(noteId);
+    }
+  }
+  // 如果只有会话ID参数，没有笔记ID参数
+  else if (route.query.id) {
+    const sessionId = parseInt(route.query.id as string);
+    if (!isNaN(sessionId)) {
+      // 设置当前会话ID并获取详情
+      currentSessionId.value = sessionId;
+      fetchSessionDetail(sessionId);
+      
+      // 尝试查找关联的笔记ID，但不加载笔记内容
+      fetchNoteBySessionId(sessionId);
+    }
+  } else if (route.query.new) {
+    // 如果URL中有new参数，表示用户想创建一个新笔记
+    editorContent.value = '<p></p>';
+    editorTitle.value = '新笔记';
+    currentSessionId.value = null;
+    currentNoteId.value = null;
+  }
+});
+
+// 监听会话ID变化
+watch(() => route.query, (newQuery) => {
+  // 首先检查URL中是否有笔记ID参数
+  if (newQuery.note) {
+    // 无论是否有会话ID，只要有笔记ID就加载笔记内容
+    const noteId = parseInt(newQuery.note as string);
+    if (!isNaN(noteId)) {
+      console.log(`从URL参数变化设置笔记ID: ${noteId}`);
+      currentNoteId.value = noteId;
+      
+      // 如果同时有会话ID，也设置会话ID，但优先加载笔记内容
+      if (newQuery.id) {
+        const sessionId = parseInt(newQuery.id as string);
+        if (!isNaN(sessionId)) {
+          currentSessionId.value = sessionId;
+          console.log(`URL中同时有会话ID: ${sessionId}，但优先加载笔记内容`);
+        }
+      } else {
+        currentSessionId.value = null;
+      }
+      
+      // 加载笔记内容
+      fetchNoteDetail(noteId);
+    }
+  }
+  // 如果只有会话ID参数，没有笔记ID参数
+  else if (newQuery.id) {
+    const sessionId = parseInt(newQuery.id as string);
+    if (!isNaN(sessionId)) {
+      currentSessionId.value = sessionId;
+      fetchSessionDetail(sessionId);
+      
+      // 尝试查找关联的笔记ID，但不加载笔记内容
+      fetchNoteBySessionId(sessionId);
+    }
+  } else if (newQuery.new) {
+    // 如果URL中有new参数，表示用户想创建一个新笔记
+    editorContent.value = '<p></p>';
+    editorTitle.value = '新笔记';
+    currentSessionId.value = null;
+    currentNoteId.value = null;
+  }
+}, { deep: true });
 
 // 获取会话详情
 const fetchSessionDetail = async (sessionId) => {
@@ -105,7 +209,7 @@ const fetchSessionDetail = async (sessionId) => {
         
         const messagesHtml = formatMessagesToHtmlFromService(cleanedMessages, sessionData.title);
         editorContent.value = messagesHtml;
-        editorTitle.value = sessionData.title || '未命名会话';
+        editorTitle.value = sessionData.title || '未命名笔记';
         
         // 在DOM更新后处理代码块和图表
         nextTick(() => {
@@ -121,62 +225,13 @@ const fetchSessionDetail = async (sessionId) => {
                 // 处理mermaid图表
                 console.log('处理历史会话中的mermaid图表');
                 
-                // 寻找所有mermaid代码块并处理
-                const mermaidCodeBlocks = document.querySelectorAll('pre > code.language-mermaid');
-                console.log(`历史会话中找到${mermaidCodeBlocks.length}个Mermaid代码块`);
+                // 渲染mermaid图表
+                renderMermaidDynamically();
                 
-                if (mermaidCodeBlocks.length > 0) {
-                  // 处理所有的mermaid代码块
-                  mermaidCodeBlocks.forEach((codeBlock) => {
-                    const code = codeBlock.textContent || '';
-                    const preElement = codeBlock.closest('pre');
-                    if (!preElement || preElement.querySelector('.mermaid-container')) return;
-                    
-                    // 创建一个新的mermaid渲染容器
-                    const mermaidContainer = document.createElement('div');
-                    mermaidContainer.className = 'mermaid-container';
-                    
-                    // 创建mermaid元素
-                    const mermaidEl = document.createElement('div');
-                    const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-                    mermaidEl.id = mermaidId;
-                    mermaidEl.className = 'mermaid';
-                    mermaidEl.textContent = code;
-                    mermaidEl.setAttribute('data-original-content', code);
-                    
-                    // 添加复制按钮
-                    const copyButton = document.createElement('button');
-                    copyButton.className = 'copy-button';
-                    copyButton.textContent = '复制';
-                    copyButton.onclick = () => {
-                      navigator.clipboard.writeText(code);
-                      copyButton.textContent = '已复制';
-                      setTimeout(() => {
-                        copyButton.textContent = '复制';
-                      }, 2000);
-                    };
-                    
-                    // 组装DOM
-                    mermaidContainer.appendChild(mermaidEl);
-                    mermaidContainer.appendChild(copyButton);
-                    
-                    // 替换原始pre元素
-                    preElement.replaceWith(mermaidContainer);
-                  });
-                }
+                // 渲染思维导图
+                renderMarkMaps();
                 
-                // 延迟渲染所有图表，确保DOM已更新
-                setTimeout(() => {
-                  console.log('开始渲染历史会话中的图表');
-                  
-                  // 渲染mermaid图表
-                  renderMermaidDynamically();
-                  
-                  // 渲染思维导图
-                  renderMarkMaps();
-                  
-                  console.log('已处理会话历史记录中的所有图表和思维导图');
-                }, 300);
+                console.log('已处理会话历史记录中的所有图表和思维导图');
               });
             });
           }, 800);
@@ -187,8 +242,105 @@ const fetchSessionDetail = async (sessionId) => {
     }
   } catch (error) {
     console.error('获取会话详情失败:', error);
-    alert('获取会话详情失败，请稍后重试');
+    message.error('获取笔记详情失败，请稍后重试');
   }
+};
+
+// 获取笔记详情
+const fetchNoteDetail = async (noteId: number) => {
+  try {
+    const noteData = await noteService.getNoteDetail(noteId);
+    if (noteData) {
+      // 确保设置当前笔记ID
+      currentNoteId.value = noteId;
+      console.log(`从笔记详情设置笔记ID: ${noteId}`);
+      
+      // 检查笔记是否已关联会话，只设置会话ID但不加载会话内容
+      if (noteData.session_id) {
+        currentSessionId.value = noteData.session_id;
+        console.log(`笔记已关联会话ID: ${noteData.session_id}，但优先显示笔记内容`);
+      } else {
+        // 如果笔记没有关联会话，确保清空currentSessionId
+        currentSessionId.value = null;
+        console.log('笔记未关联会话，清空currentSessionId');
+      }
+      
+      // 始终加载笔记内容
+      editorContent.value = noteData.content || '<p></p>';
+      editorTitle.value = noteData.title || '未命名笔记';
+      lastSavedContent.value = noteData.content || '';
+      
+      // 如果笔记标题为空，说明是新创建的笔记，需要从用户输入中获取标题
+      if (!noteData.title || noteData.title.trim() === '') {
+        console.log('检测到新创建的笔记，将从用户输入的第一行设置标题');
+        firstUserInputDetected.value = false; // 设置为false，等待用户输入
+      } else {
+        firstUserInputDetected.value = true; // 已有标题的笔记不需要检测第一行
+      }
+      
+      // 在DOM更新后处理代码块和图表
+      nextTick(() => {
+        setTimeout(() => {
+          const editorContainer = document.querySelector('.editor-content');
+          if (!editorContainer) return;
+          
+          // 导入渲染服务
+          import('../services/renderService').then(({ renderCodeBlocks, renderMermaidDynamically, renderMarkMaps }) => {
+            renderCodeBlocks(false).then(() => {
+              console.log('处理笔记中的mermaid图表');
+              renderMermaidDynamically();
+              renderMarkMaps();
+              console.log('已处理笔记中的所有图表和思维导图');
+            });
+          });
+        }, 800);
+      });
+    }
+  } catch (error) {
+    console.error('获取笔记详情失败:', error);
+    message.error('获取笔记详情失败，请稍后重试');
+  }
+};
+
+// 通过会话ID查找关联的笔记
+const fetchNoteBySessionId = async (sessionId: number) => {
+  try {
+    const noteData = await noteService.getNoteBySessionId(sessionId);
+    if (noteData) {
+      currentNoteId.value = noteData.id;
+      console.log(`从会话ID查找到并设置笔记ID: ${noteData.id}`);
+      
+      // 不再更新编辑器内容，否则会覆盖会话内容
+      // editorContent.value = noteData.content || '<p></p>';
+      // editorTitle.value = noteData.title || '未命名笔记';
+      // lastSavedContent.value = noteData.content || '';
+      firstUserInputDetected.value = true; // 已存在的笔记不需要检测第一行
+      
+      // 更新URL，添加note参数但不改变编辑器内容
+      router.replace(`/?id=${sessionId}&note=${noteData.id}`);
+    }
+  } catch (error) {
+    console.error('根据会话ID查找笔记失败:', error);
+  }
+};
+
+// 更新编辑器内容
+const updateContent = (content: string) => {
+  editorContent.value = content;
+  saved.value = false; // 内容变化时，标记为未保存
+  
+  // 调用防抖保存函数
+  debouncedSave(content);
+};
+
+// 更新字数
+const updateWordCount = (count: number) => {
+  wordCount.value = count;
+};
+
+const handleLogout = () => {
+  authService.logout();
+  router.push('/login');
 };
 
 // 将消息列表转换为HTML显示格式
@@ -205,7 +357,7 @@ const formatMessageTime = (dateString) => {
   return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 };
 
-// 格式化消息内容，处理Markdown和代码块（替换原有函数）
+// 格式化消息内容，处理Markdown和代码块
 const formatMessageContent = (content) => {
   // 使用markdownService中的formatMessageContent函数
   return formatMessageContentFromService(content);
@@ -233,22 +385,6 @@ const truncateMessage = (message, length = 30) => {
   return message.substring(0, length) + '...';
 };
 
-const handleLogout = () => {
-  authService.logout();
-  router.push('/login');
-};
-
-// 更新编辑器内容
-const updateContent = (content: string) => {
-  editorContent.value = content;
-  saved.value = true; // 自动保存
-};
-
-// 更新字数
-const updateWordCount = (count: number) => {
-  wordCount.value = count;
-};
-
 // 切换标签
 const handleTabSwitch = (tab) => {
   // 如果切换到测试页面，跳转到测试路由
@@ -263,6 +399,7 @@ const handleTabSwitch = (tab) => {
 
 // 点击会话项
 const handleSessionClick = (sessionId) => {
+  // 仅获取会话详情，不查找关联的笔记
   fetchSessionDetail(sessionId);
 };
 
@@ -273,38 +410,31 @@ const toggleSidebar = () => {
 
 // 新建笔记或会话
 const handleNewNote = () => {
-  if (activeTab.value === 'notes') {
-    // 实现新建笔记逻辑
-    // 清空编辑器，重置标题等
-    editorContent.value = '<p></p>';
-    editorTitle.value = '未命名笔记';
-    currentSessionId.value = null;
-  } else {
-    // 实现新建会话逻辑 - 只清空编辑器，不直接创建会话
-    editorContent.value = '<p></p>';
-    editorTitle.value = '新会话';
-    currentSessionId.value = null; // 清空当前会话ID
-  }
+  // 总是使用会话逻辑
+  // 实现新建会话逻辑 - 只清空编辑器，不直接创建会话
+  editorContent.value = '<p></p>';
+  editorTitle.value = '新笔记';
+  currentSessionId.value = null; // 清空当前会话ID
 };
 
 // 创建新会话
 const createNewSession = async () => {
   try {
     // 调用创建会话API
-    const response = await chatService.createSession('新会话');
+    const response = await chatService.createSession('新笔记');
     if (response && response.id) {
       // 创建成功，刷新会话列表并切换到新会话
       await fetchSessions();
       currentSessionId.value = response.id;
       editorContent.value = '<p></p>';
-      editorTitle.value = response.title || '新会话';
-      message.success('新会话创建成功');
+      editorTitle.value = response.title || '新笔记';
+      message.success('新笔记创建成功');
     } else {
-      message.error('创建会话失败');
+      message.error('创建笔记失败');
     }
   } catch (error) {
-    console.error('创建会话失败:', error);
-    message.error('创建会话失败');
+    console.error('创建笔记失败:', error);
+    message.error('创建笔记失败');
   }
 };
 
@@ -358,44 +488,21 @@ const ensureCodeBlocksHaveLanguage = () => {
   });
 };
 
-// 在全局对象上添加刷新会话列表的方法，允许其他组件和服务调用
-if (typeof window !== 'undefined') {
-  window.refreshSessions = async () => {
-    try {
-      console.log('全局刷新会话列表方法被调用');
-      const sessionsData = await chatService.getSessions();
-      if (sessionsData) {
-        // 使用原始导入的ref变量来更新
-        sessions.value = sessionsData;
-        console.log('会话列表已全局刷新，当前数量:', sessions.value.length);
-      }
-    } catch (error) {
-      console.error('全局刷新会话列表失败:', error);
-    }
-  };
-}
+// 处理加载更多
+const handleLoadMore = () => {
+  if (pagination.loading || !pagination.hasMore) return;
+  
+  const nextPage = pagination.current + 1;
+  if (nextPage <= pagination.pages) {
+    fetchSessions(nextPage, true);
+  }
+};
 </script>
 
 <template>
   <div class="home-container">
     <MermaidRenderer>
       <div class="notebook-layout">
-        <!-- 使用侧边栏组件 -->
-        <Sidebar 
-          :username="username"
-          :editor-title="editorTitle"
-          :sessions="sessions"
-          :active-tab="activeTab"
-          :current-session-id="currentSessionId"
-          :collapsed="sidebarCollapsed"
-          @logout="handleLogout"
-          @switch-tab="handleTabSwitch"
-          @session-click="handleSessionClick"
-          @toggle-sidebar="toggleSidebar"
-          @new-note="handleNewNote"
-          @nav-to="handleNavigation"
-        />
-        
         <!-- 主内容区 -->
         <div class="main-content">
           <!-- 编辑器内容 -->
@@ -406,6 +513,7 @@ if (typeof window !== 'undefined') {
               @word-count="updateWordCount"
               ref="editorRef"
               :conversation-id="currentSessionId"
+              :note-id="currentNoteId"
             />
             
             <div class="editor-footer">

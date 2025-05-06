@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, nextTick, inject, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { 
   LogoutOutlined, 
   FileOutlined,
@@ -7,9 +8,16 @@ import {
   LeftOutlined,
   RightOutlined,
   UserOutlined,
-  RobotOutlined
+  RobotOutlined,
+  EditOutlined,
+  DeleteOutlined
 } from '@ant-design/icons-vue';
 import UserDropdownMenu from './UserDropdownMenu.vue';
+import noteService from '../services/note';
+import chatService from '../services/chat';
+import { message } from 'ant-design-vue';
+
+const route = useRoute();
 
 const props = defineProps({
   username: {
@@ -24,6 +32,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  notes: {
+    type: Array,
+    default: () => []
+  },
   activeTab: {
     type: String,
     default: 'notes'
@@ -35,14 +47,59 @@ const props = defineProps({
   collapsed: {
     type: Boolean,
     default: false
+  },
+  pagination: {
+    type: Object,
+    default: () => ({})
+  },
+  notesPagination: {
+    type: Object,
+    default: () => ({})
+  },
+  loading: {
+    type: Boolean,
+    default: false
+  },
+  hasMore: {
+    type: Boolean,
+    default: true
   }
 });
 
-const emit = defineEmits(['logout', 'switch-tab', 'session-click', 'toggle-sidebar', 'new-note', 'nav-to']);
+const emit = defineEmits(['logout', 'switch-tab', 'session-click', 'note-click', 'toggle-sidebar', 'new-note', 'nav-to', 'load-more']);
+
+// 确保始终使用笔记标签
+onMounted(() => {
+  // 如果当前标签不是notes，则切换到notes
+  if (props.activeTab !== 'notes') {
+    emit('switch-tab', 'notes');
+  }
+});
+
+// 监听activeTab变化，确保始终为notes
+watch(() => props.activeTab, (newTab) => {
+  if (newTab !== 'notes') {
+    emit('switch-tab', 'notes');
+  }
+});
 
 // 用户菜单显示状态
 const userMenuVisible = ref(false);
 const menuPosition = ref({ x: 0, y: 0 });
+
+// 重命名对话框状态
+const showRenameInput = ref(false);
+const editingNoteId = ref(null);
+const newNoteName = ref('');
+
+// 会话重命名状态
+const showSessionRenameInput = ref(false);
+const editingSessionId = ref(null);
+const newSessionName = ref('');
+
+// 从全局布局中注入刷新笔记和会话列表的方法
+const fetchNotes = inject('fetchNotes');
+const fetchSessions = inject('fetchSessions');
 
 // 切换用户菜单显示状态
 const toggleUserMenu = (event) => {
@@ -97,6 +154,187 @@ const formatDate = (dateString) => {
   // 超过一周返回具体日期
   return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
 };
+
+// 处理滚动加载更多
+const handleScroll = (e) => {
+  if ((props.activeTab === 'sessions' && !props.hasMore) || 
+      (props.activeTab === 'notes' && !props.notesPagination.hasMore) || 
+      props.loading) return;
+  
+  const el = e.target;
+  // 如果滚动到距离底部100px以内，触发加载更多
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
+    emit('load-more');
+  }
+};
+
+// 处理重命名笔记点击
+const handleRenameClick = (event, note) => {
+  event.stopPropagation();
+  showRenameInput.value = true;
+  editingNoteId.value = note.id;
+  newNoteName.value = note.title;
+  
+  // 在下一个DOM更新周期后聚焦输入框
+  nextTick(() => {
+    const inputElement = document.querySelector('.rename-input');
+    if (inputElement) {
+      inputElement.focus();
+      // 选中所有文本方便用户直接输入
+      inputElement.select();
+    }
+  });
+};
+
+// 处理重命名提交
+const submitRename = async (event) => {
+  event.stopPropagation();
+  if (!newNoteName.value.trim()) {
+    message.error('笔记名称不能为空');
+    return;
+  }
+  
+  try {
+    await noteService.updateNote(editingNoteId.value, {
+      title: newNoteName.value.trim()
+    });
+    
+    // 更新成功提示
+    message.success('笔记重命名成功');
+    
+    // 重置状态
+    showRenameInput.value = false;
+    editingNoteId.value = null;
+    
+    // 刷新笔记列表 - 使用注入的fetchNotes方法，从第1页开始重新获取笔记
+    if (fetchNotes) {
+      fetchNotes(1, false);
+    }
+  } catch (error) {
+    console.error('重命名笔记失败:', error);
+    message.error('重命名失败，请稍后重试');
+  }
+};
+
+// 处理删除笔记点击
+const handleDeleteClick = async (event, note) => {
+  event.stopPropagation();
+  
+  try {
+    // 确认删除
+    if (confirm(`确定要删除笔记"${note.title}"吗？此操作不可恢复。`)) {
+      const success = await noteService.deleteNote(note.id);
+      
+      if (success) {
+        message.success('笔记已删除');
+        // 刷新笔记列表 - 使用注入的fetchNotes方法，从第1页开始重新获取笔记
+        if (fetchNotes) {
+          fetchNotes(1, false);
+        }
+      } else {
+        message.error('删除笔记失败');
+      }
+    }
+  } catch (error) {
+    console.error('删除笔记失败:', error);
+    message.error('删除失败，请稍后重试');
+  }
+};
+
+// 取消重命名
+const cancelRename = (event) => {
+  event.stopPropagation();
+  showRenameInput.value = false;
+  editingNoteId.value = null;
+  newNoteName.value = '';
+};
+
+// 处理重命名会话点击
+const handleSessionRenameClick = (event, session) => {
+  event.stopPropagation();
+  showSessionRenameInput.value = true;
+  editingSessionId.value = session.id;
+  newSessionName.value = session.title;
+  
+  // 在下一个DOM更新周期后聚焦输入框
+  nextTick(() => {
+    const inputElement = document.querySelector('.session-rename-input');
+    if (inputElement) {
+      inputElement.focus();
+      // 选中所有文本方便用户直接输入
+      inputElement.select();
+    }
+  });
+};
+
+// 处理重命名会话提交
+const submitSessionRename = async (event) => {
+  event.stopPropagation();
+  if (!newSessionName.value.trim()) {
+    message.error('会话名称不能为空');
+    return;
+  }
+  
+  try {
+    const success = await chatService.updateSession(editingSessionId.value, newSessionName.value.trim());
+    
+    if (success) {
+      // 更新成功提示
+      message.success('会话重命名成功');
+      
+      // 重置状态
+      showSessionRenameInput.value = false;
+      editingSessionId.value = null;
+      
+      // 刷新会话列表
+      if (fetchSessions) {
+        fetchSessions(1, false);
+      } else if (window.refreshSessions) {
+        window.refreshSessions();
+      }
+    } else {
+      message.error('重命名失败，请稍后重试');
+    }
+  } catch (error) {
+    console.error('重命名会话失败:', error);
+    message.error('重命名失败，请稍后重试');
+  }
+};
+
+// 取消重命名会话
+const cancelSessionRename = (event) => {
+  event.stopPropagation();
+  showSessionRenameInput.value = false;
+  editingSessionId.value = null;
+  newSessionName.value = '';
+};
+
+// 处理删除会话点击
+const handleSessionDeleteClick = async (event, session) => {
+  event.stopPropagation();
+  
+  try {
+    // 确认删除
+    if (confirm(`确定要删除会话"${session.title}"吗？此操作不可恢复。`)) {
+      const success = await chatService.deleteSession(session.id);
+      
+      if (success) {
+        message.success('会话已删除');
+        // 刷新会话列表
+        if (fetchSessions) {
+          fetchSessions(1, false);
+        } else if (window.refreshSessions) {
+          window.refreshSessions();
+        }
+      } else {
+        message.error('删除会话失败');
+      }
+    }
+  } catch (error) {
+    console.error('删除会话失败:', error);
+    message.error('删除失败，请稍后重试');
+  }
+};
 </script>
 
 <template>
@@ -108,10 +346,10 @@ const formatDate = (dateString) => {
       </div>
     </div>
     
-    <div class="sidebar-middle">
+    <div class="sidebar-middle" @scroll="handleScroll">
       <button class="new-note-button" @click="emit('new-note')">
         <PlusOutlined />
-        <span>{{ activeTab === 'notes' ? '新建笔记' : '新建会话' }}</span>
+        <span>新建笔记</span>
       </button>
       
       <div class="note-tabs">
@@ -122,54 +360,121 @@ const formatDate = (dateString) => {
         >
           <span>我的笔记</span>
         </div>
+        <!-- 隐藏会话聊天标签
         <div 
           class="note-tab" 
           :class="{ active: activeTab === 'sessions' }"
           @click="emit('switch-tab', 'sessions')"
         >
-          <span>会话记录</span>
+          <span>聊天会话</span>
         </div>
+        -->
       </div>
       
       <!-- 笔记列表 -->
-      <div class="note-list" v-if="activeTab === 'notes'">
-        <div class="note-item active">
-          <div class="note-title">{{ editorTitle }}</div>
-          <div class="note-meta">刚刚编辑</div>
+      <div class="note-list">
+        <div 
+          v-for="note in notes" 
+          :key="note.id" 
+          class="note-item" 
+          :class="{ active: note.id.toString() === route.query.note }"
+          @click="emit('note-click', note.id)"
+        >
+          <div class="note-content">
+            <div v-if="showRenameInput && editingNoteId === note.id" class="rename-input-wrapper" @click.stop>
+              <input
+                type="text"
+                v-model="newNoteName"
+                class="rename-input"
+                @keyup.enter="submitRename"
+                @keyup.esc="cancelRename"
+                ref="renameInput"
+                placeholder="输入笔记名称，回车确认"
+              />
+              <div class="rename-tip">回车确认，Esc取消</div>
+            </div>
+            <div v-else class="note-title">{{ note.title }}</div>
+            <div class="note-meta">
+              <span class="time">{{ formatDate(note.updated_at) }}</span>
+            </div>
+          </div>
+          <div class="note-actions">
+            <button class="action-btn" @click="handleRenameClick($event, note)" title="重命名">
+              <EditOutlined />
+            </button>
+            <button class="action-btn delete" @click="handleDeleteClick($event, note)" title="删除">
+              <DeleteOutlined />
+            </button>
+          </div>
         </div>
-        <div class="note-item">
-          <div class="note-title">未来科技趋势</div>
-          <div class="note-meta">1小时前编辑</div>
+        <div v-if="notes.length === 0" class="empty-state">
+          暂无笔记，点击「新建笔记」开始创作
         </div>
-        <div class="note-item">
-          <div class="note-title">旅行清单</div>
-          <div class="note-meta">昨天编辑</div>
+        
+        <!-- 加载状态指示器 -->
+        <div v-if="notesPagination.loading" class="loading-indicator">
+          <div class="loading-spinner"></div>
+          <span>加载中...</span>
         </div>
-        <div class="note-item">
-          <div class="note-title">书籍推荐</div>
-          <div class="note-meta">2天前编辑</div>
+        
+        <!-- 全部加载完毕提示 -->
+        <div v-else-if="!notesPagination.hasMore && notes.length > 0" class="end-message">
+          已加载全部内容
         </div>
       </div>
       
-      <!-- 会话列表 -->
+      <!-- 会话列表已隐藏
       <div class="note-list" v-if="activeTab === 'sessions'">
         <div 
           v-for="session in sessions" 
           :key="session.id" 
           class="note-item" 
-          :class="{ active: currentSessionId === session.id }"
+          :class="{ active: session.id.toString() === route.query.id }"
           @click="emit('session-click', session.id)"
         >
-          <div class="note-title">{{ session.title }}</div>
-          <div class="note-meta">
-            <span class="message-preview">{{ truncateMessage(session.last_message) }}</span>
-            <span class="time">{{ formatDate(session.updated_at) }}</span>
+          <div class="note-content">
+            <div v-if="showSessionRenameInput && editingSessionId === session.id" class="rename-input-wrapper" @click.stop>
+              <input
+                type="text"
+                v-model="newSessionName"
+                class="rename-input session-rename-input"
+                @keyup.enter="submitSessionRename"
+                @keyup.esc="cancelSessionRename"
+                placeholder="输入会话名称，回车确认"
+              />
+              <div class="rename-tip">回车确认，Esc取消</div>
+            </div>
+            <div v-else class="note-title">{{ session.title }}</div>
+            <div class="note-meta">
+              <span class="message-preview">{{ truncateMessage(session.last_message) }}</span>
+              <span class="time">{{ formatDate(session.updated_at) }}</span>
+            </div>
+          </div>
+          <div class="note-actions">
+            <button class="action-btn" @click="handleSessionRenameClick($event, session)" title="重命名">
+              <EditOutlined />
+            </button>
+            <button class="action-btn delete" @click="handleSessionDeleteClick($event, session)" title="删除">
+              <DeleteOutlined />
+            </button>
           </div>
         </div>
         <div v-if="sessions.length === 0" class="empty-state">
           暂无聊天会话记录
         </div>
+        
+        加载状态指示器
+        <div v-if="pagination.loading" class="loading-indicator">
+          <div class="loading-spinner"></div>
+          <span>加载中...</span>
+        </div>
+        
+        全部加载完毕提示
+        <div v-else-if="!pagination.hasMore && sessions.length > 0" class="end-message">
+          已加载全部内容
+        </div>
       </div>
+      -->
     </div>
     
     <div class="sidebar-bottom">
@@ -345,6 +650,10 @@ const formatDate = (dateString) => {
   border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.2s;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: relative;
 }
 
 .note-item:hover {
@@ -353,6 +662,12 @@ const formatDate = (dateString) => {
 
 .note-item.active {
   background-color: rgba(0, 123, 255, 0.1);
+}
+
+.note-content {
+  flex: 1;
+  min-width: 0; /* 让子元素能够正常缩小 */
+  margin-right: 10px; /* 为右侧按钮留出空间 */
 }
 
 .note-title {
@@ -516,5 +831,106 @@ const formatDate = (dateString) => {
   .sidebar {
     display: none;
   }
+}
+
+/* 加载指示器样式 */
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 15px 0;
+  color: #888;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 123, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #007bff;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.end-message {
+  text-align: center;
+  padding: 15px 0;
+  color: #888;
+  font-size: 13px;
+}
+
+/* 笔记操作按钮样式 */
+.note-actions {
+  display: none;
+  gap: 6px;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background-color: rgba(255, 255, 255, 0.9);
+  padding: 2px;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.note-item:hover .note-actions {
+  display: flex;
+}
+
+.action-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #666;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 12px;
+}
+
+.action-btn:hover {
+  background-color: rgba(0, 0, 0, 0.08);
+  color: #1890ff;
+}
+
+.action-btn.delete:hover {
+  background-color: rgba(255, 0, 0, 0.1);
+  color: #ff4d4f;
+}
+
+/* 重命名输入框样式 */
+.rename-input-wrapper {
+  width: 100%;
+}
+
+.rename-input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid #d9d9d9;
+  font-size: 14px;
+  margin-bottom: 2px;
+  box-sizing: border-box;
+}
+
+.rename-input:focus {
+  outline: none;
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+.rename-tip {
+  font-size: 12px;
+  color: #999;
+  margin-top: 4px;
 }
 </style> 

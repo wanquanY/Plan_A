@@ -18,6 +18,7 @@ class Chat(BaseModel):
     user = relationship("User", back_populates="chats")
     agent = relationship("Agent", back_populates="chats")
     messages = relationship("ChatMessage", back_populates="chat", cascade="all, delete-orphan")
+    notes = relationship("Note", back_populates="session")
 
 
 class ChatMessage(BaseModel):

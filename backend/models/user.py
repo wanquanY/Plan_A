@@ -18,4 +18,5 @@ class User(BaseModel):
     
     # 关联关系
     chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
-    agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan") 
+    agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
+    notes = relationship("Note", back_populates="user", cascade="all, delete-orphan") 

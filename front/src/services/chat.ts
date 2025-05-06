@@ -4,6 +4,7 @@ import apiClient from './api';
 declare global {
   interface Window {
     refreshSessions?: () => Promise<void>;
+    sessionData?: any;
   }
 }
 
@@ -38,6 +39,7 @@ export interface ChatRequest {
   agent_id: number;
   content: string;
   conversation_id?: number;
+  note_id?: number;
 }
 
 // 会话列表接口
@@ -51,11 +53,20 @@ export interface ChatSession {
   last_message: string;
 }
 
-// 会话列表响应
+// 添加分页响应模型
+export interface PaginationResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+}
+
+// 更新会话列表响应模型
 interface SessionsResponse {
   code: number;
   msg: string;
-  data: ChatSession[];
+  data: PaginationResponse<ChatSession>;
   errors: any;
   timestamp: string;
   request_id: string;
@@ -94,7 +105,8 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
   console.log('初始化聊天请求:', {
     conversation_id: request.conversation_id,
     agent_id: request.agent_id,
-    content_length: request.content.length
+    content_length: request.content.length,
+    note_id: request.note_id
   });
   
   (async () => {
@@ -109,7 +121,16 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
       const body = JSON.stringify({
         content: request.content,
         conversation_id: request.conversation_id ?? 0,
-        agent_id: request.agent_id
+        agent_id: request.agent_id,
+        note_id: request.note_id
+      });
+      
+      // 打印完整请求信息用于调试
+      console.log('发送聊天请求完整信息:', {
+        content_length: request.content.length,
+        conversation_id: request.conversation_id ?? 0,
+        agent_id: request.agent_id,
+        note_id: request.note_id || '未提供'
       });
       
       // 发送请求
@@ -318,21 +339,35 @@ const processTextStream = async (
 };
 
 // 获取聊天会话列表
-const getSessions = async (): Promise<ChatSession[]> => {
+const getSessions = async (page: number = 1, pageSize: number = 10): Promise<{sessions: ChatSession[], total: number, pages: number}> => {
   try {
-    console.log('调用getSessions API请求会话列表');
-    const response = await apiClient.get('/chat/sessions');
+    console.log(`调用getSessions API请求会话列表, page=${page}, pageSize=${pageSize}`);
+    const response = await apiClient.get('/chat/sessions', {
+      params: {
+        page,
+        page_size: pageSize
+      }
+    });
     console.log('getSessions API响应:', response.status, response.data ? `code=${response.data.code}` : '无data');
     
     if (response.data && response.data.code === 200) {
-      console.log(`getSessions API成功，获取到${response.data.data ? response.data.data.length : 0}条会话`);
-      return response.data.data;
+      const paginationData = response.data.data;
+      console.log(`getSessions API成功，获取到${paginationData.items ? paginationData.items.length : 0}条会话，总数${paginationData.total}`);
+      return {
+        sessions: paginationData.items || [],
+        total: paginationData.total || 0,
+        pages: paginationData.pages || 1
+      };
     }
     
     throw new Error(response.data.msg || '获取会话列表失败');
   } catch (error) {
     console.error('获取会话列表失败:', error);
-    return [];
+    return {
+      sessions: [],
+      total: 0,
+      pages: 1
+    };
   }
 };
 
@@ -374,9 +409,62 @@ const createSession = async (title: string = '新会话'): Promise<ChatSession |
   }
 };
 
+// 更新会话信息
+const updateSession = async (sessionId: number, title: string): Promise<boolean> => {
+  try {
+    const response = await apiClient.put(`/chat/sessions/${sessionId}`, { title });
+    if (response.data.code === 200) {
+      console.log('会话更新成功:', response.data.data);
+      return true;
+    } else {
+      console.error('更新会话失败:', response.data.msg);
+      return false;
+    }
+  } catch (error) {
+    console.error('更新会话请求出错:', error);
+    return false;
+  }
+};
+
+// 删除会话
+const deleteSession = async (sessionId: number): Promise<boolean> => {
+  try {
+    const response = await apiClient.delete(`/chat/sessions/${sessionId}`);
+    if (response.data.code === 200) {
+      console.log('会话删除成功:', response.data.data);
+      return true;
+    } else {
+      console.error('删除会话失败:', response.data.msg);
+      return false;
+    }
+  } catch (error) {
+    console.error('删除会话请求出错:', error);
+    return false;
+  }
+};
+
+// 在全局对象上添加刷新会话列表的方法，允许其他组件和服务调用
+if (typeof window !== 'undefined') {
+  window.refreshSessions = async () => {
+    try {
+      console.log('全局刷新会话列表方法被调用');
+      const { sessions: sessionsData } = await getSessions();
+      if (sessionsData) {
+        // 存储会话数据供其他组件使用
+        window.sessionData = sessionsData;
+        console.log('会话列表已全局刷新，当前数量:', sessionsData.length);
+      }
+    } catch (error) {
+      console.error('全局刷新会话列表失败:', error);
+    }
+  };
+}
+
 export default {
   chatWithAgent,
   getSessions,
   getSessionDetail,
-  createSession
+  createSession,
+  updateSession,
+  deleteSession
 }; 

@@ -8,11 +8,15 @@
     @compositionstart="handleCompositionStart"
     @compositionend="handleCompositionEnd"
     @click="handleEditorClick"
+    @paste="handlePaste"
+    @drop="handleDrop"
   ></div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, onMounted, nextTick } from 'vue';
+import uploadService from '../services/uploadService';
+import { message } from 'ant-design-vue';
 
 const props = defineProps({
   modelValue: {
@@ -256,8 +260,19 @@ const handleInput = (event) => {
           const nodeRect = (node as HTMLElement).getBoundingClientRect();
           const editorRect = editorRef.value.getBoundingClientRect();
           
-          if (nodeRect.bottom > editorRect.bottom || nodeRect.top < editorRect.top) {
-            (node as HTMLElement).scrollIntoView({ block: 'center', behavior: 'auto' });
+          // 计算需要滚动的距离
+          if (nodeRect.bottom > editorRect.bottom) {
+            // 向下滚动，但使用更温和的方式
+            editorRef.value.scrollBy({
+              top: nodeRect.bottom - editorRect.bottom + 30,
+              behavior: 'smooth'
+            });
+          } else if (nodeRect.top < editorRect.top) {
+            // 向上滚动，但使用更温和的方式
+            editorRef.value.scrollBy({
+              top: nodeRect.top - editorRect.top - 30,
+              behavior: 'smooth'
+            });
           }
         }
       }
@@ -312,6 +327,53 @@ const handleKeyDown = (event: KeyboardEvent) => {
     return;
   }
   
+  // 处理Tab键
+  if (event.key === 'Tab') {
+    event.preventDefault(); // 阻止默认的Tab行为（切换焦点）
+    
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    
+    const range = selection.getRangeAt(0);
+    let currentNode = range.commonAncestorContainer;
+    
+    // 查找当前段落节点
+    let paragraphNode = currentNode;
+    while (paragraphNode && paragraphNode.nodeName !== 'P') {
+      if (paragraphNode.nodeType === 3) { // 文本节点
+        paragraphNode = paragraphNode.parentNode;
+      } else {
+        break;
+      }
+    }
+    
+    // 只处理段落节点
+    if (paragraphNode && paragraphNode.nodeName === 'P') {
+      if (event.shiftKey) {
+        // 如果按下Shift+Tab，则减少缩进
+        const currentIndent = parseInt(window.getComputedStyle(paragraphNode).paddingLeft) || 0;
+        if (currentIndent >= 40) { // 如果当前缩进至少是40px
+          paragraphNode.style.paddingLeft = `${currentIndent - 40}px`;
+        } else if (currentIndent > 0) {
+          // 完全移除缩进
+          paragraphNode.style.paddingLeft = '';
+        }
+      } else {
+        // 单独按Tab键，增加缩进
+        const currentIndent = parseInt(window.getComputedStyle(paragraphNode).paddingLeft) || 0;
+        // 每次增加40px的缩进（可根据需要调整）
+        paragraphNode.style.paddingLeft = `${currentIndent + 40}px`;
+      }
+      
+      // 触发内容更新
+      setTimeout(() => {
+        emit('update:modelValue', getFullContent());
+      }, 0);
+    }
+    
+    return; // 已处理Tab键，不需要继续处理
+  }
+  
   // 处理@键
   if (event.key === '@' && !props.showAgentSelector) {
     console.log('检测到@键被按下');
@@ -329,6 +391,9 @@ const handleKeyDown = (event: KeyboardEvent) => {
   
   // 处理在文档末尾的回车键
   if (event.key === 'Enter' && !event.shiftKey) {
+    // 保存页面当前的滚动位置
+    const pageScrollPosition = savePageScrollPosition();
+    
     const selection = window.getSelection();
     if (selection && selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
@@ -355,6 +420,9 @@ const handleKeyDown = (event: KeyboardEvent) => {
         
         // 使用setTimeout确保这个事件处理完成后再处理恢复光标位置
         setTimeout(() => {
+          // 首先恢复页面滚动位置，防止整个页面跳动
+          restorePageScrollPosition(pageScrollPosition);
+          
           // 找到带有标记的段落
           const markedParagraph = editorRef.value?.querySelector('[data-end-marker="true"]');
           if (markedParagraph) {
@@ -368,33 +436,37 @@ const handleKeyDown = (event: KeyboardEvent) => {
             if (!newParagraph || newParagraph.nodeName !== 'P') {
               const allParagraphs = editorRef.value?.querySelectorAll('p');
               if (allParagraphs && allParagraphs.length > 0) {
-                newParagraph = allParagraphs[allParagraphs.length - 1] as HTMLElement;
+                newParagraph = allParagraphs[allParagraphs.length - 1];
               }
             }
             
-            // 如果找到了新段落，将光标设置到其中
+            // 如果找到新段落，设置光标到它的开始位置
             if (newParagraph) {
-              // 恢复滚动位置，保持末尾可见
-              if (editorRef.value) {
-                // 首先尝试保持之前的位置，防止跳回顶部
-                editorRef.value.scrollTop = scrollTop;
-                
-                // 然后确保新段落可见
-                ensureElementVisible(newParagraph as HTMLElement);
-              }
+              const newRange = document.createRange();
+              newRange.setStart(newParagraph, 0);
+              newRange.collapse(true);
               
-              // 设置光标位置
-              const selection = window.getSelection();
-              if (selection) {
-                const range = document.createRange();
-                range.selectNodeContents(newParagraph);
-                range.collapse(true); // 光标在开始位置
+              selection.removeAllRanges();
+              selection.addRange(newRange);
+              
+              // 确保段落可见，但使用更温和的滚动方式
+              if (editorRef.value) {
+                const editorRect = editorRef.value.getBoundingClientRect();
+                const newParagraphRect = newParagraph.getBoundingClientRect();
                 
-                selection.removeAllRanges();
-                selection.addRange(range);
+                // 只有当新段落不完全可见时才滚动
+                if (newParagraphRect.bottom > editorRect.bottom) {
+                  // 使用更温和的滚动方式，避免整页跳动
+                  editorRef.value.scrollBy({
+                    top: newParagraphRect.bottom - editorRect.bottom + 30, // 额外30px的缓冲空间
+                    behavior: 'smooth'
+                  });
+                }
                 
-                // 确保编辑器获得焦点
-                editorRef.value?.focus();
+                // 再次确保页面滚动位置不变
+                setTimeout(() => {
+                  restorePageScrollPosition(pageScrollPosition);
+                }, 50);
               }
             }
           }
@@ -444,7 +516,7 @@ const handleKeyDown = (event: KeyboardEvent) => {
   });
 };
 
-// 添加一个辅助函数，判断选区是否在文档末尾
+// 修改isSelectionAtDocumentEnd函数，使其更准确地判断光标是否在文档末尾
 const isSelectionAtDocumentEnd = (selection) => {
   if (!selection || selection.rangeCount === 0 || !editorRef.value) return false;
   
@@ -455,21 +527,46 @@ const isSelectionAtDocumentEnd = (selection) => {
   
   // 检查光标是否在最后一个段落内
   let node = range.startContainer;
+  let isInLastParagraph = false;
+  
+  // 向上查找，检查是否在最后一个段落内
   while (node && node !== editorRef.value) {
     if (node === lastParagraph) {
-      // 在最后一个段落内，检查是否在最后位置
-      if (range.startContainer.nodeType === Node.TEXT_NODE) {
-        // 光标在文本节点中，检查是否在文本末尾
-        return range.startOffset === (range.startContainer.textContent || '').length;
-      } else {
-        // 光标在元素节点中，检查是否在最后一个子节点之后
-        return range.startOffset === range.startContainer.childNodes.length;
-      }
+      isInLastParagraph = true;
+      break;
     }
     node = node.parentNode;
   }
   
-  return false;
+  if (!isInLastParagraph) return false;
+  
+  // 检查是否在最后一个位置
+  if (range.startContainer.nodeType === Node.TEXT_NODE) {
+    // 光标在文本节点中，检查是否在文本末尾
+    return range.startOffset === (range.startContainer.textContent || '').length;
+  } else if (range.startContainer === lastParagraph) {
+    // 光标在段落节点中，检查是否在最后一个子节点之后
+    return range.startOffset === range.startContainer.childNodes.length;
+  } else {
+    // 其他情况，可能是在段落内的某个元素中
+    // 检查当前元素是否是最后一个元素
+    const lastNode = lastParagraph.lastChild;
+    return range.startContainer === lastNode && 
+           range.startOffset === (lastNode.nodeType === Node.TEXT_NODE ? lastNode.length : lastNode.childNodes.length);
+  }
+};
+
+// 保存当前页面滚动位置的函数
+const savePageScrollPosition = () => {
+  return {
+    x: window.pageXOffset || document.documentElement.scrollLeft,
+    y: window.pageYOffset || document.documentElement.scrollTop
+  };
+};
+
+// 恢复页面滚动位置的函数
+const restorePageScrollPosition = (position) => {
+  window.scrollTo(position.x, position.y);
 };
 
 // 添加一个辅助函数，获取文档中的最后一个段落
@@ -685,7 +782,7 @@ const ensureBottomSpace = () => {
   }, 500);
 };
 
-// 添加一个辅助函数，用于在底部插入新段落
+// 修改insertNewParagraphAtBottom函数，大约在730行左右
 const insertNewParagraphAtBottom = () => {
   if (!editorRef.value) return;
   
@@ -714,6 +811,18 @@ const insertNewParagraphAtBottom = () => {
       // 确保编辑器获得焦点
       editorRef.value.focus();
       
+      // 使用更温和的滚动行为，避免整页跳动
+      const editorRect = editorRef.value.getBoundingClientRect();
+      const newParagraphRect = newParagraph.getBoundingClientRect();
+      
+      // 只有当新段落不完全可见时才滚动
+      if (newParagraphRect.bottom > editorRect.bottom) {
+        editorRef.value.scrollBy({
+          top: newParagraphRect.bottom - editorRect.bottom + 30, // 额外30px的缓冲空间
+          behavior: 'smooth'
+        });
+      }
+      
       // 触发内容更新
       emit('update:modelValue', getFullContent());
     }
@@ -729,247 +838,536 @@ const ensureElementVisible = (element: HTMLElement) => {
   
   // 检查元素是否在视口之下（需要向下滚动）
   if (elementRect.bottom > editorRect.bottom) {
-    // 滚动到元素完全可见的位置
-    element.scrollIntoView({ block: 'center', behavior: 'auto' });
+    // 使用更温和的滚动方式，避免整页跳动
+    editorRef.value.scrollBy({
+      top: elementRect.bottom - editorRect.bottom + 30, // 额外30px的缓冲空间
+      behavior: 'smooth'
+    });
     return;
   }
   
   // 检查元素是否在视口之上（需要向上滚动）
   if (elementRect.top < editorRect.top) {
-    // 滚动到元素可见的位置
-    element.scrollIntoView({ block: 'center', behavior: 'auto' });
+    // 使用更温和的滚动方式，避免整页跳动
+    editorRef.value.scrollBy({
+      top: elementRect.top - editorRect.top - 30, // 额外30px的缓冲空间
+      behavior: 'smooth'
+    });
     return;
   }
   
   // 元素已经可见，不需要滚动
+};
+
+// 处理粘贴事件
+const handlePaste = async (event) => {
+  // 检查是否在只读区域内
+  if (preventEditInReadOnlyArea(event)) {
+    return;
+  }
+
+  // 检查剪贴板中是否有图片
+  const clipboardItems = event.clipboardData?.items;
+  if (!clipboardItems) return;
+
+  let hasImage = false;
+
+  for (let i = 0; i < clipboardItems.length; i++) {
+    const item = clipboardItems[i];
+    
+    // 检查是否为图片类型
+    if (item.type.indexOf('image') !== -1) {
+      hasImage = true;
+      
+      // 阻止默认粘贴行为
+      event.preventDefault();
+      
+      // 显示加载提示
+      message.loading({content: '正在上传图片...', key: 'imageUpload', duration: 0});
+      
+      try {
+        // 从剪贴板获取图片文件
+        const file = item.getAsFile();
+        
+        // 设置加载中的占位图
+        const placeholderId = `img-upload-${Date.now()}`;
+        insertImagePlaceholder(placeholderId);
+        
+        // 上传图片
+        const imageUrl = await uploadService.uploadImage(file);
+        
+        // 将占位符替换为实际图片
+        replacePlaceholderWithImage(placeholderId, imageUrl);
+        
+        // 提示上传成功
+        message.success({content: '图片上传成功', key: 'imageUpload'});
+      } catch (error) {
+        console.error('图片粘贴处理失败:', error);
+        message.error({content: '图片上传失败', key: 'imageUpload'});
+        
+        // 移除占位符
+        removePlaceholder();
+      }
+      
+      break;
+    }
+  }
+  
+  // 如果没有图片，让浏览器处理默认粘贴行为
+  if (!hasImage) {
+    // 处理纯文本粘贴，避免粘贴带有样式的内容
+    handleTextPaste(event);
+  }
+};
+
+// 处理纯文本粘贴
+const handleTextPaste = (event) => {
+  // 获取纯文本
+  const text = event.clipboardData.getData('text/plain');
+  
+  // 如果没有文本，使用默认行为
+  if (!text) return;
+  
+  // 阻止默认粘贴行为
+  event.preventDefault();
+  
+  // 使用execCommand粘贴纯文本
+  document.execCommand('insertText', false, text);
+};
+
+// 处理拖放事件
+const handleDrop = async (event) => {
+  // 检查是否在只读区域内
+  if (preventEditInReadOnlyArea(event)) {
+    return;
+  }
+
+  // 检查是否拖放的是文件
+  const files = event.dataTransfer?.files;
+  if (!files || files.length === 0) return;
+
+  // 检查是否为图片
+  const file = files[0];
+  if (!file.type.startsWith('image/')) return;
+  
+  // 阻止默认行为
+  event.preventDefault();
+  event.stopPropagation();
+  
+  // 显示加载提示
+  message.loading({content: '正在上传图片...', key: 'imageUpload', duration: 0});
+  
+  try {
+    // 设置加载中的占位图
+    const placeholderId = `img-upload-${Date.now()}`;
+    insertImagePlaceholder(placeholderId);
+    
+    // 上传图片
+    const imageUrl = await uploadService.uploadImage(file);
+    
+    // 将占位符替换为实际图片
+    replacePlaceholderWithImage(placeholderId, imageUrl);
+    
+    // 提示上传成功
+    message.success({content: '图片上传成功', key: 'imageUpload'});
+  } catch (error) {
+    console.error('图片拖放处理失败:', error);
+    message.error({content: '图片上传失败', key: 'imageUpload'});
+    
+    // 移除占位符
+    removePlaceholder();
+  }
+};
+
+// 插入图片占位符
+const insertImagePlaceholder = (id) => {
+  // 确保有光标位置
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return;
+  
+  const range = selection.getRangeAt(0);
+  
+  // 创建加载占位符元素
+  const placeholder = document.createElement('div');
+  placeholder.id = id;
+  placeholder.className = 'image-upload-placeholder';
+  placeholder.innerHTML = `
+    <div class="upload-spinner"></div>
+    <div class="upload-text">图片上传中...</div>
+  `;
+  
+  // 插入占位符
+  range.insertNode(placeholder);
+  
+  // 移动光标到占位符后面
+  range.setStartAfter(placeholder);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  
+  // 触发更新
+  emit('update:modelValue', getFullContent());
+};
+
+// 将占位符替换为实际图片
+const replacePlaceholderWithImage = (placeholderId, imageUrl) => {
+  const placeholder = document.getElementById(placeholderId);
+  if (!placeholder) return;
+  
+  // 创建图片元素
+  const imgContainer = document.createElement('div');
+  imgContainer.className = 'resizable-image-container';
+  imgContainer.contentEditable = 'false';
+  
+  const img = document.createElement('img');
+  img.src = imageUrl;
+  img.alt = '用户上传的图片';
+  img.className = 'resizable-image';
+  
+  // 添加调整大小的手柄
+  const resizeHandle = document.createElement('div');
+  resizeHandle.className = 'resize-handle';
+  
+  imgContainer.appendChild(img);
+  imgContainer.appendChild(resizeHandle);
+  
+  // 替换占位符
+  placeholder.parentNode.replaceChild(imgContainer, placeholder);
+  
+  // 添加调整大小的事件处理
+  setupImageResizing(imgContainer, img);
+  
+  // 触发更新
+  emit('update:modelValue', getFullContent());
+};
+
+// 移除占位符
+const removePlaceholder = () => {
+  const placeholders = document.querySelectorAll('.image-upload-placeholder');
+  placeholders.forEach(p => p.remove());
+  
+  // 触发更新
+  emit('update:modelValue', getFullContent());
+};
+
+// 设置图片缩放功能
+const setupImageResizing = (container, img) => {
+  const resizeHandle = container.querySelector('.resize-handle');
+  if (!resizeHandle || !img) return;
+  
+  let startX, startY, startWidth, startHeight;
+  let isResizing = false;
+  
+  // 鼠标按下事件
+  const onMouseDown = (e) => {
+    isResizing = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startWidth = img.offsetWidth;
+    startHeight = img.offsetHeight;
+    
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  
+  // 鼠标移动事件
+  const onMouseMove = (e) => {
+    if (!isResizing) return;
+    
+    // 计算新尺寸
+    const deltaX = e.clientX - startX;
+    const newWidth = startWidth + deltaX;
+    
+    // 计算等比例的高度
+    const aspectRatio = startHeight / startWidth;
+    const newHeight = newWidth * aspectRatio;
+    
+    // 应用新尺寸
+    if (newWidth > 100) {
+      img.style.width = `${newWidth}px`;
+      img.style.height = `${newHeight}px`;
+    }
+    
+    e.preventDefault();
+  };
+  
+  // 鼠标松开事件
+  const onMouseUp = (e) => {
+    isResizing = false;
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    
+    // 更新编辑器内容以保存尺寸
+    emit('update:modelValue', getFullContent());
+    e.preventDefault();
+  };
+  
+  // 添加事件监听
+  resizeHandle.addEventListener('mousedown', onMouseDown);
 };
 </script>
 
 <style scoped>
 .editor-content {
   flex: 1;
-  outline: none;
-  padding: 20px;
-  padding-bottom: 60vh; /* 增加大量底部内边距，确保有足够的空白区域可以点击 */
-  font-size: 16px;
-  line-height: 1.7;
-  color: #333;
+  padding: 30px 0;
   overflow-y: auto;
-  white-space: normal;
-  word-break: break-word;
-  min-height: 100%; /* 确保至少占满容器高度 */
-  position: relative; /* 添加相对定位，便于定位底部占位元素 */
+  min-height: 300px;
+  outline: none;
+  line-height: 1.5;
+  font-size: 16px;
+  color: #333;
+  word-wrap: break-word;
+  white-space: pre-wrap;
 }
 
-/* 底部占位元素样式 - 修改为可见的样式 */
-.bottom-placeholder {
-  min-height: 300px; /* 固定高度的底部占位区域 */
-  width: 100%;
-  position: relative; /* 作为定位上下文 */
-  cursor: text; /* 显示文本光标 */
-  pointer-events: auto; /* 允许捕获事件 */
+/* 图片上传占位符样式 */
+:deep(.image-upload-placeholder) {
+  width: 300px;
+  height: 150px;
+  background-color: #f5f7fa;
+  border: 2px dashed #d9e1ec;
+  border-radius: 8px;
+  margin: 10px 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: 40px; /* 与上方内容保持距离 */
+  justify-content: center;
+  padding: 20px;
 }
 
-/* 添加一个明显的新行按钮 */
-.bottom-placeholder::before {
-  content: "+ 点击此处添加新行";
-  display: block;
-  width: 200px;
-  text-align: center;
-  padding: 10px 15px;
-  background-color: #f5f5f5;
-  border: 1px dashed #ccc;
-  border-radius: 4px;
-  color: #666;
-  margin-bottom: 20px;
+:deep(.upload-spinner) {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(0, 123, 255, 0.2);
+  border-top-color: #007bff;
+  border-radius: 50%;
+  margin-bottom: 10px;
+  animation: spin 1s linear infinite;
+}
+
+:deep(.upload-text) {
+  color: #6c757d;
   font-size: 14px;
-  opacity: 0.7;
-  transition: opacity 0.2s, background-color 0.2s;
 }
 
-.bottom-placeholder:hover::before {
-  opacity: 1;
-  background-color: #e6f7ff;
-  border-color: #1677ff;
-  color: #1677ff;
+/* 可调整大小的图片容器样式 */
+:deep(.resizable-image-container) {
+  position: relative;
+  display: inline-block;
+  margin: 10px 0;
+  clear: both;
 }
 
-/* 在底部占位区域中添加一个可见的分隔线 */
-.bottom-placeholder::after {
+:deep(.resizable-image) {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  cursor: default;
+}
+
+:deep(.resize-handle) {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background-color: #ffffff;
+  border: 1px solid #007bff;
+  border-radius: 2px;
+  bottom: -5px;
+  right: -5px;
+  cursor: nwse-resize;
+  z-index: 100;
+}
+
+:deep(.resizable-image-container:hover .resize-handle) {
+  display: block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.read-only-content {
+  color: #666;
+  background-color: #f8f9fa;
+  padding: 1em;
+  margin-bottom: 1em;
+  border-left: 3px solid #007bff;
+  border-radius: 0 4px 4px 0;
+  position: relative;
+}
+
+.read-only-content:after {
   content: '';
   display: block;
   height: 1px;
-  width: 100%;
-  background: linear-gradient(to right, transparent, rgba(0, 0, 0, 0.1), transparent);
-  margin-top: 20px;
+  margin-top: 1em;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.12), transparent);
 }
 
-/* 只读内容样式 */
-.read-only-content {
+.editable-content {
+  padding-top: 1em;
+  min-height: 100px;
+}
+
+.editable-content p:last-child {
+  margin-bottom: 200px;
+}
+
+/* 底部占位元素样式 */
+.bottom-placeholder {
+  height: 200px;
+  cursor: text;
+}
+
+/* 气泡式加载指示器 */
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  background: #f0f0f0;
+  padding: 0.5em 1em;
+  border-radius: 1em;
+  margin-top: 0.5em;
+  color: #666;
+  animation: fade 0.3s;
+}
+
+.typing-dots {
+  display: inline-flex;
+  margin-right: 5px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  background: #666;
+  border-radius: 50%;
+  margin: 0 1px;
+  animation: jump 1.4s infinite;
+}
+
+.dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes jump {
+  0%, 80%, 100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 用户提及样式 */
+.user-mention {
+  background-color: rgba(0, 123, 255, 0.08);
+  color: #1890ff;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.agent-response-paragraph {
+  margin-top: 1em;
   position: relative;
-  opacity: 0.9;
-  background-color: #f9f9f9;
-  border-radius: 5px;
-  pointer-events: none;
-  user-select: text;
-  padding: 2px;
-  margin-bottom: 15px;
+  padding-left: 4px;
 }
 
-/* 只读内容添加淡灰色边框 */
-.read-only-content::after {
+.agent-response-paragraph::before {
   content: '';
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-  pointer-events: none;
+  left: -10px;
+  height: 100%;
+  width: 3px;
+  background-color: #1890ff;
+  border-radius: 3px;
 }
 
-/* 可编辑内容样式 */
-.editable-content {
+/* 确保段落内容中的代码块能够正确显示 */
+.agent-response-paragraph pre {
+  margin: 1em 0;
+  padding: 1em;
+  background-color: #f6f8fa;
+  border-radius: 6px;
+  overflow-x: auto;
   position: relative;
-  min-height: 20px;
 }
 
-/* 自定义滚动条样式 */
-.editor-content::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+.agent-response-paragraph pre code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+  font-size: 90%;
+  color: #333;
 }
 
-.editor-content::-webkit-scrollbar-track {
-  background: #f5f5f5;
+/* 代码块语言标识 */
+.agent-response-paragraph pre[data-language]:before {
+  content: attr(data-language);
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #666;
+  background-color: #f6f8fa;
+  border-bottom-left-radius: 4px;
+  border-top-right-radius: 4px;
+  border-bottom: 1px solid #e1e4e8;
+  border-left: 1px solid #e1e4e8;
+}
+
+/* 代码块复制按钮 */
+.code-copy-button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #666;
+  background-color: rgba(255, 255, 255, 0.8);
+  border: 1px solid #e1e4e8;
   border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
 }
 
-.editor-content::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 4px;
-  transition: background 0.3s ease;
+.agent-response-paragraph pre:hover .code-copy-button {
+  opacity: 1;
 }
 
-.editor-content::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+.code-copy-button:hover {
+  background-color: #fff;
+  color: #333;
 }
 
-/* Firefox滚动条自定义 */
-.editor-content {
-  scrollbar-width: thin;
-  scrollbar-color: #c1c1c1 #f5f5f5;
+.code-copy-button.copied {
+  color: #28a745;
+  border-color: #28a745;
 }
 
-.editor-content:focus {
-  outline: none;
-}
-
-.editor-content p {
-  margin: 0 0 10px;
-}
-
-/* 确保Agent响应段落样式 */
-.editor-content .agent-response-paragraph {
-  margin: 0 0 10px;
-  white-space: normal;
-  word-break: break-word;
-  line-height: 1.7;
-}
-
-/* 在段落之间添加更明显的间距 */
-.editor-content p + p {
-  margin-top: 2px;
-}
-
-/* 调整标题与前面内容的间距，确保有适当分隔 */
-.editor-content h1, 
-.editor-content h2, 
-.editor-content h3,
-.editor-content h4,
-.editor-content h5,
-.editor-content h6 {
-  margin-top: 1.2em;
-}
-
-/* 标题样式 */
-.editor-content h1 {
-  font-size: 2em;
-  margin-top: 0.5em;
-  margin-bottom: 0.5em;
-  font-weight: bold;
-}
-
-.editor-content h2 {
-  font-size: 1.5em;
-  margin-top: 0.5em;
-  margin-bottom: 0.5em;
-  font-weight: bold;
-}
-
-.editor-content h3 {
-  font-size: 1.17em;
-  margin-top: 0.7em;
-  margin-bottom: 0.7em;
-  font-weight: bold;
-}
-
-.editor-content h4 {
-  font-size: 1em;
-  margin-top: 0.9em;
-  margin-bottom: 0.9em;
-  font-weight: bold;
-}
-
-.editor-content h5 {
-  font-size: 0.83em;
+/* 调整代码块后的段落边距 */
+.after-code-block-paragraph {
   margin-top: 1em;
-  margin-bottom: 1em;
-  font-weight: bold;
-}
-
-.editor-content h6 {
-  font-size: 0.67em;
-  margin-top: 1.2em;
-  margin-bottom: 1.2em;
-  font-weight: bold;
-}
-
-/* 添加示例样式 */
-.editor-content span[style*="letter-spacing"] {
-  display: inline-block;
-}
-
-/* 行高样式 */
-.editor-content span[style*="line-height"],
-.editor-content div[style*="line-height"],
-.editor-content p[style*="line-height"],
-.editor-content h1[style*="line-height"],
-.editor-content h2[style*="line-height"],
-.editor-content h3[style*="line-height"],
-.editor-content h4[style*="line-height"],
-.editor-content h5[style*="line-height"],
-.editor-content h6[style*="line-height"] {
-  display: block;
-  min-height: 1em;
-}
-
-/* 添加字号大小样式 */
-.editor-content span[style*="font-size"],
-.editor-content font[style*="font-size"] {
-  display: inline;
-}
-
-/* 确保行高和字体大小正确显示 */
-.editor-content [style*="font-size"] {
-  font-size: inherit; /* 继承样式，确保样式生效 */
-}
-
-.editor-content [style*="line-height"] {
-  line-height: inherit !important; /* 使用!important确保样式优先级 */
 }
 </style> 

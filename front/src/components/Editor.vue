@@ -53,6 +53,10 @@ const props = defineProps({
   conversationId: {
     type: [Number, String, null],
     default: null
+  },
+  noteId: {
+    type: [Number, String, null],
+    default: null
   }
 });
 
@@ -76,6 +80,20 @@ watch(() => props.conversationId, (newId) => {
     console.log(`编辑器接收到会话ID: ${newId || 'null'}，设置到AgentResponseHandler`);
     // 无论newId是否为null都要设置，确保新建会话时能正确清空
     agentResponseHandlerRef.value.setConversationId(newId ? newId.toString() : null);
+  }
+}, { immediate: true });
+
+// 监听笔记ID变化
+watch(() => props.noteId, (newId) => {
+  if (agentResponseHandlerRef.value) {
+    console.log(`编辑器接收到笔记ID: ${newId || 'null'}，设置到AgentResponseHandler`);
+    // 无论newId是否为null都要设置，确保新建笔记时能正确传递ID
+    agentResponseHandlerRef.value.setCurrentNoteId(newId ? newId.toString() : null);
+    
+    // 调试输出：确认AgentResponseHandler内部的noteId已被设置
+    setTimeout(() => {
+      console.log('AgentResponseHandler中当前的笔记ID:', agentResponseHandlerRef.value.getCurrentNoteId());
+    }, 100);
   }
 }, { immediate: true });
 
@@ -279,6 +297,12 @@ const handleKeyDown = ({ event, editorRef, selection }) => {
       const isInMentionLine = isCursorInSameLineWithMention(selection, lastMention);
       
       if (isInMentionLine) {
+        // 检查提及是否已被处理过
+        if (lastMention.getAttribute('data-processed') === 'true') {
+          console.log('该@提及已被处理过，忽略Enter键操作');
+          return; // 直接返回，不阻止默认换行行为
+        }
+        
         // 获取用户输入
         const userInput = agentResponseHandlerRef.value.extractUserInput(editorRef, lastMention);
         
@@ -289,8 +313,8 @@ const handleKeyDown = ({ event, editorRef, selection }) => {
           if (agentId) {
             event.preventDefault(); // 阻止默认的换行行为
             
-            // 不再在此处插入段落，由AgentResponseHandler控制插入位置
-            // 让光标保持在当前位置
+            // 将当前提及标记为已处理，防止重复触发
+            lastMention.setAttribute('data-processed', 'true');
             
             // 发送消息给AI助手，它会在当前位置插入响应
             agentResponseHandlerRef.value.handleChat(agentId, userInput, editorRef);
@@ -437,7 +461,6 @@ defineExpose({
   height: 100%;
   background-color: white;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   overflow: hidden;
 }
 

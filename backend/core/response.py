@@ -33,7 +33,7 @@ class ErrorDetail(BaseModel):
     message: str  # 错误信息
 
 
-class ResponseModel(Generic[T], BaseModel):
+class ResponseModel(BaseModel, Generic[T]):
     """统一响应模型"""
     code: int = Field(ResponseCode.SUCCESS.value, description="状态码")
     msg: str = Field("success", description="响应消息")

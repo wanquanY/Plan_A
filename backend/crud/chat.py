@@ -1,18 +1,37 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, and_
+from sqlalchemy import select, update, and_, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any
 
 from backend.models.chat import Chat, ChatMessage
 from backend.utils.logging import db_logger
 from backend.services.title_generator import generate_title_with_ai
+from backend.models.note import Note
 
 
-async def create_chat(db: AsyncSession, user_id: int, title: Optional[str] = None, agent_id: Optional[int] = None) -> Chat:
-    """创建一个新的聊天会话"""
-    db_logger.info(f"创建新聊天会话: user_id={user_id}, agent_id={agent_id}")
+async def create_chat(db: AsyncSession, user_id: int, chat_data=None, title: Optional[str] = None, agent_id: Optional[int] = None) -> Chat:
+    """创建一个新的聊天会话
     
-    chat = Chat(user_id=user_id, title=title or "新对话", agent_id=agent_id)
+    Args:
+        db: 数据库会话
+        user_id: 用户ID
+        chat_data: ChatCreate模型数据（优先使用）
+        title: 标题 (如果没有提供chat_data则使用此参数)
+        agent_id: 代理ID (如果没有提供chat_data则使用此参数)
+    """
+    db_logger.info(f"创建新聊天会话: user_id={user_id}")
+    
+    # 如果提供了chat_data，使用其中的数据
+    if chat_data:
+        chat_title = chat_data.title or "新对话"
+        chat_agent_id = getattr(chat_data, "agent_id", None)
+    else:
+        chat_title = title or "新对话"
+        chat_agent_id = agent_id
+    
+    db_logger.info(f"创建新聊天会话: user_id={user_id}, agent_id={chat_agent_id}")
+    
+    chat = Chat(user_id=user_id, title=chat_title, agent_id=chat_agent_id)
     db.add(chat)
     await db.commit()
     await db.refresh(chat)
@@ -36,19 +55,42 @@ async def get_chat(db: AsyncSession, conversation_id: int) -> Optional[Chat]:
     return chat
 
 
-async def get_user_chats(db: AsyncSession, user_id: int) -> List[Chat]:
-    """获取用户的所有聊天会话，不自动加载messages以避免异步加载问题"""
+async def get_user_chats(db: AsyncSession, user_id: int, skip: int = 0, limit: int = 20) -> tuple[List[Chat], int]:
+    """获取用户的所有聊天会话，不自动加载messages以避免异步加载问题
+    
+    Args:
+        db: 数据库会话
+        user_id: 用户ID
+        skip: 跳过的记录数
+        limit: 返回的记录数上限
+        
+    Returns:
+        Tuple[List[Chat], int]: 返回会话列表和总记录数
+    """
+    # 查询总记录数
+    count_query = select(func.count()).select_from(
+        select(Chat).where(
+            and_(
+                Chat.user_id == user_id,
+                Chat.is_deleted == False
+            )
+        ).subquery()
+    )
+    total_count = await db.execute(count_query)
+    total = total_count.scalar()
+    
+    # 查询分页数据
     query = select(Chat).where(
         and_(
             Chat.user_id == user_id,
             Chat.is_deleted == False
         )
-    ).order_by(Chat.updated_at.desc())
+    ).order_by(Chat.updated_at.desc()).offset(skip).limit(limit)
     
     result = await db.execute(query)
     chats = result.scalars().all()
     
-    return list(chats)
+    return list(chats), total
 
 
 async def update_chat_title(db: AsyncSession, conversation_id: int, title: str) -> Optional[Chat]:
@@ -115,7 +157,8 @@ async def add_message(
     if chat:
         # 如果没有标题或使用默认标题，且是用户的消息，则使用AI生成标题
         if (not chat.title or chat.title == "新对话") and role == "user" and len(content) > 0:
-            # 调用AI生成标题
+            # 生成并更新会话标题，不管是否关联笔记
+            db_logger.info(f"生成新会话标题: conversation_id={conversation_id}")
             title = await generate_title_with_ai(conversation_id, content)
             await update_chat_title(db, conversation_id, title)
     

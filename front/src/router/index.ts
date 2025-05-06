@@ -5,14 +5,36 @@ import Register from '../views/Register.vue';
 import Test from '../views/Test.vue';
 import UserProfile from '../views/UserProfile.vue';
 import AgentManagement from '../views/AgentManagement.vue';
+import GlobalLayout from '../components/GlobalLayout.vue';
 import authService from '../services/auth';
 
 const routes = [
   {
     path: '/',
-    name: 'Home',
-    component: Home,
-    meta: { requiresAuth: true }
+    component: GlobalLayout,
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: '',
+        name: 'Home',
+        component: Home
+      },
+      {
+        path: 'test',
+        name: 'Test',
+        component: Test
+      },
+      {
+        path: 'user-profile',
+        name: 'UserProfile',
+        component: UserProfile
+      },
+      {
+        path: 'agent-management',
+        name: 'AgentManagement',
+        component: AgentManagement
+      }
+    ]
   },
   {
     path: '/login',
@@ -25,24 +47,6 @@ const routes = [
     name: 'Register',
     component: Register,
     meta: { guest: true }
-  },
-  {
-    path: '/test',
-    name: 'Test',
-    component: Test,
-    meta: { requiresAuth: true }
-  },
-  {
-    path: '/user-profile',
-    name: 'UserProfile',
-    component: UserProfile,
-    meta: { requiresAuth: true }
-  },
-  {
-    path: '/agent-management',
-    name: 'AgentManagement',
-    component: AgentManagement,
-    meta: { requiresAuth: true }
   },
   // 路由重定向
   {

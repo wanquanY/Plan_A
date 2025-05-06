@@ -14,6 +14,7 @@ class ChatRequest(BaseModel):
     stream: Optional[bool] = Field(False, description="是否启用流式响应")
     conversation_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
     agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
+    note_id: Optional[int] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
 
 
 class AskAgainRequest(BaseModel):
@@ -59,6 +60,7 @@ class ChatStreamRequest(BaseModel):
     content: str = Field(..., description="用户消息内容")
     conversation_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
     agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
+    note_id: Optional[int] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
 
 
 class ChatMessageBase(BaseModel):
@@ -95,6 +97,7 @@ class ChatBase(BaseModel):
 class ChatCreate(ChatBase):
     """创建聊天会话的请求模型"""
     title: Optional[str] = "新对话"
+    note_id: Optional[int] = Field(None, description="要关联的笔记ID")
 
 
 class ChatUpdate(ChatBase):

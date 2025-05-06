@@ -16,6 +16,7 @@ from typing import List, Dict, Any
 
 from openai import OpenAI
 from backend.services.memory import redis_client, memory_service
+from backend.schemas.common import PaginationParams, PaginationResponse
 
 router = APIRouter()
 
@@ -36,6 +37,23 @@ async def chat(
     if chat_request.conversation_id == 0:
         api_logger.info(f"用户请求创建新会话: {current_user.username}")
         chat_request.conversation_id = None
+        
+        # 如果提供了note_id，检查是否需要关联到笔记
+        if chat_request.note_id:
+            from backend.models.note import Note
+            from sqlalchemy import select
+            
+            # 查询笔记是否存在
+            stmt = select(Note).where(
+                Note.id == chat_request.note_id,
+                Note.user_id == current_user.id,
+                Note.is_deleted == False
+            )
+            note_result = await db.execute(stmt)
+            note = note_result.scalar_one_or_none()
+            
+            if note:
+                api_logger.info(f"将新会话关联到笔记ID: {chat_request.note_id}")
     
     # 如果请求开启流式响应，转发到流式API
     if chat_request.stream:
@@ -62,6 +80,24 @@ async def chat(
         db=db,
         user_id=current_user.id
     )
+    
+    # 如果是新创建的会话，并且存在笔记ID，将会话关联到笔记
+    if chat_request.note_id and response.conversation_id:
+        from backend.models.note import Note
+        
+        # 更新笔记，关联到新创建的会话
+        note_stmt = select(Note).where(
+            Note.id == chat_request.note_id,
+            Note.user_id == current_user.id,
+            Note.is_deleted == False
+        )
+        note_result = await db.execute(note_stmt)
+        note = note_result.scalar_one_or_none()
+        
+        if note:
+            note.session_id = response.conversation_id
+            await db.commit()
+            api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {response.conversation_id}")
     
     api_logger.info(f"聊天请求完成: {current_user.username}, 会话ID: {response.conversation_id}")
     
@@ -159,10 +195,29 @@ async def stream_chat(
     
     # 特殊处理：如果conversation_id为0，视为创建新会话
     create_new_session = False
+    note_id = None
     if chat_request.conversation_id == 0:
         api_logger.info(f"用户请求创建新流式会话: {current_user.username}")
         chat_request.conversation_id = None
         create_new_session = True
+        
+        # 如果提供了note_id，记录下来
+        if chat_request.note_id:
+            from backend.models.note import Note
+            from sqlalchemy import select
+            
+            # 查询笔记是否存在
+            stmt = select(Note).where(
+                Note.id == chat_request.note_id,
+                Note.user_id == current_user.id,
+                Note.is_deleted == False
+            )
+            note_result = await db.execute(stmt)
+            note = note_result.scalar_one_or_none()
+            
+            if note:
+                note_id = chat_request.note_id
+                api_logger.info(f"流式会话将关联到笔记ID: {note_id}")
     
     # 强制设置为流式
     chat_request.stream = True
@@ -203,6 +258,24 @@ async def stream_chat(
                     if conversation_id is None and new_conversation_id:
                         conversation_id = new_conversation_id
                         api_logger.info(f"流式响应获取到会话ID: {conversation_id}")
+                        
+                        # 如果有笔记ID和会话ID，将笔记关联到会话
+                        if note_id and conversation_id:
+                            from backend.models.note import Note
+                            
+                            # 更新笔记，关联到新创建的会话
+                            note_stmt = select(Note).where(
+                                Note.id == note_id,
+                                Note.user_id == current_user.id,
+                                Note.is_deleted == False
+                            )
+                            note_result = await db.execute(note_stmt)
+                            note = note_result.scalar_one_or_none()
+                            
+                            if note:
+                                note.session_id = conversation_id
+                                await db.commit()
+                                api_logger.info(f"笔记ID {note_id} 已关联到流式会话ID {conversation_id}")
                 else:
                     content = chunk_data
                 
@@ -216,6 +289,24 @@ async def stream_chat(
                     if latest_chat:
                         conversation_id = latest_chat.id
                         api_logger.info(f"流式响应从数据库获取新会话ID: {conversation_id}")
+                        
+                        # 如果有笔记ID和会话ID，将笔记关联到会话
+                        if note_id and conversation_id:
+                            from backend.models.note import Note
+                            
+                            # 更新笔记，关联到新创建的会话
+                            note_stmt = select(Note).where(
+                                Note.id == note_id,
+                                Note.user_id == current_user.id,
+                                Note.is_deleted == False
+                            )
+                            note_result = await db.execute(note_stmt)
+                            note = note_result.scalar_one_or_none()
+                            
+                            if note:
+                                note.session_id = conversation_id
+                                await db.commit()
+                                api_logger.info(f"笔记ID {note_id} 已关联到流式会话ID {conversation_id}")
                 
                 first_chunk = False
                 
@@ -303,19 +394,27 @@ async def clear_chat_memory(
     )
 
 
-@router.get("/sessions", response_model=List[ChatListResponse])
+@router.get("/sessions")
 async def list_chat_sessions(
     request: Request,
+    page: int = Query(1, ge=1, description="页码，从1开始"),
+    page_size: int = Query(10, ge=1, le=100, description="每页条数"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    获取当前用户的所有聊天会话
+    获取当前用户的所有聊天会话，支持分页
     """
-    api_logger.info(f"获取用户聊天会话列表: {current_user.username}")
+    api_logger.info(f"获取用户聊天会话列表: {current_user.username}, page={page}, page_size={page_size}")
     
-    # 从数据库获取会话列表，但不自动加载消息
-    chats = await get_user_chats(db, current_user.id)
+    # 计算跳过的记录数
+    skip = (page - 1) * page_size
+    
+    # 从数据库获取会话列表和总数，不自动加载消息
+    chats, total = await get_user_chats(db, current_user.id, skip, page_size)
+    
+    # 计算总页数
+    total_pages = (total + page_size - 1) // page_size
     
     # 转换为响应格式
     result = []
@@ -343,8 +442,17 @@ async def list_chat_sessions(
             "last_message": last_message
         })
     
+    # 构建分页响应
+    pagination_response = {
+        "items": result,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": total_pages
+    }
+    
     return SuccessResponse(
-        data=result,
+        data=pagination_response,
         msg="获取聊天会话列表成功",
         request_id=getattr(request.state, "request_id", None)
     )
@@ -440,24 +548,41 @@ async def create_chat_session(
     """
     创建新的聊天会话
     """
-    api_logger.info(f"创建新聊天会话: user={current_user.username}")
-    
-    chat = await create_chat(db, current_user.id, chat_data.title)
-    
-    result = {
-        "id": chat.id,
-        "user_id": chat.user_id,
-        "title": chat.title,
-        "created_at": chat.created_at.isoformat() if chat.created_at else None,
-        "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
-        "messages": []
-    }
-    
-    return SuccessResponse(
-        data=result,
-        msg="创建聊天会话成功",
-        request_id=getattr(request.state, "request_id", None)
-    )
+    try:
+        new_chat = await create_chat(db, user_id=current_user.id, chat_data=chat_data)
+        
+        # 如果提供了笔记ID，将会话与笔记关联
+        if chat_data.note_id:
+            from backend.models.note import Note
+            from sqlalchemy import select
+            
+            # 查询笔记是否存在
+            stmt = select(Note).where(
+                Note.id == chat_data.note_id,
+                Note.user_id == current_user.id,
+                Note.is_deleted == False
+            )
+            note_result = await db.execute(stmt)
+            note = note_result.scalar_one_or_none()
+            
+            if note:
+                note.session_id = new_chat.id
+                await db.commit()
+                api_logger.info(f"笔记ID {chat_data.note_id} 已关联到会话ID {new_chat.id}")
+        
+        return SuccessResponse(
+            data={
+                "id": new_chat.id,
+                "title": new_chat.title,
+                "user_id": new_chat.user_id,
+                "created_at": new_chat.created_at.isoformat() if new_chat.created_at else None,
+                "updated_at": new_chat.updated_at.isoformat() if new_chat.updated_at else None
+            },
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except Exception as e:
+        api_logger.error(f"创建会话失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/sessions/{conversation_id}", response_model=ChatResponseModel)
