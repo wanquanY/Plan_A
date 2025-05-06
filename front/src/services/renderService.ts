@@ -41,7 +41,47 @@ export const renderCodeBlocks = async (handleMarkMaps = true) => {
       
       // 检查是否为mermaid语言，需要特殊处理
       if (language === 'mermaid') {
-        return; // mermaid图表已由mermaid库处理
+        // 检查pre元素是否已经标记为处理过
+        if (preElement.hasAttribute('data-mermaid-processed')) {
+          console.log('跳过已处理的mermaid代码块');
+          return;
+        }
+        
+        // 标记为已处理
+        preElement.setAttribute('data-mermaid-processed', 'true');
+        
+        // 创建一个新的mermaid渲染容器
+        const mermaidContainer = document.createElement('div');
+        mermaidContainer.className = 'mermaid-container';
+        
+        // 创建mermaid元素
+        const mermaidEl = document.createElement('div');
+        const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        mermaidEl.id = mermaidId;
+        mermaidEl.className = 'mermaid';
+        mermaidEl.textContent = code;
+        mermaidEl.setAttribute('data-original-content', code);
+        
+        // 添加复制按钮
+        const copyButton = document.createElement('button');
+        copyButton.className = 'copy-button';
+        copyButton.textContent = '复制';
+        copyButton.onclick = () => {
+          navigator.clipboard.writeText(code);
+          copyButton.textContent = '已复制';
+          setTimeout(() => {
+            copyButton.textContent = '复制';
+          }, 2000);
+        };
+        
+        // 组装DOM
+        mermaidContainer.appendChild(mermaidEl);
+        mermaidContainer.appendChild(copyButton);
+        
+        // 替换原始pre元素
+        preElement.replaceWith(mermaidContainer);
+        console.log(`创建新的mermaid元素: ${mermaidId}`);
+        return;
       }
       
       // 检查是否为markdown代码块，可能包含思维导图
@@ -304,16 +344,25 @@ export const renderMermaidDynamically = () => {
     // 首先处理可能已经被错误渲染的元素
     fixBrokenMermaidElements();
     
+    // 重置特殊标记，确保即使有flow-processed标记的元素也能被渲染
+    const flowProcessedElements = document.querySelectorAll('.mermaid.flow-processed:not([data-processed])');
+    if (flowProcessedElements.length > 0) {
+      console.log(`找到${flowProcessedElements.length}个带有flow-processed标记的mermaid元素，重置这些标记`);
+      flowProcessedElements.forEach(el => {
+        (el as HTMLElement).classList.remove('flow-processed');
+      });
+    }
+    
     // 查找所有尚未渲染的mermaid图表
-    const unprocessedMermaidDivs = document.querySelectorAll('.mermaid:not(.mermaid-processed):not([data-processed])') as NodeListOf<HTMLElement>;
+    const unprocessedMermaidDivs = document.querySelectorAll(
+      '.mermaid:not([data-processed])'
+    ) as NodeListOf<HTMLElement>;
     
     if (unprocessedMermaidDivs.length > 0) {
       console.log(`找到${unprocessedMermaidDivs.length}个未处理的mermaid图表，开始渲染`);
       
       // 标记这些元素为已处理
       unprocessedMermaidDivs.forEach(div => {
-        div.classList.add('mermaid-processed');
-        
         // 确保每个mermaid元素都有一个ID (渲染需要)
         if (!div.id) {
           div.id = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
@@ -449,7 +498,7 @@ export const renderMermaidDynamically = () => {
             setTimeout(() => {
               const mermaidContainers = document.querySelectorAll('.mermaid-container, .mermaid-wrapper, .mermaid-block');
               mermaidContainers.forEach(container => {
-                const mermaidEl = container.querySelector('.mermaid');
+                const mermaidEl = container.querySelector('.mermaid:not([data-processed])');
                 if (mermaidEl && !mermaidEl.querySelector('svg')) {
                   // 如果容器中的mermaid元素没有SVG，说明可能渲染失败，尝试重渲染
                   console.log('检测到未成功渲染的mermaid元素，尝试重新渲染');
@@ -479,6 +528,8 @@ export const renderMermaidDynamically = () => {
       } catch (outerError) {
         console.error('mermaid渲染过程中发生错误:', outerError);
       }
+    } else {
+      console.log('没有找到需要渲染的mermaid图表');
     }
   } catch (error) {
     console.error('实时渲染mermaid图表失败:', error);
@@ -566,6 +617,9 @@ const fixBrokenMermaidElements = () => {
  */
 export const setupMermaidAutoRender = () => {
   try {
+    // 保存流式输出阶段检测到的mermaid图表状态
+    let pendingMermaidRender = false;
+    
     // 创建一个MutationObserver来监视DOM变化
     const observer = new MutationObserver((mutations) => {
       let hasMermaidContent = false;
@@ -576,15 +630,14 @@ export const setupMermaidAutoRender = () => {
           mutation.addedNodes.forEach(node => {
             if (node.nodeType === Node.ELEMENT_NODE) {
               const element = node as Element;
-              // 直接检查新增节点
-              const mermaidElements = element.querySelectorAll('.mermaid:not(.mermaid-processed)');
+              // 直接检查新增节点是否包含mermaid元素
+              const mermaidElements = element.querySelectorAll('.mermaid');
               if (mermaidElements.length > 0) {
                 hasMermaidContent = true;
               }
               
               // 如果新增节点本身就是mermaid元素
-              if (element.classList && element.classList.contains('mermaid') && 
-                  !element.classList.contains('mermaid-processed')) {
+              if (element.classList && element.classList.contains('mermaid')) {
                 hasMermaidContent = true;
               }
             }
@@ -592,13 +645,11 @@ export const setupMermaidAutoRender = () => {
         }
       });
       
-      // 如果检测到新的mermaid内容，触发渲染
+      // 如果检测到新的mermaid内容，仅标记等待渲染
+      // 不触发实时渲染，等待流式输出结束后再统一渲染
       if (hasMermaidContent) {
-        console.log('检测到DOM变化中有新增的mermaid内容，触发渲染');
-        // 使用setTimeout允许DOM完全更新
-        setTimeout(() => {
-          renderMermaidDynamically();
-        }, 100);
+        console.log('检测到DOM变化中有新增的mermaid内容，标记等待流式输出结束后渲染');
+        pendingMermaidRender = true;
       }
     });
     
@@ -608,12 +659,39 @@ export const setupMermaidAutoRender = () => {
       subtree: true
     });
     
-    console.log('已设置mermaid自动渲染监听');
+    console.log('已设置mermaid自动渲染监听（等待流式输出结束后统一渲染）');
     
-    // 返回observer以便需要时停止监听
-    return observer;
+    // 返回observer以及触发渲染的方法，以便需要时停止监听或手动触发渲染
+    return {
+      disconnect: () => observer.disconnect(),
+      renderPending: () => {
+        if (pendingMermaidRender) {
+          console.log('流式输出结束，开始渲染积累的mermaid图表');
+          pendingMermaidRender = false;
+          
+          // 先给所有标记元素重置状态
+          const markedElements = document.querySelectorAll('.mermaid.flow-processed, .mermaid.mermaid-processed');
+          if (markedElements.length > 0) {
+            markedElements.forEach(el => {
+              if (!(el as HTMLElement).hasAttribute('data-processed')) {
+                (el as HTMLElement).classList.remove('flow-processed');
+                (el as HTMLElement).classList.remove('mermaid-processed');
+              }
+            });
+          }
+          
+          // 然后执行渲染
+          setTimeout(() => {
+            renderMermaidDynamically();
+          }, 100);
+        }
+      }
+    };
   } catch (error) {
     console.error('设置mermaid自动渲染监听失败:', error);
-    return null;
+    return {
+      disconnect: () => {},
+      renderPending: () => {}
+    };
   }
 }; 

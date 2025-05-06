@@ -169,9 +169,8 @@ export const processCodeBlocks = (content: string): string => {
   return content.replace(/```(?:(\w+)\n)?([\s\S]+?)```/g, (match, language, code) => {
     // 检测是否是Mermaid图表
     if (language === 'mermaid' || (!language && isMermaidContent(code))) {
-      const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      // 直接返回mermaid元素
-      return `<div class="mermaid-block"><div id="${mermaidId}" class="mermaid">${code.trim()}</div></div>`;
+      // 在历史会话中保持与新建会话相同的格式：保留代码块格式
+      return `<pre data-mermaid-processed="true"><code class="language-mermaid">${code.trim()}</code></pre>`;
     }
     
     // 检测是否是思维导图内容
@@ -203,17 +202,14 @@ renderer.code = function(code, lang, escaped) {
   
   // 特殊处理mermaid图表
   if (lang === 'mermaid') {
-    // 创建mermaid类的pre元素，让浏览器直接渲染
-    const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-    // 确保保存原始内容以便后续错误恢复
-    return `<pre class="mermaid-block"><div id="${mermaidId}" class="mermaid" data-original-content="${encodeURIComponent(code)}">${code}</div></pre>`;
+    // 使用与新建会话相同的格式：保留pre和code标签
+    return `<pre data-mermaid-processed="true"><code class="language-mermaid">${code}</code></pre>`;
   }
   
   // 检查代码内容是否可能是mermaid图表，即使没有明确标记语言
   if ((!lang || lang === 'text') && isMermaidContent(code)) {
-    // 如果内容特征符合mermaid图表，但没有标记为mermaid，也特殊处理
-    const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-    return `<pre class="mermaid-block"><div id="${mermaidId}" class="mermaid" data-original-content="${encodeURIComponent(code)}">${code}</div></pre>`;
+    // 如果内容特征符合mermaid图表，但没有标记为mermaid，也使用统一格式
+    return `<pre data-mermaid-processed="true"><code class="language-mermaid">${code}</code></pre>`;
   }
   
   // 对于普通代码块，使用默认渲染

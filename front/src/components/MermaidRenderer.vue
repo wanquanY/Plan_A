@@ -56,7 +56,9 @@ onMounted(() => {
 // 在组件卸载时清理observer和定时器
 onUnmounted(() => {
   if (mermaidObserver) {
-    mermaidObserver.disconnect();
+    if (typeof mermaidObserver.disconnect === 'function') {
+      mermaidObserver.disconnect();
+    }
     mermaidObserver = null;
   }
   

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, onUnmounted } from 'vue';
 import mermaid from 'mermaid';
 
 // 定义组件的属性
@@ -80,6 +80,12 @@ const copyChart = () => {
       console.error('复制失败:', err);
     });
 };
+
+// 组件卸载时清理资源
+onUnmounted(() => {
+  // 这里不需要清理mermaidObserver，因为该组件没有使用它
+  // 如果将来需要，可以在这里添加相关清理代码
+});
 </script>
 
 <template>

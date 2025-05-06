@@ -34,6 +34,7 @@ onMounted(() => {
   });
   
   // 使用renderService中的setupMermaidAutoRender来设置自动渲染
+  // 但现在会在流式输出结束后才渲染
   mermaidObserver = setupMermaidAutoRender();
   
   // 在组件挂载后，尝试初始渲染所有图表
@@ -45,7 +46,9 @@ onMounted(() => {
 // 组件卸载时清理observer
 onUnmounted(() => {
   if (mermaidObserver) {
-    mermaidObserver.disconnect();
+    if (typeof mermaidObserver.disconnect === 'function') {
+      mermaidObserver.disconnect();
+    }
     mermaidObserver = null;
   }
 });
@@ -111,7 +114,7 @@ const isMindMapContent = (content) => {
 };
 
 // 处理渲染后的HTML内容，将特殊容器替换为组件
-const processRenderedHtml = async (htmlContent, container) => {
+const processRenderedHtml = async (htmlContent, container, isStreamEnd = false) => {
   try {
     // 处理普通代码块
     const codeContainers = container.querySelectorAll('.code-container');
@@ -144,7 +147,10 @@ const processRenderedHtml = async (htmlContent, container) => {
       if (language === 'mermaid') {
         const code = codeBlock.textContent || '';
         const preElement = codeBlock.closest('pre');
-        if (!preElement) continue;
+        if (!preElement || preElement.hasAttribute('data-mermaid-processed')) continue;
+        
+        // 标记为已处理，防止重复处理
+        preElement.setAttribute('data-mermaid-processed', 'true');
         
         // 创建一个新的mermaid渲染容器
         const mermaidContainer = document.createElement('div');
@@ -154,8 +160,9 @@ const processRenderedHtml = async (htmlContent, container) => {
         const mermaidEl = document.createElement('div');
         const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
         mermaidEl.id = mermaidId;
-        mermaidEl.className = 'mermaid';
+        mermaidEl.className = 'mermaid'; // 不再添加flow-processed标记
         mermaidEl.textContent = code; // 直接设置mermaid内容
+        mermaidEl.setAttribute('data-original-content', code); // 保存原始内容
         
         // 添加复制按钮
         const copyButton = document.createElement('button');
@@ -175,12 +182,17 @@ const processRenderedHtml = async (htmlContent, container) => {
         
         // 替换原始pre元素
         preElement.replaceWith(mermaidContainer);
+        
+        console.log(`创建新的mermaid元素: ${mermaidId}`);
       }
       // 如果是markdown代码块（可能是思维导图）
       else if (language === 'markdown' || language === 'md') {
         const code = codeBlock.textContent || '';
         const preElement = codeBlock.closest('pre');
-        if (!preElement) continue;
+        if (!preElement || preElement.hasAttribute('data-markmap-processed')) continue;
+        
+        // 标记为已处理
+        preElement.setAttribute('data-markmap-processed', 'true');
         
         // 检查内容是否符合思维导图格式
         if (isMindMapContent(code)) {
@@ -209,32 +221,30 @@ const processRenderedHtml = async (htmlContent, container) => {
       }
     }
     
-    // 最后，重新初始化和渲染所有mermaid图表
-    try {
-      // 重新初始化mermaid配置
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: 'default',
-        securityLevel: 'loose',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial',
-        fontSize: 14,
-        flowchart: {
-          htmlLabels: true,
-          curve: 'basis'
+    // 仅在流式输出结束时才渲染mermaid图表
+    if (isStreamEnd) {
+      // 在流式输出结束时，立即尝试渲染mermaid图表
+      try {
+        // 如果mermaidObserver可用，使用它来渲染
+        if (mermaidObserver && typeof mermaidObserver.renderPending === 'function') {
+          console.log('流式输出结束，使用mermaidObserver渲染mermaid图表');
+          mermaidObserver.renderPending();
+        } else {
+          // 否则使用直接渲染方法
+          console.log('直接调用renderMermaidDynamically渲染mermaid图表');
+          renderMermaidDynamically();
         }
-      });
-      
-      // 手动运行mermaid渲染全部图表
-      await mermaid.run({
-        querySelector: '.mermaid',
-      });
-    } catch (mermaidError) {
-      console.error('Mermaid渲染失败:', mermaidError);
+      } catch (mermaidError) {
+        console.error('Mermaid渲染失败:', mermaidError);
+      }
+    } else {
+      console.log('流式输出中，标记mermaid图表等待最终渲染');
     }
     
     // 查找可能的思维导图内容 (基于内容格式判断)
-    const paragraphs = container.querySelectorAll('p');
+    const paragraphs = container.querySelectorAll('p:not([data-markmap-processed])');
     for (const p of paragraphs) {
+      p.setAttribute('data-markmap-processed', 'true');
       const content = p.textContent || '';
       // 检查是否符合思维导图格式 (以#开头的多行内容)
       if (isMindMapContent(content)) {
@@ -361,14 +371,6 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
     const range = selection.getRangeAt(0);
     range.insertNode(responseParagraph);
     
-    // 暂时不设置光标位置，等响应完成后再设置
-    // 将光标移动到响应段落后面
-    // selection.removeAllRanges();
-    // const newRange = document.createRange();
-    // newRange.setStartAfter(responseParagraph);
-    // newRange.collapse(true);
-    // selection.addRange(newRange);
-    
     // 初始文本提示
     responseParagraph.textContent = "加载中...";
     
@@ -383,276 +385,297 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
     // 处理流式响应的回调函数
     let previousContent = '';
     const streamCallback = async (response, isComplete, convId) => {
-      // 提取content, isEnd和convId
-      const data = response.data?.data || {};
-      const content = data.full_content || '';
-      const isEnd = data.done || isComplete;
-      
-      // 提取agent信息并发送事件
-      if (data.agent_info) {
-        emit('agent-response', { 
-          agent_info: data.agent_info,
-          message: data.message || {}
-        });
-      }
-      
-      // 确保响应段落存在且仍然在DOM中
-      const responseParagraph = document.getElementById(responseId);
-      if (!responseParagraph) {
-        console.warn('响应段落已从DOM中移除或找不到');
-        return;
-      }
-      
-      // 如果文本仍然是"加载中..."，即使内容没变也需要更新（清除加载提示）
-      const shouldForceUpdate = responseParagraph.textContent === "加载中...";
-      
-      // 如果内容没有变化，不更新DOM（但如果是结束消息或需要强制更新，则始终更新）
-      if (content === previousContent && !isEnd && !shouldForceUpdate) {
-        return;
-      }
-      
-      console.log(`更新响应内容，长度: ${content.length}, 是否结束: ${isEnd}, 会话ID: ${convId}`);
-      
       try {
-        // 首先处理内容，识别代码块语言
-        const processedContent = processUserInput(content || "");
+        // 提取content, isEnd和convId
+        const data = response.data?.data || {};
+        const content = data.full_content || '';
+        const isEnd = data.done || isComplete;
         
-        // 将Markdown转换为HTML并进行安全处理
-        let htmlContent = marked(processedContent || "");
-        
-        // DOMPurify消毒处理防止XSS攻击
-        if (typeof DOMPurify !== 'undefined') {
-          htmlContent = DOMPurify.sanitize(htmlContent, {
-            ADD_ATTR: ['class', 'data-language', 'id', 'data-code', 'data-mermaid-code', 'data-original-content'], // 允许自定义属性
-            ADD_TAGS: ['code', 'pre', 'div', 'svg', 'rect', 'path'] // 确保代码标签和SVG元素保留
+        // 提取agent信息并发送事件
+        if (data.agent_info) {
+          emit('agent-response', { 
+            agent_info: data.agent_info,
+            message: data.message || {}
           });
         }
         
-        // 更新内容并移除"加载中..."提示
-        if (responseParagraph.textContent === "加载中...") {
-          responseParagraph.textContent = "";
+        // 确保响应段落存在且仍然在DOM中
+        const responseParagraph = document.getElementById(responseId);
+        if (!responseParagraph) {
+          console.warn('响应段落已从DOM中移除或找不到');
+          return;
         }
-        responseParagraph.innerHTML = htmlContent || "无响应内容";
-        previousContent = content;
         
-        // 特别处理mermaid代码块，确保它们有正确的属性和结构
-        if (responseParagraph.innerHTML.includes('language-mermaid') || content.includes('```mermaid')) {
-          const codeBlocks = responseParagraph.querySelectorAll('pre > code.language-mermaid');
-          if (codeBlocks.length > 0) {
-            console.log(`检测到${codeBlocks.length}个mermaid代码块，确保正确格式化`);
-            
-            codeBlocks.forEach(codeBlock => {
-              const code = codeBlock.textContent || '';
-              const preElement = codeBlock.closest('pre');
-              if (!preElement) return;
-              
-              // 创建一个新的mermaid渲染容器
-              const mermaidContainer = document.createElement('div');
-              mermaidContainer.className = 'mermaid-container';
-              
-              // 创建mermaid元素
-              const mermaidEl = document.createElement('div');
-              const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-              mermaidEl.id = mermaidId;
-              mermaidEl.className = 'mermaid';
-              mermaidEl.setAttribute('data-original-content', code); // 保存原始内容
-              mermaidEl.textContent = code;
-              
-              // 添加复制按钮
-              const copyButton = document.createElement('button');
-              copyButton.className = 'copy-button';
-              copyButton.textContent = '复制';
-              copyButton.onclick = () => {
-                navigator.clipboard.writeText(code);
-                copyButton.textContent = '已复制';
-                setTimeout(() => {
-                  copyButton.textContent = '复制';
-                }, 2000);
-              };
-              
-              // 组装DOM
-              mermaidContainer.appendChild(mermaidEl);
-              mermaidContainer.appendChild(copyButton);
-              
-              // 替换原始pre元素
-              preElement.replaceWith(mermaidContainer);
+        // 如果文本仍然是"加载中..."，即使内容没变也需要更新（清除加载提示）
+        const shouldForceUpdate = responseParagraph.textContent === "加载中...";
+        
+        // 如果内容没有变化，不更新DOM（但如果是结束消息或需要强制更新，则始终更新）
+        if (content === previousContent && !isEnd && !shouldForceUpdate) {
+          return;
+        }
+        
+        console.log(`更新响应内容，长度: ${content.length}, 是否结束: ${isEnd}, 会话ID: ${convId}`);
+        
+        try {
+          // 首先处理内容，识别代码块语言
+          const processedContent = processUserInput(content || "");
+          
+          // 将Markdown转换为HTML并进行安全处理
+          let htmlContent = marked(processedContent || "");
+          
+          // DOMPurify消毒处理防止XSS攻击
+          if (typeof DOMPurify !== 'undefined') {
+            htmlContent = DOMPurify.sanitize(htmlContent, {
+              ADD_ATTR: ['class', 'data-language', 'id', 'data-code', 'data-mermaid-code', 'data-original-content'], // 允许自定义属性
+              ADD_TAGS: ['code', 'pre', 'div', 'svg', 'rect', 'path'] // 确保代码标签和SVG元素保留
             });
-            
-            // 立即尝试渲染mermaid图表
-            if (!isEnd) { // 如果还未完成，先进行一次渲染尝试
-              import('../services/renderService').then(({ renderMermaidDynamically }) => {
-                renderMermaidDynamically();
+          }
+          
+          // 更新内容并移除"加载中..."提示
+          if (responseParagraph.textContent === "加载中...") {
+            responseParagraph.textContent = "";
+          }
+          responseParagraph.innerHTML = htmlContent || "无响应内容";
+          previousContent = content;
+          
+          // 特别处理mermaid代码块，确保它们有正确的属性和结构
+          if (responseParagraph.innerHTML.includes('language-mermaid') || content.includes('```mermaid')) {
+            const codeBlocks = responseParagraph.querySelectorAll('pre > code.language-mermaid');
+            if (codeBlocks.length > 0) {
+              console.log(`检测到${codeBlocks.length}个mermaid代码块，确保正确格式化`);
+              
+              codeBlocks.forEach(codeBlock => {
+                const code = codeBlock.textContent || '';
+                const preElement = codeBlock.closest('pre');
+                if (!preElement || preElement.hasAttribute('data-mermaid-processed')) return;
+                
+                // 标记为已处理，防止重复处理
+                preElement.setAttribute('data-mermaid-processed', 'true');
+                
+                // 创建一个新的mermaid渲染容器
+                const mermaidContainer = document.createElement('div');
+                mermaidContainer.className = 'mermaid-container';
+                
+                // 创建mermaid元素
+                const mermaidEl = document.createElement('div');
+                const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+                mermaidEl.id = mermaidId;
+                mermaidEl.className = 'mermaid'; // 不再添加flow-processed标记
+                mermaidEl.setAttribute('data-original-content', code); // 保存原始内容
+                mermaidEl.textContent = code;
+                
+                // 添加复制按钮
+                const copyButton = document.createElement('button');
+                copyButton.className = 'copy-button';
+                copyButton.textContent = '复制';
+                copyButton.onclick = () => {
+                  navigator.clipboard.writeText(code);
+                  copyButton.textContent = '已复制';
+                  setTimeout(() => {
+                    copyButton.textContent = '复制';
+                  }, 2000);
+                };
+                
+                // 组装DOM
+                mermaidContainer.appendChild(mermaidEl);
+                mermaidContainer.appendChild(copyButton);
+                
+                // 替换原始pre元素
+                preElement.replaceWith(mermaidContainer);
               });
             }
           }
+          
+          // 处理渲染后的HTML内容，替换为组件
+          await processRenderedHtml(htmlContent, responseParagraph, isEnd);
+          
+        } catch (error) {
+          console.error('处理Markdown内容时出错:', error);
+          // 回退到纯文本处理
+          responseParagraph.textContent = content || "无响应内容";
         }
         
-        // 处理渲染后的HTML内容，替换为组件
-        await processRenderedHtml(htmlContent, responseParagraph);
-        
-      } catch (error) {
-        console.error('处理Markdown内容时出错:', error);
-        // 回退到纯文本处理
-        responseParagraph.textContent = content || "无响应内容";
-      }
-      
-      // 当响应完成时，保存会话ID，并确保内容保留
-      if (isEnd) {
-        // 只有在有效的会话ID时才更新
-        if (convId && convId !== 0) {
-          const oldId = conversationId.value;
-          conversationId.value = convId.toString();
-          console.log(`响应完成，保存会话ID: ${conversationId.value}, 最终内容长度: ${content.length}`);
-          
-          // 确保EditorContent组件的模型值得到更新，但不过度触发
-          const editorContent = responseParagraph.closest('.editor-content');
-          if (editorContent) {
-            // 最终更新一次内容
-            try {
-              editorContent.dispatchEvent(new Event('input', { bubbles: true }));
-              console.log('流式响应完成，编辑器内容已更新');
-              
-              // 将光标定位到响应段落的末尾
-              const selection = window.getSelection();
-              selection.removeAllRanges();
-              const range = document.createRange();
-              // 检查响应段落是否存在于DOM中
-              if (responseParagraph && responseParagraph.parentNode) {
-                // 设置光标在响应段落后面
-                range.setStartAfter(responseParagraph);
-                range.collapse(true);
-                selection.addRange(range);
-                console.log('已将光标定位到响应内容后面');
-              }
-              
-              // 延迟处理代码块，等待DOM渲染完成
-              setTimeout(() => {
-                // 处理代码块，但避免触发额外的更新
-                try {
-                  // 先确保所有代码块都有语言标识
-                  ensureCodeBlocksHaveLanguage();
-                  
-                  // 然后使用CodeBlock组件替换代码块
-                  setupCodeBlocks();
-                  
-                  // 再渲染Mermaid图表，使用动态渲染函数
-                  renderMermaidDynamically();
-                  
-                  // 添加额外的Mermaid图表渲染保障机制，参考历史会话的处理方式
-                  setTimeout(() => {
-                    // 查找所有未处理的mermaid元素并尝试再次渲染
-                    const mermaidElements = document.querySelectorAll('.mermaid:not([data-processed])');
+        // 当响应完成时，保存会话ID，并确保内容保留
+        if (isEnd) {
+          // 只有在有效的会话ID时才更新
+          if (convId && convId !== 0) {
+            const oldId = conversationId.value;
+            conversationId.value = convId.toString();
+            console.log(`响应完成，保存会话ID: ${conversationId.value}, 最终内容长度: ${content.length}`);
+            
+            // 确保EditorContent组件的模型值得到更新，但不过度触发
+            const editorContent = responseParagraph.closest('.editor-content');
+            if (editorContent) {
+              // 最终更新一次内容
+              try {
+                editorContent.dispatchEvent(new Event('input', { bubbles: true }));
+                console.log('流式响应完成，编辑器内容已更新');
+                
+                // 将光标定位到响应段落的末尾
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                const range = document.createRange();
+                // 检查响应段落是否存在于DOM中
+                if (responseParagraph && responseParagraph.parentNode) {
+                  // 设置光标在响应段落后面
+                  range.setStartAfter(responseParagraph);
+                  range.collapse(true);
+                  selection.addRange(range);
+                  console.log('已将光标定位到响应内容后面');
+                }
+                
+                // 延迟处理代码块，等待DOM渲染完成
+                setTimeout(() => {
+                  // 处理代码块，但避免触发额外的更新
+                  try {
+                    // 先确保所有代码块都有语言标识
+                    ensureCodeBlocksHaveLanguage();
+                    
+                    // 然后使用CodeBlock组件替换代码块
+                    setupCodeBlocks();
+                    
+                    // 先重置所有flow-processed标记，确保图表可以被渲染
+                    const mermaidElements = document.querySelectorAll('.mermaid.flow-processed:not([data-processed])');
                     if (mermaidElements.length > 0) {
-                      console.log(`检测到未处理的mermaid图表，再次尝试渲染${mermaidElements.length}个图表`);
-                      
-                      // 确保每个元素都有id和原始内容备份
+                      console.log(`找到${mermaidElements.length}个标记为flow-processed的mermaid图表，重置标记以便渲染`);
                       mermaidElements.forEach(el => {
-                        const element = el as HTMLElement;
-                        
-                        // 添加ID如果没有
-                        if (!element.id) {
-                          element.id = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-                        }
-                        
-                        // 备份原始内容如果没有
-                        if (!element.hasAttribute('data-original-content')) {
-                          const content = element.textContent || '';
-                          element.setAttribute('data-original-content', content);
-                        }
-                        
-                        // 移除可能的错误标记
-                        element.removeAttribute('data-processed');
-                        element.classList.remove('mermaid-processed');
+                        el.classList.remove('flow-processed');
+                        el.classList.remove('mermaid-processed');
                       });
-                      
-                      // 重新初始化mermaid并渲染
-                      mermaid.initialize({
-                        startOnLoad: false,
-                        theme: 'default',
-                        securityLevel: 'loose',
-                        flowchart: {
-                          htmlLabels: true,
-                          curve: 'basis',
-                          useMaxWidth: false
-                        },
-                        sequence: {
-                          useMaxWidth: false,
-                          diagramMarginX: 50,
-                          diagramMarginY: 10
-                        }
-                      });
-                      
-                      // 尝试使用多种渲染方法
-                      try {
-                        if (typeof mermaid.run === 'function') {
-                          mermaid.run({
-                            querySelector: '.mermaid:not([data-processed])'
-                          }).catch(err => {
-                            console.log('降级使用init方法渲染mermaid', err);
+                    }
+                    
+                    // 触发渲染流式输出期间累积的mermaid图表
+                    if (mermaidObserver && typeof mermaidObserver.renderPending === 'function') {
+                      console.log('流式输出完成，触发累积的mermaid图表渲染');
+                      mermaidObserver.renderPending();
+                    } else {
+                      // 如果mermaidObserver不可用，则直接使用renderMermaidDynamically
+                      console.log('mermaidObserver不可用，直接调用renderMermaidDynamically');
+                      renderMermaidDynamically();
+                    }
+                    
+                    // 添加额外的Mermaid图表渲染保障机制，参考历史会话的处理方式
+                    setTimeout(() => {
+                      // 查找所有未处理的mermaid元素并尝试再次渲染
+                      const mermaidElements = document.querySelectorAll('.mermaid:not([data-processed])');
+                      if (mermaidElements.length > 0) {
+                        console.log(`检测到未处理的mermaid图表，再次尝试渲染${mermaidElements.length}个图表`);
+                        
+                        // 确保每个元素都有id和原始内容备份
+                        mermaidElements.forEach(el => {
+                          const element = el as HTMLElement;
+                          
+                          // 添加ID如果没有
+                          if (!element.id) {
+                            element.id = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+                          }
+                          
+                          // 备份原始内容如果没有
+                          if (!element.hasAttribute('data-original-content')) {
+                            const content = element.textContent || '';
+                            element.setAttribute('data-original-content', content);
+                          }
+                          
+                          // 移除可能的错误标记
+                          element.removeAttribute('data-processed');
+                          element.classList.remove('mermaid-processed');
+                          element.classList.remove('flow-processed');
+                        });
+                        
+                        // 重新初始化mermaid并渲染
+                        mermaid.initialize({
+                          startOnLoad: false,
+                          theme: 'default',
+                          securityLevel: 'loose',
+                          flowchart: {
+                            htmlLabels: true,
+                            curve: 'basis',
+                            useMaxWidth: false
+                          },
+                          sequence: {
+                            useMaxWidth: false,
+                            diagramMarginX: 50,
+                            diagramMarginY: 10
+                          }
+                        });
+                        
+                        // 尝试使用多种渲染方法
+                        try {
+                          if (typeof mermaid.run === 'function') {
+                            mermaid.run({
+                              querySelector: '.mermaid:not([data-processed])'
+                            }).catch(err => {
+                              console.log('降级使用init方法渲染mermaid', err);
+                              try {
+                                mermaid.init(undefined, mermaidElements);
+                              } catch (initErr) {
+                                console.error('init方法也失败，尝试单独渲染', initErr);
+                                // 逐个尝试渲染
+                                mermaidElements.forEach(async (el) => {
+                                  try {
+                                    if (el.id) {
+                                      const content = el.textContent || '';
+                                      // 跳过已经包含SVG的元素
+                                      if (!content.includes('<svg')) {
+                                        await mermaid.render(el.id, content);
+                                      }
+                                    }
+                                  } catch (renderErr) {
+                                    console.error(`单个元素渲染失败: ${el.id}`, renderErr);
+                                  }
+                                });
+                              }
+                            });
+                          } else {
+                            // 降级使用传统API
                             try {
                               mermaid.init(undefined, mermaidElements);
-                            } catch (initErr) {
-                              console.error('init方法也失败，尝试单独渲染', initErr);
-                              // 逐个尝试渲染
-                              mermaidElements.forEach(async (el) => {
-                                try {
-                                  if (el.id) {
-                                    const content = el.textContent || '';
-                                    // 跳过已经包含SVG的元素
-                                    if (!content.includes('<svg')) {
-                                      await mermaid.render(el.id, content);
-                                    }
-                                  }
-                                } catch (renderErr) {
-                                  console.error(`单个元素渲染失败: ${el.id}`, renderErr);
-                                }
-                              });
+                            } catch (err) {
+                              console.error('所有渲染方法都失败', err);
                             }
-                          });
-                        } else {
-                          // 降级使用传统API
-                          try {
-                            mermaid.init(undefined, mermaidElements);
-                          } catch (err) {
-                            console.error('所有渲染方法都失败', err);
                           }
+                          
+                          // 最后为所有生成的SVG添加居中样式
+                          setTimeout(() => {
+                            const renderedSvgs = document.querySelectorAll('svg[id^="mermaid-"]');
+                            renderedSvgs.forEach(svg => {
+                              svg.setAttribute('style', 'display: block !important; margin: 0 auto !important; max-width: 100% !important; width: fit-content !important;');
+                            });
+                          }, 200);
+                        } catch (err) {
+                          console.error('所有mermaid渲染方法都失败', err);
                         }
-                        
-                        // 最后为所有生成的SVG添加居中样式
-                        setTimeout(() => {
-                          const renderedSvgs = document.querySelectorAll('svg[id^="mermaid-"]');
-                          renderedSvgs.forEach(svg => {
-                            svg.setAttribute('style', 'display: block !important; margin: 0 auto !important; max-width: 100% !important; width: fit-content !important;');
-                          });
-                        }, 200);
-                      } catch (err) {
-                        console.error('所有mermaid渲染方法都失败', err);
                       }
-                    }
-                  }, 500);
-                } catch (error) {
-                  console.error('最终处理代码块时出错:', error);
-                } finally {
-                  isProcessing.value = false;
-                }
-              }, 300);
-            } catch (error) {
-              console.error('最终更新编辑器内容时出错:', error);
+                    }, 500);
+                  } catch (error) {
+                    console.error('最终处理代码块时出错:', error);
+                  } finally {
+                    isProcessing.value = false;
+                  }
+                }, 300);
+              } catch (error) {
+                console.error('最终更新编辑器内容时出错:', error);
+                isProcessing.value = false;
+              }
+            } else {
               isProcessing.value = false;
             }
           } else {
-            isProcessing.value = false;
+            console.warn(`响应完成但没有有效会话ID: ${convId}`);
+            isProcessing.value = false; // 即使没有会话ID也要结束处理状态
           }
-        } else {
-          console.warn(`响应完成但没有有效会话ID: ${convId}`);
-          isProcessing.value = false; // 即使没有会话ID也要结束处理状态
+          
+          // 标记最后使用的@提及元素为已处理，防止重复触发
+          const lastMention = findLastActiveMention(editorRef);
+          if (lastMention) {
+            lastMention.setAttribute('data-processed', 'true');
+            console.log('已标记@提及元素为已处理状态');
+          }
         }
-        
-        // 标记最后使用的@提及元素为已处理，防止重复触发
-        const lastMention = findLastActiveMention(editorRef);
-        if (lastMention) {
-          lastMention.setAttribute('data-processed', 'true');
-          console.log('已标记@提及元素为已处理状态');
+      } catch (error) {
+        console.error('处理流式响应时出错:', error);
+        if (isComplete) {
+          isProcessing.value = false;
         }
       }
     };
@@ -672,8 +695,6 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
       agent_id: parseInt(agentId),
       conversation_id: currentConvId
     }, streamCallback);
-    
-    // 不再在这里调用handleAgentResponseComplete，因为它已经在流式响应完成回调中处理了
     
     // 防止永久加载状态：设置一个安全超时，确保即使回调没有正确完成，也会清除加载状态
     const safetyTimeout = setTimeout(() => {
@@ -1057,6 +1078,77 @@ const handleChatMessages = async (response) => {
   }
 };
 
+// 手动触发Mermaid渲染的辅助方法
+const forceRenderMermaid = () => {
+  console.log('手动触发Mermaid渲染');
+  
+  // 重置任何带有flow-processed或mermaid-processed类的元素
+  const markedElements = document.querySelectorAll('.mermaid.flow-processed, .mermaid.mermaid-processed');
+  if (markedElements.length > 0) {
+    console.log(`重置${markedElements.length}个带有特殊标记的Mermaid元素`);
+    markedElements.forEach(el => {
+      if (!(el as HTMLElement).hasAttribute('data-processed')) {
+        (el as HTMLElement).classList.remove('flow-processed');
+        (el as HTMLElement).classList.remove('mermaid-processed');
+      }
+    });
+  }
+  
+  // 首先尝试通过观察者触发渲染
+  if (mermaidObserver && typeof mermaidObserver.renderPending === 'function') {
+    console.log('通过mermaidObserver触发渲染');
+    mermaidObserver.renderPending();
+  } else {
+    // 否则直接调用renderMermaidDynamically
+    console.log('直接调用renderMermaidDynamically');
+    renderMermaidDynamically();
+  }
+  
+  // 为确保渲染完成，延迟一段时间后再次尝试渲染
+  setTimeout(() => {
+    // 查找所有未处理的Mermaid元素
+    const unprocessedElements = document.querySelectorAll('.mermaid:not([data-processed])');
+    if (unprocessedElements.length > 0) {
+      console.log(`发现${unprocessedElements.length}个未处理的Mermaid元素，再次尝试渲染`);
+      
+      // 尝试直接使用mermaid API渲染
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'default',
+          securityLevel: 'loose',
+          flowchart: {
+            htmlLabels: true,
+            curve: 'basis',
+            useMaxWidth: false
+          }
+        });
+        
+        if (typeof mermaid.run === 'function') {
+          mermaid.run({
+            querySelector: '.mermaid:not([data-processed])'
+          }).catch(err => {
+            console.error('mermaid.run渲染失败，尝试其他方法', err);
+            // 尝试传统方法
+            try {
+              mermaid.init(undefined, unprocessedElements);
+            } catch (initErr) {
+              console.error('mermaid.init也失败', initErr);
+            }
+          });
+        } else {
+          // 降级到传统方法
+          mermaid.init(undefined, unprocessedElements);
+        }
+      } catch (error) {
+        console.error('所有渲染方法都失败', error);
+      }
+    } else {
+      console.log('没有找到需要渲染的Mermaid图表');
+    }
+  }, 300);
+};
+
 // 暴露给父组件的方法
 defineExpose({
   findLastMention,
@@ -1069,7 +1161,8 @@ defineExpose({
   setupCodeCopyButtons,
   setupCodeBlocks,
   processRenderedHtml,
-  isMindMapContent
+  isMindMapContent,
+  forceRenderMermaid
 });
 </script>
 
