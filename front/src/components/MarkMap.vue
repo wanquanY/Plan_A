@@ -131,31 +131,15 @@ const fitMap = () => {
     <!-- 渲染成功状态 - SVG容器 -->
     <svg ref="svgRef" :style="{ height: height }" class="markmap-svg"></svg>
     
-    <!-- 工具栏 -->
-    <div class="markmap-toolbar">
-      <!-- 缩放适配按钮 -->
-      <button class="fit-button" @click="fitMap" title="适配大小">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 3 21 3 21 9"></polyline>
-          <polyline points="9 21 3 21 3 15"></polyline>
-          <line x1="21" y1="3" x2="14" y2="10"></line>
-          <line x1="3" y1="21" x2="10" y2="14"></line>
-        </svg>
-      </button>
-      
-      <!-- 复制按钮 -->
-      <div 
-        class="copy-button" 
-        :class="{ 'copied': isCopied }" 
-        :title="isCopied ? '已复制!' : '复制思维导图代码'" 
-        @click="copyContent"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-        </svg>
-      </div>
-    </div>
+    <!-- 工具栏 - 只留一个按钮 -->
+    <button class="fit-button" @click="fitMap" title="适配大小">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 3 21 3 21 9"></polyline>
+        <polyline points="9 21 3 21 3 15"></polyline>
+        <line x1="21" y1="3" x2="14" y2="10"></line>
+        <line x1="3" y1="21" x2="10" y2="14"></line>
+      </svg>
+    </button>
   </div>
 </template>
 
@@ -177,23 +161,16 @@ const fitMap = () => {
   outline: none;
 }
 
-/* 工具栏样式 */
-.markmap-toolbar {
+/* 移除工具栏，直接定位按钮 */
+.fit-button {
   position: absolute;
   top: 5px;
   right: 5px;
   display: flex;
-  gap: 5px;
-  z-index: 10;
-}
-
-.fit-button,
-.copy-button {
-  display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   background-color: rgba(246, 248, 250, 0.8);
   border-radius: 4px;
   padding: 4px;
@@ -202,23 +179,17 @@ const fitMap = () => {
   transition: opacity 0.2s ease, background-color 0.2s ease;
   border: 1px solid #eaecef;
   color: #666;
+  margin: 0;
+  z-index: 10;
 }
 
-.markmap-wrapper:hover .fit-button,
-.markmap-wrapper:hover .copy-button {
+.markmap-wrapper:hover .fit-button {
   opacity: 1;
 }
 
-.fit-button:hover,
-.copy-button:hover {
+.fit-button:hover {
   background-color: #f0f0f0;
   color: #0366d6;
-}
-
-.copy-button.copied {
-  background-color: #dcffe4;
-  color: #28a745;
-  opacity: 1;
 }
 
 /* 加载状态样式 */
@@ -228,23 +199,23 @@ const fitMap = () => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  width: 100%;
-  min-height: 150px;
+  min-height: 200px;
   color: #666;
 }
 
 .spinner {
-  width: 40px;
-  height: 40px;
   border: 3px solid rgba(0, 0, 0, 0.1);
   border-radius: 50%;
-  border-top-color: #1677ff;
-  animation: spin 1s ease-in-out infinite;
+  border-top: 3px solid #3498db;
+  width: 30px;
+  height: 30px;
+  animation: spin 1s linear infinite;
   margin-bottom: 10px;
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* 错误状态样式 */
@@ -252,36 +223,36 @@ const fitMap = () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  height: 100%;
+  min-height: 200px;
+  color: #e74c3c;
   padding: 20px;
-  background-color: #fff5f5;
-  border: 1px solid #ffccc7;
-  border-radius: 4px;
-  color: #f5222d;
-  min-height: 150px;
+  text-align: center;
 }
 
 .error-icon {
   font-size: 24px;
   font-weight: bold;
-  margin-right: 10px;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: #fff0f0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background-color: #f5222d;
-  color: white;
+  margin-right: 10px;
+}
+
+.error-message {
+  text-align: left;
 }
 
 .error-message p {
-  margin: 0;
-  font-weight: 500;
+  margin: 0 0 5px 0;
+  font-weight: bold;
 }
 
 .error-message small {
-  display: block;
-  margin-top: 4px;
-  color: #666;
+  color: #777;
 }
 </style> 

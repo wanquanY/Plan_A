@@ -7,6 +7,7 @@ import 'highlight.js/styles/github.css'
 import App from './App.vue'
 import router from './router'
 import './assets/main.css'
+import './assets/styles/global.css'
 
 const app = createApp(App)
 const pinia = createPinia()

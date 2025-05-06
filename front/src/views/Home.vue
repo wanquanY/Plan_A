@@ -114,101 +114,70 @@ const fetchSessionDetail = async (sessionId) => {
             const editorContainer = document.querySelector('.editor-content');
             if (!editorContainer) return;
             
-            // 处理普通代码块，但保留mermaid代码块
-            renderCodeBlocks(true).then(() => {
-              // 寻找所有mermaid代码块并处理
-              const mermaidCodeBlocks = document.querySelectorAll('pre > code.language-mermaid');
-              console.log(`历史会话中找到${mermaidCodeBlocks.length}个Mermaid代码块`);
-              
-              if (mermaidCodeBlocks.length > 0) {
-                // 处理所有的mermaid代码块
-                mermaidCodeBlocks.forEach((codeBlock) => {
-                  const code = codeBlock.textContent || '';
-                  const preElement = codeBlock.closest('pre');
-                  if (!preElement || preElement.querySelector('.mermaid-container')) return;
-                  
-                  // 创建一个新的mermaid渲染容器
-                  const mermaidContainer = document.createElement('div');
-                  mermaidContainer.className = 'mermaid-container';
-                  
-                  // 创建mermaid元素
-                  const mermaidEl = document.createElement('div');
-                  const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-                  mermaidEl.id = mermaidId;
-                  mermaidEl.className = 'mermaid';
-                  mermaidEl.textContent = code;
-                  mermaidEl.setAttribute('data-original-content', code);
-                  
-                  // 添加复制按钮
-                  const copyButton = document.createElement('button');
-                  copyButton.className = 'copy-button';
-                  copyButton.textContent = '复制';
-                  copyButton.onclick = () => {
-                    navigator.clipboard.writeText(code);
-                    copyButton.textContent = '已复制';
-                    setTimeout(() => {
-                      copyButton.textContent = '复制';
-                    }, 2000);
-                  };
-                  
-                  // 组装DOM
-                  mermaidContainer.appendChild(mermaidEl);
-                  mermaidContainer.appendChild(copyButton);
-                  
-                  // 替换原始pre元素
-                  preElement.replaceWith(mermaidContainer);
-                });
+            // 导入渲染服务
+            import('../services/renderService').then(({ renderCodeBlocks, renderMermaidDynamically, renderMarkMaps }) => {
+              // 处理普通代码块，但保留mermaid代码块和思维导图代码块
+              renderCodeBlocks(false).then(() => {
+                // 处理mermaid图表
+                console.log('处理历史会话中的mermaid图表');
                 
-                // 等待DOM更新后渲染mermaid图表
-                setTimeout(() => {
-                  // 先尝试初始化mermaid (可能已经在其他地方初始化过)
-                  try {
-                    mermaid.initialize({
-                      startOnLoad: false,
-                      theme: 'default',
-                      securityLevel: 'loose',
-                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial',
-                      fontSize: 14,
-                      flowchart: {
-                        htmlLabels: true,
-                        curve: 'basis',
-                        useMaxWidth: false
-                      }
-                    });
+                // 寻找所有mermaid代码块并处理
+                const mermaidCodeBlocks = document.querySelectorAll('pre > code.language-mermaid');
+                console.log(`历史会话中找到${mermaidCodeBlocks.length}个Mermaid代码块`);
+                
+                if (mermaidCodeBlocks.length > 0) {
+                  // 处理所有的mermaid代码块
+                  mermaidCodeBlocks.forEach((codeBlock) => {
+                    const code = codeBlock.textContent || '';
+                    const preElement = codeBlock.closest('pre');
+                    if (!preElement || preElement.querySelector('.mermaid-container')) return;
                     
-                    // 查找所有未处理的mermaid元素
-                    const mermaidElements = document.querySelectorAll('.mermaid:not([data-processed])');
-                    if (mermaidElements.length > 0) {
-                      console.log(`历史会话中找到${mermaidElements.length}个待渲染的Mermaid图表`);
-                      
-                      // 尝试使用run方法渲染
-                      if (typeof mermaid.run === 'function') {
-                        mermaid.run({
-                          querySelector: '.mermaid:not([data-processed])'
-                        }).catch(err => {
-                          console.log('使用init方法渲染mermaid', err);
-                          try {
-                            mermaid.init(undefined, mermaidElements);
-                          } catch (initErr) {
-                            console.error('所有渲染方法都失败', initErr);
-                          }
-                        });
-                      } else {
-                        // 降级使用传统API
-                        try {
-                          mermaid.init(undefined, mermaidElements);
-                        } catch (err) {
-                          console.error('所有渲染方法都失败', err);
-                        }
-                      }
-                    }
-                  } catch (error) {
-                    console.error('历史会话mermaid初始化失败:', error);
-                  }
+                    // 创建一个新的mermaid渲染容器
+                    const mermaidContainer = document.createElement('div');
+                    mermaidContainer.className = 'mermaid-container';
+                    
+                    // 创建mermaid元素
+                    const mermaidEl = document.createElement('div');
+                    const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+                    mermaidEl.id = mermaidId;
+                    mermaidEl.className = 'mermaid';
+                    mermaidEl.textContent = code;
+                    mermaidEl.setAttribute('data-original-content', code);
+                    
+                    // 添加复制按钮
+                    const copyButton = document.createElement('button');
+                    copyButton.className = 'copy-button';
+                    copyButton.textContent = '复制';
+                    copyButton.onclick = () => {
+                      navigator.clipboard.writeText(code);
+                      copyButton.textContent = '已复制';
+                      setTimeout(() => {
+                        copyButton.textContent = '复制';
+                      }, 2000);
+                    };
+                    
+                    // 组装DOM
+                    mermaidContainer.appendChild(mermaidEl);
+                    mermaidContainer.appendChild(copyButton);
+                    
+                    // 替换原始pre元素
+                    preElement.replaceWith(mermaidContainer);
+                  });
+                }
+                
+                // 延迟渲染所有图表，确保DOM已更新
+                setTimeout(() => {
+                  console.log('开始渲染历史会话中的图表');
+                  
+                  // 渲染mermaid图表
+                  renderMermaidDynamically();
+                  
+                  // 渲染思维导图
+                  renderMarkMaps();
+                  
+                  console.log('已处理会话历史记录中的所有图表和思维导图');
                 }, 300);
-              }
-              
-              console.log('已处理会话历史记录中的代码块、图表和思维导图');
+              });
             });
           }, 800);
         });
@@ -648,6 +617,7 @@ if (typeof window !== 'undefined') {
   border: 1px solid #eaeaea;
   border-radius: 6px;
   min-height: 400px;
+  position: relative;
 }
 
 .mark-map-component {
@@ -663,28 +633,14 @@ if (typeof window !== 'undefined') {
   min-height: 380px;
 }
 
+/* 隐藏工具栏 */
 .markmap-toolbar {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 8px;
+  display: none !important;
 }
 
-.fit-button, .markmap-copy-button {
-  background-color: transparent;
-  border: 1px solid #ddd;
-  padding: 4px 8px;
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: 4px;
-  margin: 0 4px;
-  display: flex;
-  align-items: center;
-  color: #666;
-}
-
-.fit-button:hover, .markmap-copy-button:hover {
-  background-color: #f0f0f0;
-  color: #333;
+/* 隐藏冗余按钮 */
+.markmap-copy-button, .copy-button {
+  display: none !important;
 }
 
 /* 确保SVG元素居中显示 */

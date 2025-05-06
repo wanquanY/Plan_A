@@ -189,77 +189,55 @@ const processRenderedHtml = async (htmlContent, container, isStreamEnd = false) 
       else if (language === 'markdown' || language === 'md') {
         const code = codeBlock.textContent || '';
         const preElement = codeBlock.closest('pre');
-        if (!preElement || preElement.hasAttribute('data-markmap-processed')) continue;
+        if (!preElement) continue;
         
-        // 标记为已处理
+        // 标记为已处理，但在流式输出结束前不直接创建组件
         preElement.setAttribute('data-markmap-processed', 'true');
         
-        // 检查内容是否符合思维导图格式
+        // 在流式输出过程中，只检查内容是否符合思维导图格式并记录
         if (isMindMapContent(code)) {
-          console.log('检测到思维导图内容，创建MarkMap组件');
-          
-          // 创建MarkMap组件容器
-          const markMapContainer = document.createElement('div');
-          markMapContainer.className = 'markmap-component-wrapper';
-          
-          // 替换原始pre元素
-          preElement.replaceWith(markMapContainer);
-          
-          // 使用Vue创建MarkMap组件
-          const markMapApp = createApp({
-            render() {
-              return h(MarkMap, {
-                content: code,
-                height: '400px'
-              });
-            }
-          });
-          
-          // 挂载组件到DOM
-          markMapApp.mount(markMapContainer);
+          console.log('检测到思维导图内容，标记等待流式输出结束后处理');
+          // 流式输出过程中不直接创建组件，只添加标记
+          preElement.setAttribute('data-markmap-content', encodeURIComponent(code));
         }
       }
     }
     
-    // 仅在流式输出结束时才渲染mermaid图表
+    // 仅在流式输出结束时才渲染mermaid图表和思维导图
     if (isStreamEnd) {
       // 在流式输出结束时，立即尝试渲染mermaid图表
       try {
         // 如果mermaidObserver可用，使用它来渲染
         if (mermaidObserver && typeof mermaidObserver.renderPending === 'function') {
-          console.log('流式输出结束，使用mermaidObserver渲染mermaid图表');
+          console.log('流式输出结束，使用mermaidObserver渲染mermaid图表和思维导图');
           mermaidObserver.renderPending();
         } else {
           // 否则使用直接渲染方法
-          console.log('直接调用renderMermaidDynamically渲染mermaid图表');
-          renderMermaidDynamically();
+          console.log('直接调用渲染方法渲染图表');
+          import('@/services/renderService').then(({ renderMermaidDynamically, renderMarkMaps }) => {
+            renderMermaidDynamically();
+            renderMarkMaps();
+          });
         }
-      } catch (mermaidError) {
-        console.error('Mermaid渲染失败:', mermaidError);
+      } catch (error) {
+        console.error('图表渲染失败:', error);
       }
     } else {
-      console.log('流式输出中，标记mermaid图表等待最终渲染');
+      console.log('流式输出中，标记图表等待最终渲染');
     }
     
     // 查找可能的思维导图内容 (基于内容格式判断)
     const paragraphs = container.querySelectorAll('p:not([data-markmap-processed])');
     for (const p of paragraphs) {
+      // 标记为已处理，但在流式输出结束前不直接创建组件
       p.setAttribute('data-markmap-processed', 'true');
+      
       const content = p.textContent || '';
-      // 检查是否符合思维导图格式 (以#开头的多行内容)
+      // 检查是否符合思维导图格式
       if (isMindMapContent(content)) {
-        console.log('在段落中检测到思维导图内容，创建MarkMap组件');
-        // 创建MarkMap组件
-        const markMapEl = document.createElement('div');
-        markMapEl.className = 'mark-map-component';
-        p.replaceWith(markMapEl);
-        
-        // 使用导入的createApp函数创建MarkMap组件实例
-        const markMapApp = createApp(MarkMap, {
-          content: content,
-          height: '400px'
-        });
-        markMapApp.mount(markMapEl);
+        console.log('在段落中检测到思维导图内容，标记等待流式输出结束后处理');
+        // 流式输出过程中不直接创建组件，只添加标记
+        p.setAttribute('data-markmap-content', encodeURIComponent(content));
       }
     }
   } catch (error) {
@@ -1078,15 +1056,15 @@ const handleChatMessages = async (response) => {
   }
 };
 
-// 手动触发Mermaid渲染的辅助方法
-const forceRenderMermaid = () => {
-  console.log('手动触发Mermaid渲染');
+// 手动触发图表渲染的辅助方法
+const forceRenderDiagrams = () => {
+  console.log('手动触发图表渲染');
   
   // 重置任何带有flow-processed或mermaid-processed类的元素
-  const markedElements = document.querySelectorAll('.mermaid.flow-processed, .mermaid.mermaid-processed');
-  if (markedElements.length > 0) {
-    console.log(`重置${markedElements.length}个带有特殊标记的Mermaid元素`);
-    markedElements.forEach(el => {
+  const markedMermaidElements = document.querySelectorAll('.mermaid.flow-processed, .mermaid.mermaid-processed');
+  if (markedMermaidElements.length > 0) {
+    console.log(`重置${markedMermaidElements.length}个带有特殊标记的Mermaid元素`);
+    markedMermaidElements.forEach(el => {
       if (!(el as HTMLElement).hasAttribute('data-processed')) {
         (el as HTMLElement).classList.remove('flow-processed');
         (el as HTMLElement).classList.remove('mermaid-processed');
@@ -1099,17 +1077,20 @@ const forceRenderMermaid = () => {
     console.log('通过mermaidObserver触发渲染');
     mermaidObserver.renderPending();
   } else {
-    // 否则直接调用renderMermaidDynamically
-    console.log('直接调用renderMermaidDynamically');
-    renderMermaidDynamically();
+    // 否则直接调用渲染方法
+    console.log('直接调用渲染方法');
+    import('@/services/renderService').then(({ renderMermaidDynamically, renderMarkMaps }) => {
+      renderMermaidDynamically();
+      renderMarkMaps();
+    });
   }
   
   // 为确保渲染完成，延迟一段时间后再次尝试渲染
   setTimeout(() => {
     // 查找所有未处理的Mermaid元素
-    const unprocessedElements = document.querySelectorAll('.mermaid:not([data-processed])');
-    if (unprocessedElements.length > 0) {
-      console.log(`发现${unprocessedElements.length}个未处理的Mermaid元素，再次尝试渲染`);
+    const unprocessedMermaidElements = document.querySelectorAll('.mermaid:not([data-processed])');
+    if (unprocessedMermaidElements.length > 0) {
+      console.log(`发现${unprocessedMermaidElements.length}个未处理的Mermaid元素，再次尝试渲染`);
       
       // 尝试直接使用mermaid API渲染
       try {
@@ -1131,14 +1112,14 @@ const forceRenderMermaid = () => {
             console.error('mermaid.run渲染失败，尝试其他方法', err);
             // 尝试传统方法
             try {
-              mermaid.init(undefined, unprocessedElements);
+              mermaid.init(undefined, unprocessedMermaidElements);
             } catch (initErr) {
               console.error('mermaid.init也失败', initErr);
             }
           });
         } else {
           // 降级到传统方法
-          mermaid.init(undefined, unprocessedElements);
+          mermaid.init(undefined, unprocessedMermaidElements);
         }
       } catch (error) {
         console.error('所有渲染方法都失败', error);
@@ -1146,6 +1127,11 @@ const forceRenderMermaid = () => {
     } else {
       console.log('没有找到需要渲染的Mermaid图表');
     }
+    
+    // 再次尝试渲染思维导图
+    import('@/services/renderService').then(({ renderMarkMaps }) => {
+      renderMarkMaps();
+    });
   }, 300);
 };
 
@@ -1162,7 +1148,7 @@ defineExpose({
   setupCodeBlocks,
   processRenderedHtml,
   isMindMapContent,
-  forceRenderMermaid
+  forceRenderDiagrams
 });
 </script>
 
@@ -1251,35 +1237,15 @@ defineExpose({
   outline: none;
 }
 
+/* 隐藏工具栏，使用单个按钮代替 */
 :deep(.markmap-toolbar) {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  display: flex;
-  gap: 5px;
-  z-index: 10;
+  display: none !important;
 }
 
-:deep(.fit-button),
-:deep(.markmap-copy-button) {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background-color: rgba(246, 248, 250, 0.8);
-  border-radius: 4px;
-  padding: 4px;
-  cursor: pointer;
-  opacity: 0.7;
-  transition: opacity 0.2s ease, background-color 0.2s ease;
-  border: 1px solid #eaecef;
-  color: #666;
-}
-
-:deep(.markmap-component-wrapper:hover .fit-button),
-:deep(.markmap-component-wrapper:hover .markmap-copy-button) {
-  opacity: 1;
+/* 移除冗余的按钮样式 */
+:deep(.markmap-copy-button),
+:deep(.copy-button) {
+  display: none !important;
 }
 
 :deep(.markdown-content) {

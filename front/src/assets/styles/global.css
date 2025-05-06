@@ -1,0 +1,32 @@
+/* 思维导图全局样式 */
+.markmap-toolbar {
+  display: none !important; /* 隐藏工具栏，避免重叠问题 */
+}
+
+/* 按钮样式独立定义 */
+.fit-button {
+  position: absolute !important;
+  top: 5px !important;
+  right: 5px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  background-color: rgba(246, 248, 250, 0.8) !important;
+  border-radius: 4px !important;
+  padding: 4px !important;
+  cursor: pointer !important;
+  opacity: 0.7 !important;
+  transition: opacity 0.2s ease, background-color 0.2s ease !important;
+  border: 1px solid #eaecef !important;
+  color: #666 !important;
+  margin: 0 !important;
+  z-index: 100 !important;
+}
+
+/* 鼠标悬停效果 */
+.fit-button:hover {
+  opacity: 1 !important;
+  background-color: #f0f0f0 !important;
+} 

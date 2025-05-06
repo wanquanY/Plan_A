@@ -273,7 +273,7 @@ export const renderCodeBlocks = async (handleMarkMaps = true) => {
             const markMapContainer = document.createElement('div');
             markMapContainer.className = 'markmap-component-wrapper';
             
-            // 替换原始pre元素
+            // 替换原始元素
             element.replaceWith(markMapContainer);
             
             // 使用Vue创建MarkMap组件
@@ -613,32 +613,48 @@ const fixBrokenMermaidElements = () => {
 
 /**
  * 添加mermaid自动渲染监听
- * 用于监听DOM变化并自动渲染新增的mermaid图表
+ * 用于监听DOM变化并自动渲染新增的mermaid图表和markmap思维导图
  */
 export const setupMermaidAutoRender = () => {
   try {
-    // 保存流式输出阶段检测到的mermaid图表状态
+    // 保存流式输出阶段检测到的图表状态
     let pendingMermaidRender = false;
+    let pendingMarkmapRender = false;
     
     // 创建一个MutationObserver来监视DOM变化
     const observer = new MutationObserver((mutations) => {
       let hasMermaidContent = false;
+      let hasMarkmapContent = false;
       
-      // 检查变化中是否有新增的mermaid内容
+      // 检查变化中是否有新增的mermaid或markmap内容
       mutations.forEach(mutation => {
         if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
           mutation.addedNodes.forEach(node => {
             if (node.nodeType === Node.ELEMENT_NODE) {
               const element = node as Element;
-              // 直接检查新增节点是否包含mermaid元素
+              
+              // 检查mermaid内容
               const mermaidElements = element.querySelectorAll('.mermaid');
               if (mermaidElements.length > 0) {
                 hasMermaidContent = true;
               }
               
-              // 如果新增节点本身就是mermaid元素
               if (element.classList && element.classList.contains('mermaid')) {
                 hasMermaidContent = true;
+              }
+              
+              // 检查markmap内容
+              const markmapElements = element.querySelectorAll('.markmap-content, pre > code.language-markdown, pre > code.language-md');
+              if (markmapElements.length > 0) {
+                hasMarkmapContent = true;
+              }
+              
+              // 如果新增节点本身是markmap元素
+              if (element.classList && 
+                  (element.classList.contains('markmap-content') || 
+                   element.classList.contains('language-markdown') || 
+                   element.classList.contains('language-md'))) {
+                hasMarkmapContent = true;
               }
             }
           });
@@ -646,10 +662,15 @@ export const setupMermaidAutoRender = () => {
       });
       
       // 如果检测到新的mermaid内容，仅标记等待渲染
-      // 不触发实时渲染，等待流式输出结束后再统一渲染
       if (hasMermaidContent) {
         console.log('检测到DOM变化中有新增的mermaid内容，标记等待流式输出结束后渲染');
         pendingMermaidRender = true;
+      }
+      
+      // 如果检测到新的markmap内容，仅标记等待渲染
+      if (hasMarkmapContent) {
+        console.log('检测到DOM变化中有新增的markmap内容，标记等待流式输出结束后渲染');
+        pendingMarkmapRender = true;
       }
     });
     
@@ -659,7 +680,7 @@ export const setupMermaidAutoRender = () => {
       subtree: true
     });
     
-    console.log('已设置mermaid自动渲染监听（等待流式输出结束后统一渲染）');
+    console.log('已设置自动渲染监听（等待流式输出结束后统一渲染）');
     
     // 返回observer以及触发渲染的方法，以便需要时停止监听或手动触发渲染
     return {
@@ -685,13 +706,158 @@ export const setupMermaidAutoRender = () => {
             renderMermaidDynamically();
           }, 100);
         }
+        
+        if (pendingMarkmapRender) {
+          console.log('流式输出结束，开始渲染积累的markmap思维导图');
+          pendingMarkmapRender = false;
+          
+          // 延迟执行，确保DOM已更新
+          setTimeout(() => {
+            renderMarkMaps();
+          }, 200);
+        }
       }
     };
   } catch (error) {
-    console.error('设置mermaid自动渲染监听失败:', error);
+    console.error('设置自动渲染监听失败:', error);
     return {
       disconnect: () => {},
       renderPending: () => {}
     };
+  }
+};
+
+/**
+ * 专门处理MarkMap思维导图的渲染
+ * 在流式输出结束后被调用
+ */
+export const renderMarkMaps = async () => {
+  try {
+    console.log('开始处理MarkMap思维导图');
+    
+    // 导入MarkMap组件
+    const MarkMapModule = await import('../components/MarkMap.vue');
+    const MarkMap = MarkMapModule.default;
+    
+    // 先处理data-markmap-processed属性的标记
+    const markedElements = document.querySelectorAll('[data-markmap-processed]');
+    if (markedElements.length > 0) {
+      console.log(`重置${markedElements.length}个已标记的MarkMap元素`);
+      markedElements.forEach(el => {
+        el.removeAttribute('data-markmap-processed');
+      });
+    }
+    
+    // 处理markdown代码块中的思维导图
+    const markdownBlocks = document.querySelectorAll('pre > code.language-markdown, pre > code.language-md');
+    console.log(`找到${markdownBlocks.length}个可能包含思维导图的markdown代码块`);
+    
+    for (const block of markdownBlocks) {
+      const code = block.textContent || '';
+      const preElement = block.closest('pre');
+      
+      // 跳过已处理的元素
+      if (!preElement || preElement.hasAttribute('data-markmap-processed')) continue;
+      
+      // 检查内容是否符合思维导图格式
+      if (isMindMapContent(code)) {
+        console.log('检测到思维导图内容，创建MarkMap组件');
+        
+        // 标记为已处理
+        preElement.setAttribute('data-markmap-processed', 'true');
+        
+        // 创建MarkMap组件容器
+        const markMapContainer = document.createElement('div');
+        markMapContainer.className = 'markmap-component-wrapper';
+        
+        // 替换原始pre元素
+        preElement.replaceWith(markMapContainer);
+        
+        // 使用Vue创建MarkMap组件
+        const markMapApp = createApp({
+          render() {
+            return h(MarkMap, {
+              content: code,
+              height: '400px'
+            });
+          }
+        });
+        
+        // 挂载组件到DOM
+        markMapApp.mount(markMapContainer);
+      }
+    }
+    
+    // 处理普通段落中的思维导图内容
+    const paragraphs = document.querySelectorAll('p:not([data-markmap-processed])');
+    for (const p of paragraphs) {
+      const content = p.textContent || '';
+      
+      // 检查内容是否符合思维导图格式
+      if (isMindMapContent(content)) {
+        console.log('在段落中检测到思维导图内容，创建MarkMap组件');
+        
+        // 标记为已处理
+        p.setAttribute('data-markmap-processed', 'true');
+        
+        // 创建MarkMap组件
+        const markMapEl = document.createElement('div');
+        markMapEl.className = 'markmap-component-wrapper';
+        
+        // 替换原始段落
+        p.replaceWith(markMapEl);
+        
+        // 使用创建MarkMap组件
+        const markMapApp = createApp(MarkMap, {
+          content: content,
+          height: '400px'
+        });
+        
+        // 挂载组件到DOM
+        markMapApp.mount(markMapEl);
+      }
+    }
+    
+    // 处理已预处理的.markmap-content元素
+    const markmapContents = document.querySelectorAll('.markmap-content:not([data-markmap-processed])');
+    for (const element of markmapContents) {
+      element.setAttribute('data-markmap-processed', 'true');
+      
+      try {
+        // 获取编码的内容
+        const encodedContent = element.getAttribute('data-content');
+        if (encodedContent) {
+          const content = decodeURIComponent(encodedContent);
+          
+          console.log('找到已预处理的思维导图内容，创建MarkMap组件');
+          
+          // 创建MarkMap组件容器
+          const markMapContainer = document.createElement('div');
+          markMapContainer.className = 'markmap-component-wrapper';
+          
+          // 替换原始元素
+          element.replaceWith(markMapContainer);
+          
+          // 使用Vue创建MarkMap组件
+          const markMapApp = createApp({
+            render() {
+              return h(MarkMap, {
+                content: content,
+                height: '400px'
+              });
+            }
+          });
+          
+          // 挂载组件到DOM
+          markMapApp.mount(markMapContainer);
+        }
+      } catch (error) {
+        console.error('处理思维导图内容失败:', error);
+      }
+    }
+    
+    console.log('所有MarkMap思维导图处理完成');
+  } catch (error) {
+    console.error('渲染MarkMap思维导图时出错:', error);
   }
 }; 
