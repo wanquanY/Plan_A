@@ -44,4 +44,7 @@ Dockerfile*
 
 # 系统相关
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# 确保不忽略pip配置文件
+!pip.conf 
