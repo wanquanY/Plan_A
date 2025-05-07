@@ -17,7 +17,7 @@ RUN npm ci
 # 复制前端源代码并构建
 COPY front/ ./
 
-# 设置API基础URL环境变量，用于前端构建时
+# 设置API基础URL环境变量，用于前端构建时 - 使用相对路径
 ARG API_BASE_URL="/api/v1"
 ENV VITE_API_BASE_URL=${API_BASE_URL}
 
@@ -45,12 +45,11 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # 从前端构建阶段复制构建产物
 COPY --from=frontend-build /app/frontend/dist /usr/share/nginx/html
 
-# 创建启动脚本，动态替换环境变量
-RUN echo '#!/bin/sh\n\
-envsubst \'\$BACKEND_API_URL\' < /etc/nginx/conf.d/default.conf > /etc/nginx/conf.d/default.conf.tmp && \
-mv /etc/nginx/conf.d/default.conf.tmp /etc/nginx/conf.d/default.conf && \
-nginx -g "daemon off;"\n\
-' > /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
+# 创建启动脚本
+RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
+    echo 'echo "Starting Nginx with API proxy..."' >> /docker-entrypoint.sh && \
+    echo 'nginx -g "daemon off;"' >> /docker-entrypoint.sh && \
+    chmod +x /docker-entrypoint.sh
 
 # 暴露端口
 EXPOSE 80

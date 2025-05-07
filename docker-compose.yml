@@ -1,13 +1,9 @@
-version: '3.8'
-
 services:
   # Redis 缓存
   redis:
     image: redis:alpine
     container_name: freewrite-redis
     restart: always
-    volumes:
-      - redis_data:/data
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
@@ -38,13 +34,15 @@ services:
       - CONSOLE_LOG_LEVEL=${CONSOLE_LOG_LEVEL}
       - FILE_LOG_LEVEL=${FILE_LOG_LEVEL}
       - LOG_DIR=${LOG_DIR}
-      - LOG_ROTATION=${LOG_ROTATION}
-      - LOG_MAX_BYTES=${LOG_MAX_BYTES}
-      - LOG_BACKUP_COUNT=${LOG_BACKUP_COUNT}
-      - SQLALCHEMY_ECHO=${SQLALCHEMY_ECHO}
+      - LOG_ROTATION=${LOG_ROTATION:-day}
+      - LOG_MAX_BYTES=${LOG_MAX_BYTES:-10485760}
+      - LOG_BACKUP_COUNT=${LOG_BACKUP_COUNT:-7}
+      - SQLALCHEMY_ECHO=${SQLALCHEMY_ECHO:-false}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - OPENAI_MODEL=${OPENAI_MODEL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     volumes:
       - ./logs:/app/logs
     mem_limit: 4g
@@ -61,11 +59,6 @@ services:
     container_name: freewrite-frontend
     restart: always
     ports:
-      - "80:80"
-    environment:
-      - BACKEND_API_URL=http://backend:1314/api/
+      - "8080:80"
     depends_on:
       - backend
-
-volumes:
-  redis_data:

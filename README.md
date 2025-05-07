@@ -140,9 +140,9 @@ docker-compose logs
 docker-compose logs -f
 
 # 查看特定服务日志
-docker-compose logs backend    # 查看后端日志
-docker-compose logs frontend   # 查看前端日志
-docker-compose logs redis      # 查看Redis日志
+docker-compose logs -f backend    # 查看后端日志
+docker-compose logs -f frontend   # 查看前端日志
+docker-compose logs -f redis      # 查看Redis日志
 
 # 查看最近50行日志
 docker-compose logs --tail=50 backend
