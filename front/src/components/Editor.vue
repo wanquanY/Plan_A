@@ -11,28 +11,38 @@
       @set-font-size="setFontSize"
       @undo="undoAction"
       @redo="redoAction"
+      @toggle-outline="toggleOutline"
     />
     
-    <div class="editor-main">
-      <EditorContent
-        ref="editorContentRef"
-        :model-value="modelValue"
-        @update:model-value="$emit('update:modelValue', $event)"
-        :show-agent-selector="showAgentSelector"
-        @word-count="updateWordCount"
-        @key-down="handleKeyDown"
-        @show-agent-selector="showAgentSelectorAt"
-        @composition-start="isComposing = true"
-        @composition-end="isComposing = false"
-        @input-update="handleInputUpdate"
+    <div class="editor-content-wrapper">
+      <DocumentOutline 
+        v-if="showOutline" 
+        :editorRef="editorContentRef" 
+        class="document-outline"
+        ref="documentOutlineRef"
       />
       
-      <MentionHandler
-        :show-selector="showAgentSelector"
-        :current-range="currentRange"
-        @close="showAgentSelector = false"
-        @agent-selected="onAgentSelected"
-      />
+      <div class="editor-main">
+        <EditorContent
+          ref="editorContentRef"
+          :model-value="modelValue"
+          @update:model-value="$emit('update:modelValue', $event)"
+          :show-agent-selector="showAgentSelector"
+          @word-count="updateWordCount"
+          @key-down="handleKeyDown"
+          @show-agent-selector="showAgentSelectorAt"
+          @composition-start="isComposing = true"
+          @composition-end="isComposing = false"
+          @input-update="handleInputUpdate"
+        />
+        
+        <MentionHandler
+          :show-selector="showAgentSelector"
+          :current-range="currentRange"
+          @close="showAgentSelector = false"
+          @agent-selected="onAgentSelected"
+        />
+      </div>
     </div>
     <AgentResponseHandler ref="agentResponseHandlerRef" />
   </div>
@@ -44,6 +54,7 @@ import EditorToolbar from './EditorToolbar.vue';
 import EditorContent from './EditorContent.vue';
 import MentionHandler from './MentionHandler.vue';
 import AgentResponseHandler from './AgentResponseHandler.vue';
+import DocumentOutline from './DocumentOutline.vue';
 
 // Props声明
 const props = defineProps({
@@ -70,10 +81,17 @@ const isComposing = ref(false);
 const showAgentSelector = ref(false);
 const currentRange = ref(null);
 const selectedHeading = ref('p');
+const showOutline = ref(true); // 默认显示大纲
 
 // 组件引用
 const editorContentRef = ref(null);
 const agentResponseHandlerRef = ref(null);
+const documentOutlineRef = ref(null);
+
+// 切换大纲显示状态
+const toggleOutline = () => {
+  showOutline.value = !showOutline.value;
+};
 
 // 监听会话ID变化
 watch(() => props.conversationId, (newId) => {
@@ -121,7 +139,15 @@ watch(() => props.modelValue, (newValue, oldValue) => {
 
 // 格式化操作
 const applyFormat = ({ command, value }) => {
+  // 应用格式化命令
   document.execCommand(command, false, value);
+  
+  // 获取应用格式化后的内容
+  const newContent = getFullContent();
+  
+  // 发出内容更新事件
+  emit('update:modelValue', newContent);
+  
   // 聚焦编辑器以保持光标位置
   nextTick(() => {
     editorContentRef.value?.focus();
@@ -130,11 +156,28 @@ const applyFormat = ({ command, value }) => {
 
 // 设置标题
 const setHeading = (heading: string) => {
+  // 保存当前的内容状态（撤销前）
+  const currentContent = editorContentRef.value ? getFullContent() : props.modelValue;
+  
+  // 应用格式化
   document.execCommand('formatBlock', false, heading);
   selectedHeading.value = heading;
+  
+  // 获取应用格式化后的内容
+  const newContent = editorContentRef.value ? getFullContent() : props.modelValue;
+  
+  // 发出内容更新事件，确保变化被记录
+  emit('update:modelValue', newContent);
+  
+  // 聚焦编辑器以保持光标位置
   nextTick(() => {
     editorContentRef.value?.focus();
   });
+};
+
+// 获取完整内容的辅助方法
+const getFullContent = () => {
+  return editorContentRef.value?.editorRef?.innerHTML || '';
 };
 
 // 设置字号
@@ -150,6 +193,13 @@ const setFontSize = (size: string) => {
       }
     }
   }
+  
+  // 获取应用格式化后的内容
+  const newContent = getFullContent();
+  
+  // 发出内容更新事件
+  emit('update:modelValue', newContent);
+  
   nextTick(() => {
     editorContentRef.value?.focus();
   });
@@ -163,6 +213,12 @@ const setLetterSpacing = (spacing: string) => {
     const span = document.createElement('span');
     span.style.letterSpacing = spacing;
     range.surroundContents(span);
+    
+    // 获取应用格式化后的内容
+    const newContent = getFullContent();
+    
+    // 发出内容更新事件
+    emit('update:modelValue', newContent);
   }
   nextTick(() => {
     editorContentRef.value?.focus();
@@ -209,6 +265,12 @@ const setLineHeight = (height: string) => {
         range.insertNode(span);
       }
     }
+    
+    // 获取应用格式化后的内容
+    const newContent = getFullContent();
+    
+    // 发出内容更新事件
+    emit('update:modelValue', newContent);
   }
   nextTick(() => {
     editorContentRef.value?.focus();
@@ -459,9 +521,9 @@ defineExpose({
 .editor-container {
   display: flex;
   flex-direction: column;
-  height: 100%;
   width: 100%;
   position: relative;
+  overflow: visible; /* 允许内容溢出 */
 }
 
 .editor-toolbar-fixed {
@@ -473,19 +535,41 @@ defineExpose({
   width: 100%;
 }
 
-.editor-main {
+.editor-content-wrapper {
+  display: flex;
   flex: 1;
-  min-height: 0;
   position: relative;
   overflow: visible; /* 允许内容溢出 */
 }
 
+.document-outline {
+  flex-shrink: 0;
+  position: sticky;
+  top: 60px; /* 工具栏高度 */
+  align-self: flex-start;
+  height: calc(100vh - 60px); /* 减去工具栏高度 */
+}
+
+.editor-main {
+  flex: 1;
+  position: relative;
+  overflow: visible; /* 允许内容溢出 */
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 60px); /* 确保最小高度足够 */
+}
+
 .editor-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 90;
+  background-color: white;
+  border-top: 1px solid #eee;
+  padding: 10px 20px;
   display: flex;
   justify-content: space-between;
-  padding: 10px 20px;
-  border-top: 1px solid #eee;
   color: #888;
   font-size: 14px;
+  margin-top: auto;
 }
 </style> 

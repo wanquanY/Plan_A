@@ -404,73 +404,73 @@ const handleKeyDown = (event: KeyboardEvent) => {
       if (isAtEnd) {
         console.log('检测到在文档末尾按回车键');
         
+        // 阻止默认的回车行为，手动处理插入新段落
+        event.preventDefault();
+        
         // 保存当前滚动位置
         const scrollTop = editorRef.value.scrollTop;
-        const scrollHeight = editorRef.value.scrollHeight;
         
-        // 记住当前光标位置的相关信息，以便在内容更新后恢复
-        const currentNode = range.startContainer;
-        const currentOffset = range.startOffset;
+        // 创建新段落
+        const newParagraph = document.createElement('p');
+        newParagraph.innerHTML = '<br>';
         
         // 为了在更新后能找到同一位置，给最后一个节点添加一个临时标记
         const lastParagraph = getLastParagraph();
         if (lastParagraph) {
           lastParagraph.setAttribute('data-end-marker', 'true');
+          
+          // 在最后一个段落后插入新段落
+          if (lastParagraph.parentNode) {
+            lastParagraph.parentNode.insertBefore(newParagraph, lastParagraph.nextSibling);
+          }
+        } else {
+          // 如果找不到最后一个段落，直接添加到编辑区
+          const editableContent = editorRef.value.querySelector('.editable-content') || editorRef.value;
+          editableContent.appendChild(newParagraph);
         }
+        
+        // 更新编辑器内容
+        emit('update:modelValue', getFullContent());
         
         // 使用setTimeout确保这个事件处理完成后再处理恢复光标位置
         setTimeout(() => {
-          // 首先恢复页面滚动位置，防止整个页面跳动
-          restorePageScrollPosition(pageScrollPosition);
+          // 将光标设置到新段落
+          const selection = window.getSelection();
+          if (selection) {
+            const range = document.createRange();
+            range.setStart(newParagraph, 0);
+            range.collapse(true);
+            
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
           
-          // 找到带有标记的段落
+          // 找到带有标记的段落并移除标记
           const markedParagraph = editorRef.value?.querySelector('[data-end-marker="true"]');
           if (markedParagraph) {
-            // 移除标记
             markedParagraph.removeAttribute('data-end-marker');
-            
-            // 获取下一个段落（即新创建的段落）
-            let newParagraph = markedParagraph.nextElementSibling;
-            
-            // 如果下一个元素不是段落，尝试查找其他新创建的段落
-            if (!newParagraph || newParagraph.nodeName !== 'P') {
-              const allParagraphs = editorRef.value?.querySelectorAll('p');
-              if (allParagraphs && allParagraphs.length > 0) {
-                newParagraph = allParagraphs[allParagraphs.length - 1];
-              }
-            }
-            
-            // 如果找到新段落，设置光标到它的开始位置
-            if (newParagraph) {
-              const newRange = document.createRange();
-              newRange.setStart(newParagraph, 0);
-              newRange.collapse(true);
-              
-              selection.removeAllRanges();
-              selection.addRange(newRange);
-              
-              // 确保段落可见，但使用更温和的滚动方式
-              if (editorRef.value) {
-                const editorRect = editorRef.value.getBoundingClientRect();
-                const newParagraphRect = newParagraph.getBoundingClientRect();
-                
-                // 只有当新段落不完全可见时才滚动
-                if (newParagraphRect.bottom > editorRect.bottom) {
-                  // 使用更温和的滚动方式，避免整页跳动
-                  editorRef.value.scrollBy({
-                    top: newParagraphRect.bottom - editorRect.bottom + 30, // 额外30px的缓冲空间
-                    behavior: 'smooth'
-                  });
-                }
-                
-                // 再次确保页面滚动位置不变
-                setTimeout(() => {
-                  restorePageScrollPosition(pageScrollPosition);
-                }, 50);
-              }
-            }
           }
-        }, 0);
+          
+          // 确保新段落可见
+          const newParagraphRect = newParagraph.getBoundingClientRect();
+          const viewportHeight = window.innerHeight;
+          
+          // 只有当新段落不完全可见时才滚动
+          if (newParagraphRect.bottom > viewportHeight) {
+            window.scrollTo({
+              top: pageScrollPosition.y + (newParagraphRect.bottom - viewportHeight) + 30,
+              behavior: 'auto' // 使用auto而非smooth，避免动画过程中的闪烁
+            });
+          } else {
+            // 确保页面不会滚动到顶部
+            window.scrollTo(pageScrollPosition.x, pageScrollPosition.y);
+          }
+          
+          // 确保编辑器获得焦点
+          editorRef.value.focus();
+        }, 10);
+        
+        return; // 已处理回车键，不需要继续处理
       }
       
       // 检查当前段落是否为空
@@ -811,14 +811,15 @@ const insertNewParagraphAtBottom = () => {
       // 确保编辑器获得焦点
       editorRef.value.focus();
       
-      // 使用更温和的滚动行为，避免整页跳动
-      const editorRect = editorRef.value.getBoundingClientRect();
+      // 获取新段落的位置，确保其在视口中可见
       const newParagraphRect = newParagraph.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
       
       // 只有当新段落不完全可见时才滚动
-      if (newParagraphRect.bottom > editorRect.bottom) {
-        editorRef.value.scrollBy({
-          top: newParagraphRect.bottom - editorRect.bottom + 30, // 额外30px的缓冲空间
+      if (newParagraphRect.bottom > viewportHeight) {
+        // 使用全局滚动
+        window.scrollTo({
+          top: window.scrollY + (newParagraphRect.bottom - viewportHeight) + 30,
           behavior: 'smooth'
         });
       }
@@ -831,26 +832,28 @@ const insertNewParagraphAtBottom = () => {
 
 // 添加一个新的辅助函数，确保元素在视口中可见
 const ensureElementVisible = (element: HTMLElement) => {
-  if (!editorRef.value || !element) return;
+  if (!element) return;
   
-  const editorRect = editorRef.value.getBoundingClientRect();
   const elementRect = element.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
   
   // 检查元素是否在视口之下（需要向下滚动）
-  if (elementRect.bottom > editorRect.bottom) {
-    // 使用更温和的滚动方式，避免整页跳动
-    editorRef.value.scrollBy({
-      top: elementRect.bottom - editorRect.bottom + 30, // 额外30px的缓冲空间
+  if (elementRect.bottom > viewportHeight) {
+    // 使用全局滚动
+    const scrollY = window.scrollY + (elementRect.bottom - viewportHeight) + 30; // 额外30px的缓冲空间
+    window.scrollTo({
+      top: scrollY,
       behavior: 'smooth'
     });
     return;
   }
   
   // 检查元素是否在视口之上（需要向上滚动）
-  if (elementRect.top < editorRect.top) {
-    // 使用更温和的滚动方式，避免整页跳动
-    editorRef.value.scrollBy({
-      top: elementRect.top - editorRect.top - 30, // 额外30px的缓冲空间
+  if (elementRect.top < 0) {
+    // 使用全局滚动
+    const scrollY = window.scrollY + elementRect.top - 60; // 额外空间，考虑工具栏高度
+    window.scrollTo({
+      top: Math.max(0, scrollY), // 确保不会滚动到负值
       behavior: 'smooth'
     });
     return;
@@ -1110,17 +1113,70 @@ const setupImageResizing = (container, img) => {
 };
 </script>
 
-<style scoped>
-/* 允许内容溢出，让整个页面负责滚动 */
+<style>
+/* 编辑器内容区域样式 */
 .editor-content {
-  overflow-y: visible;
-  min-height: 100%;
+  flex: 1;
+  overflow: visible; /* 设置为visible完全移除滚动条 */
+  min-height: calc(100vh - 120px); /* 确保有足够的最小高度 */
   width: 100%;
   outline: none;
   line-height: 1.6;
   font-size: 1rem;
-  padding: 0.5em 0;
   color: #333;
+  padding: 50px 80px 100px 80px; /* 保持底部内边距 */
+  background-color: #fff;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
+  border-radius: 0 4px 4px 0;
+  position: relative;
+  max-height: none; /* 移除高度限制 */
+}
+
+/* 响应式样式 */
+@media (min-width: 1200px) {
+  .editor-content {
+    padding: 50px 100px 20px 100px;
+  }
+}
+
+@media (max-width: 768px) {
+  .editor-content {
+    padding: 50px 30px 20px 30px;
+  }
+}
+
+/* 不可编辑区域样式 */
+.read-only-content {
+  color: #666;
+  background-color: #f8f9fa;
+  padding: 1em;
+  margin-bottom: 1em;
+  border-left: 3px solid #007bff;
+  border-radius: 0 4px 4px 0;
+  position: relative;
+}
+
+.read-only-content:after {
+  content: '';
+  display: block;
+  height: 1px;
+  margin-top: 1em;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.12), transparent);
+}
+
+.editable-content {
+  padding-top: 1em;
+  min-height: 100px;
+}
+
+.editable-content p:last-child {
+  margin-bottom: 200px;
+}
+
+/* 底部占位元素样式 */
+.bottom-placeholder {
+  height: 200px;
+  cursor: text;
 }
 
 /* 图片上传占位符样式 */
@@ -1191,39 +1247,6 @@ const setupImageResizing = (container, img) => {
   to { transform: rotate(360deg); }
 }
 
-.read-only-content {
-  color: #666;
-  background-color: #f8f9fa;
-  padding: 1em;
-  margin-bottom: 1em;
-  border-left: 3px solid #007bff;
-  border-radius: 0 4px 4px 0;
-  position: relative;
-}
-
-.read-only-content:after {
-  content: '';
-  display: block;
-  height: 1px;
-  margin-top: 1em;
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.12), transparent);
-}
-
-.editable-content {
-  padding-top: 1em;
-  min-height: 100px;
-}
-
-.editable-content p:last-child {
-  margin-bottom: 200px;
-}
-
-/* 底部占位元素样式 */
-.bottom-placeholder {
-  height: 200px;
-  cursor: text;
-}
-
 /* 气泡式加载指示器 */
 .typing-indicator {
   display: inline-flex;
@@ -1291,16 +1314,6 @@ const setupImageResizing = (container, img) => {
   margin-top: 1em;
   position: relative;
   padding-left: 4px;
-}
-
-.agent-response-paragraph::before {
-  content: '';
-  position: absolute;
-  left: -10px;
-  height: 100%;
-  width: 3px;
-  background-color: #1890ff;
-  border-radius: 3px;
 }
 
 /* 确保段落内容中的代码块能够正确显示 */

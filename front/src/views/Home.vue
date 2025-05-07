@@ -561,8 +561,7 @@ const handleLoadMore = () => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  overflow-y: auto; /* 改为auto允许主内容区滚动 */
+  overflow-y: auto; /* 允许主内容区域滚动 */
   background-color: white;
   position: relative;
   transition: margin-left 0.3s ease;
@@ -578,6 +577,7 @@ const handleLoadMore = () => {
   padding: 16px 32px 0;
   width: 90%;  /* 将宽度减少为原来的90% */
   margin: 0 auto;  /* 居中显示 */
+  position: relative;
 }
 
 /* 确保编辑器工具栏固定 */
@@ -590,36 +590,7 @@ const handleLoadMore = () => {
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 
-/* 编辑器滚动条样式 */
-.editor-content :deep(.editor-content) {
-  scrollbar-width: thin; /* Firefox */
-  scrollbar-color: rgba(0, 0, 0, 0.2) transparent; /* Firefox */
-}
-
-.editor-content :deep(.editor-content)::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.editor-content :deep(.editor-content)::-webkit-scrollbar-track {
-  background: transparent;
-  border-radius: 3px;
-}
-
-.editor-content :deep(.editor-content)::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.2);
-  border-radius: 3px;
-  border: none;
-}
-
-.editor-content :deep(.editor-content)::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(0, 0, 0, 0.3);
-}
-
-.editor-content :deep(.editor-content)::-webkit-scrollbar-corner {
-  background-color: transparent;
-}
-
+/* 底部状态栏样式 */
 .editor-footer {
   padding: 12px 0;
   display: flex;
@@ -628,7 +599,7 @@ const handleLoadMore = () => {
   color: #888;
   font-size: 13px;
   border-top: 1px solid rgba(0, 0, 0, 0.05);
-  margin-top: 16px;
+  margin-top: auto; /* 使用auto margin将其推至容器底部 */
   position: sticky; /* 使底部状态栏固定 */
   bottom: 0; /* 固定在底部 */
   background-color: white; /* 确保背景色遮挡滚动内容 */

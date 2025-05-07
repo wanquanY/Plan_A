@@ -342,7 +342,10 @@ const handleSessionDeleteClick = async (event, session) => {
   <div class="sidebar" :class="{ 'sidebar-collapsed': collapsed }">
     <div class="sidebar-top">
       <div class="logo">
-        <span class="logo-text">Plan_A</span>
+        <div class="logo-icon">P</div>
+        <div class="logo-text-container">
+          <span class="logo-text">Plan<span class="logo-highlight">_A</span></span>
+        </div>
       </div>
     </div>
     
@@ -540,14 +543,40 @@ const handleSessionDeleteClick = async (event, session) => {
 .logo {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.logo-text-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.logo-icon {
+  background: linear-gradient(135deg, #1890ff, #722ed1);
+  color: white;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 18px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .logo-text {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   color: #333;
   letter-spacing: -0.5px;
+  line-height: 1.2;
+}
+
+.logo-highlight {
+  color: #1890ff;
+  font-weight: 800;
 }
 
 .sidebar-middle {
@@ -796,8 +825,8 @@ const handleSessionDeleteClick = async (event, session) => {
 /* 展开侧边栏按钮 */
 .sidebar-expand-button {
   position: fixed;
-  top: 50%;
   left: 14px;
+  top: 50%;
   transform: translateY(-50%);
   width: 28px;
   height: 28px;

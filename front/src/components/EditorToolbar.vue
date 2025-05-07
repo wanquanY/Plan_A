@@ -1,5 +1,11 @@
 <template>
   <div class="editor-toolbar">
+    <button class="toolbar-button" @click="toggleOutline" title="切换大纲显示">
+      <menu-outlined />
+    </button>
+    
+    <div class="toolbar-divider"></div>
+    
     <button class="toolbar-button" @click="setHeading('p')">
       <span>正文</span>
     </button>
@@ -253,7 +259,8 @@ const emit = defineEmits([
   'set-line-height', 
   'set-font-size',
   'undo',
-  'redo'
+  'redo',
+  'toggle-outline'
 ]);
 
 // 字体颜色列表
@@ -318,12 +325,12 @@ const setFontSize = (size: string) => {
 
 // 设置字体颜色
 const setFontColor = (color: string) => {
-  document.execCommand('foreColor', false, color);
+  emit('apply-formatting', { command: 'foreColor', value: color });
 };
 
 // 设置背景颜色
 const setBackgroundColor = (color: string) => {
-  document.execCommand('hiliteColor', false, color);
+  emit('apply-formatting', { command: 'hiliteColor', value: color });
 };
 
 // 设置中文段落格式
@@ -405,6 +412,10 @@ const setParagraphFormat = (formatType: string) => {
         break;
     }
   });
+  
+  // 发送通知让Editor组件更新内容状态，支持撤销
+  // 使用自定义事件通知编辑器内容已更改
+  emit('apply-formatting', { command: 'formatBlock', value: 'p' });
 };
 
 const createLink = () => {
@@ -423,41 +434,25 @@ const redoAction = () => {
 };
 
 // 增大/减小字号
-const changeFontSize = (direction: string) => {
+const changeFontSize = (action: string) => {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) return;
   
-  // 获取选中的范围
   const range = selection.getRangeAt(0);
   
-  // 如果没有选中内容，就什么都不做
-  if (range.collapsed) return;
-  
-  // 创建一个span元素来包装选中内容
+  // 创建临时span用于包裹选中内容
   const span = document.createElement('span');
   
-  // 复制选中内容到新的span
-  span.appendChild(range.extractContents());
+  // 将选中内容放入span
+  range.surroundContents(span);
   
-  // 获取现有字体大小
-  let currentSize = 16; // 默认16px
+  // 获取当前字体大小
+  let currentSize = parseInt(window.getComputedStyle(span).fontSize);
+  if (isNaN(currentSize)) currentSize = 16; // 默认字体大小
   
-  // 尝试从所选内容中获取当前字体大小
-  const computedStyle = window.getComputedStyle(span);
-  const fontSize = computedStyle.fontSize;
-  
-  if (fontSize) {
-    // 提取数字部分
-    const sizeMatch = fontSize.match(/(\d+(\.\d+)?)px/);
-    if (sizeMatch && sizeMatch[1]) {
-      currentSize = parseFloat(sizeMatch[1]);
-    }
-  }
-  
-  // 计算新字体大小
-  let newSize;
-  if (direction === 'increase') {
-    // 增大字号
+  // 根据动作增大或减小字体
+  let newSize = currentSize;
+  if (action === 'increase') {
     if (currentSize < 12) newSize = 12;
     else if (currentSize < 14) newSize = 14;
     else if (currentSize < 16) newSize = 16;
@@ -468,8 +463,8 @@ const changeFontSize = (direction: string) => {
     else if (currentSize < 36) newSize = 36;
     else newSize = 36; // 最大36px
   } else {
-    // 减小字号
-    if (currentSize > 30) newSize = 30;
+    if (currentSize > 36) newSize = 36;
+    else if (currentSize > 30) newSize = 30;
     else if (currentSize > 24) newSize = 24;
     else if (currentSize > 20) newSize = 20;
     else if (currentSize > 18) newSize = 18;
@@ -479,17 +474,17 @@ const changeFontSize = (direction: string) => {
     else newSize = 12; // 最小12px
   }
   
-  // 设置新字体大小
-  span.style.fontSize = `${newSize}px`;
+  // 使用emit发送改变字体大小的事件
+  emit('set-font-size', `${newSize}px`);
   
-  // 将span插入到原始范围位置
-  range.insertNode(span);
-  
-  // 更新选区以包含新的span
-  selection.removeAllRanges();
-  const newRange = document.createRange();
-  newRange.selectNodeContents(span);
-  selection.addRange(newRange);
+  // 清理临时span，恢复原始DOM结构
+  const parent = span.parentNode;
+  if (parent) {
+    while (span.firstChild) {
+      parent.insertBefore(span.firstChild, span);
+    }
+    parent.removeChild(span);
+  }
 };
 
 const fileInputRef = ref(null);
@@ -522,6 +517,11 @@ const handleImageUpload = async (event: Event) => {
       target.value = '';
     }
   }
+};
+
+// 触发大纲切换事件
+const toggleOutline = () => {
+  emit('toggle-outline');
 };
 </script>
 
