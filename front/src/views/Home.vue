@@ -132,6 +132,26 @@ onBeforeMount(() => {
     editorTitle.value = '新笔记';
     currentSessionId.value = null;
     currentNoteId.value = null;
+  } else {
+    // 如果URL中没有任何参数，且用户已登录，检查是否有默认笔记
+    if (authService.isAuthenticated()) {
+      const defaultNoteId = authService.getDefaultNoteId();
+      if (defaultNoteId) {
+        console.log(`发现默认笔记ID: ${defaultNoteId}，自动加载`);
+        currentNoteId.value = defaultNoteId;
+        fetchNoteDetail(defaultNoteId);
+
+        // 加载成功后清除默认笔记ID，这样只有首次登录会自动打开
+        localStorage.removeItem('default_note_id');
+      } else {
+        // 如果没有默认笔记，加载用户的笔记列表
+        console.log('没有默认笔记，加载笔记列表');
+        fetchNotes(1, true);
+      }
+    } else {
+      // 未登录状态，加载笔记列表
+      fetchNotes(1, true);
+    }
   }
 });
 
@@ -542,7 +562,7 @@ const handleLoadMore = () => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow: hidden;
+  overflow-y: auto; /* 改为auto允许主内容区滚动 */
   background-color: white;
   position: relative;
   transition: margin-left 0.3s ease;
@@ -554,10 +574,20 @@ const handleLoadMore = () => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible; /* 允许内容溢出 */
   padding: 16px 32px 0;
   width: 90%;  /* 将宽度减少为原来的90% */
   margin: 0 auto;  /* 居中显示 */
+}
+
+/* 确保编辑器工具栏固定 */
+:deep(.editor-container .editor-toolbar) {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: #f9f9f9;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 /* 编辑器滚动条样式 */
@@ -599,6 +629,10 @@ const handleLoadMore = () => {
   font-size: 13px;
   border-top: 1px solid rgba(0, 0, 0, 0.05);
   margin-top: 16px;
+  position: sticky; /* 使底部状态栏固定 */
+  bottom: 0; /* 固定在底部 */
+  background-color: white; /* 确保背景色遮挡滚动内容 */
+  z-index: 90; /* 确保在内容上方，但低于顶部工具栏 */
 }
 
 .word-count {

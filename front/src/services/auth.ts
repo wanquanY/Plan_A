@@ -13,6 +13,23 @@ interface LoginResponse {
   token_type: string;
 }
 
+interface DefaultNote {
+  id: number;
+  title: string;
+}
+
+interface RegisterResponse {
+  user: {
+    id: number;
+    username: string;
+    phone: string;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+  };
+  default_note?: DefaultNote;
+}
+
 interface ApiResponse<T> {
   code: number;
   msg: string;
@@ -25,7 +42,11 @@ interface ApiResponse<T> {
 const authService = {
   // 用户注册
   register: async (data: RegisterData) => {
-    const response = await apiClient.post<ApiResponse<any>>('/auth/register', data);
+    const response = await apiClient.post<ApiResponse<RegisterResponse>>('/auth/register', data);
+    // 如果有默认笔记，存储默认笔记ID到本地存储，便于登录后自动打开
+    if (response.data.data.default_note) {
+      localStorage.setItem('default_note_id', response.data.data.default_note.id.toString());
+    }
     return response.data;
   },
 
@@ -54,11 +75,18 @@ const authService = {
   // 退出登录
   logout: () => {
     localStorage.removeItem('access_token');
+    localStorage.removeItem('default_note_id'); // 同时清除默认笔记ID
   },
 
   // 检查是否已登录
   isAuthenticated: () => {
     return !!localStorage.getItem('access_token');
+  },
+  
+  // 获取默认笔记ID
+  getDefaultNoteId: (): number | null => {
+    const noteId = localStorage.getItem('default_note_id');
+    return noteId ? parseInt(noteId) : null;
   }
 };
 

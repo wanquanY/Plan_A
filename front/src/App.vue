@@ -24,7 +24,7 @@ html, body {
     'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
     'Noto Color Emoji';
   background-color: #f8fafc;
-  overflow: hidden;
+  overflow: auto;
 }
 
 body {

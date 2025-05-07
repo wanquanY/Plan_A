@@ -535,6 +535,11 @@ const handleImageUpload = async (event: Event) => {
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   background-color: #f9f9f9;
   border-radius: 8px 8px 0 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .toolbar-button {

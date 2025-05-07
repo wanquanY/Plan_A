@@ -1,16 +1,58 @@
-from typing import Optional
+from typing import Optional, Tuple
+import os
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.user import User
+from backend.models.note import Note
 from backend.schemas.user import UserCreate, UserLogin, TokenData
 from backend.crud.user import get_user_by_username, get_user_by_phone, create_user
 from backend.utils.security import get_password_hash, verify_password, create_access_token
 from backend.utils.logging import auth_logger
 
 
+# 读取用户手册模板
+def get_user_manual_content():
+    """读取用户手册HTML模板"""
+    try:
+        manual_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates', 'user_manual.html')
+        with open(manual_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        auth_logger.error(f"读取用户手册模板失败: {str(e)}")
+        # 如果无法读取模板，返回简单的欢迎信息
+        return "<h1>欢迎使用FreeWrite!</h1><p>这是一个简洁高效的笔记和写作应用。</p>"
+
+
+# 创建默认用户手册笔记
+async def create_default_manual_note(db: AsyncSession, user_id: int) -> Optional[Note]:
+    """为新用户创建默认的用户手册笔记"""
+    try:
+        # 获取用户手册内容
+        manual_content = get_user_manual_content()
+        
+        # 创建笔记
+        default_note = Note(
+            user_id=user_id,
+            title="欢迎使用FreeWrite - 用户指南",
+            content=manual_content,
+            is_public=False
+        )
+        
+        db.add(default_note)
+        await db.commit()
+        await db.refresh(default_note)
+        
+        auth_logger.info(f"成功为用户ID {user_id} 创建默认用户手册笔记")
+        return default_note
+    except Exception as e:
+        auth_logger.error(f"创建默认用户手册笔记失败: {str(e)}")
+        await db.rollback()
+        return None
+
+
 # 用户注册服务
-async def register_user(user_data: UserCreate, db: AsyncSession) -> User:
+async def register_user(user_data: UserCreate, db: AsyncSession) -> Tuple[User, Optional[Note]]:
     # 检查用户名是否已存在
     existing_username = await get_user_by_username(db, user_data.username)
     if existing_username:
@@ -28,12 +70,17 @@ async def register_user(user_data: UserCreate, db: AsyncSession) -> User:
     
     # 创建用户
     auth_logger.info(f"创建新用户 - 用户名: {user_data.username}, 手机号: {user_data.phone}")
-    return await create_user(
+    user = await create_user(
         db=db,
         username=user_data.username,
         phone=user_data.phone,
         hashed_password=hashed_password
     )
+    
+    # 为新用户创建默认用户手册笔记
+    default_note = await create_default_manual_note(db, user.id)
+    
+    return user, default_note
 
 
 # 验证用户登录

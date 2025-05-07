@@ -1,6 +1,7 @@
 <template>
   <div class="editor-container">
     <EditorToolbar
+      class="editor-toolbar-fixed"
       :editor-ref="editorContentRef?.editorRef"
       :selected-heading="selectedHeading"
       @apply-formatting="applyFormat"
@@ -454,21 +455,29 @@ defineExpose({
 });
 </script>
 
-<style scoped>
+<style>
 .editor-container {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: white;
-  border-radius: 8px;
-  overflow: hidden;
+  width: 100%;
+  position: relative;
+}
+
+.editor-toolbar-fixed {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: #f9f9f9;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  width: 100%;
 }
 
 .editor-main {
-  position: relative;
-  display: flex;
   flex: 1;
-  overflow: hidden;
+  min-height: 0;
+  position: relative;
+  overflow: visible; /* 允许内容溢出 */
 }
 
 .editor-footer {

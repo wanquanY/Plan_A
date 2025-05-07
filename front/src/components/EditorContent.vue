@@ -1111,17 +1111,16 @@ const setupImageResizing = (container, img) => {
 </script>
 
 <style scoped>
+/* 允许内容溢出，让整个页面负责滚动 */
 .editor-content {
-  flex: 1;
-  padding: 30px 0;
-  overflow-y: auto;
-  min-height: 300px;
+  overflow-y: visible;
+  min-height: 100%;
+  width: 100%;
   outline: none;
-  line-height: 1.5;
-  font-size: 16px;
+  line-height: 1.6;
+  font-size: 1rem;
+  padding: 0.5em 0;
   color: #333;
-  word-wrap: break-word;
-  white-space: pre-wrap;
 }
 
 /* 图片上传占位符样式 */

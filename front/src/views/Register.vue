@@ -61,8 +61,24 @@ const handleRegister = async () => {
     // 显示成功消息
     message.success('注册成功');
     
-    // 跳转到登录页
-    router.push('/login');
+    // 获取默认笔记ID
+    const defaultNoteId = response.data.default_note?.id;
+    
+    if (defaultNoteId) {
+      // 如果有默认笔记，直接登录并跳转到该笔记页面
+      try {
+        await authService.login(formState.username, formState.password);
+        // 跳转到默认笔记页面
+        router.push(`/?note=${defaultNoteId}`);
+      } catch (loginError) {
+        // 如果登录失败，仍然跳转到登录页
+        message.warning('注册成功，请重新登录');
+        router.push('/login');
+      }
+    } else {
+      // 如果没有默认笔记，跳转到登录页
+      router.push('/login');
+    }
   } catch (error: any) {
     // 显示错误消息
     if (error.response && error.response.data) {

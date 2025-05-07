@@ -37,8 +37,16 @@ const handleLogin = async () => {
     // 显示成功消息
     message.success('登录成功');
     
-    // 跳转到首页
-    router.push('/');
+    // 检查是否有默认笔记需要打开
+    const defaultNoteId = authService.getDefaultNoteId();
+    
+    if (defaultNoteId) {
+      // 如果有默认笔记，跳转到该笔记页面
+      router.push(`/?note=${defaultNoteId}`);
+    } else {
+      // 否则跳转到首页
+      router.push('/');
+    }
   } catch (error: any) {
     // 显示错误消息
     if (error.response && error.response.data) {
@@ -63,7 +71,7 @@ const goToRegister = () => {
   <div class="login-container">
     <div class="login-wrapper">
       <div class="logo-area">
-        <h1 class="app-title">FreeWrite</h1>
+        <h1 class="app-title">Plan_A</h1>
         <p class="app-desc">简单、高效的写作平台</p>
       </div>
       
@@ -127,7 +135,7 @@ const goToRegister = () => {
     </div>
     
     <div class="login-footer">
-      <p>FreeWrite &copy; 2024 - 高效写作平台</p>
+      <p>Plan_A &copy; 2024 - 高效写作平台</p>
     </div>
     
     <!-- 装饰性元素 -->

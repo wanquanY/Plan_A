@@ -29,7 +29,7 @@ async def create_user(
     """
     try:
         auth_logger.info(f"用户注册请求: {user_data.username}, 请求ID: {getattr(request.state, 'request_id', '')}")
-        user = await register_user(user_data, db)
+        user, default_note = await register_user(user_data, db)
         auth_logger.info(f"用户注册成功: {user.username}")
         
         # 将UTC时间转换为北京时间（UTC+8）
@@ -53,8 +53,19 @@ async def create_user(
             "updated_at": to_beijing_time(user.updated_at).isoformat() if user.updated_at else None
         }
         
+        # 添加默认笔记信息到响应中
+        response_data = {
+            "user": user_dict
+        }
+        
+        if default_note:
+            response_data["default_note"] = {
+                "id": default_note.id,
+                "title": default_note.title
+            }
+        
         return SuccessResponse(
-            data=user_dict,
+            data=response_data,
             msg="注册成功",
             request_id=getattr(request.state, "request_id", None)
         )

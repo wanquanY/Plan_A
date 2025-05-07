@@ -342,7 +342,7 @@ const handleSessionDeleteClick = async (event, session) => {
   <div class="sidebar" :class="{ 'sidebar-collapsed': collapsed }">
     <div class="sidebar-top">
       <div class="logo">
-        <span class="logo-text">FreeWrite</span>
+        <span class="logo-text">Plan_A</span>
       </div>
     </div>
     
