@@ -119,33 +119,95 @@ const selectAgent = (agent) => {
   // 创建一个新的Range，用于插入用户提及
   const range = props.currentRange.cloneRange();
   
-  // 删除@符号，注意这里要注意是否有更多字符
-  range.setStart(range.startContainer, range.startOffset - 1);
-  range.deleteContents();
+  // 只删除@符号，不删除其他字符
+  const textNode = range.startContainer;
   
-  // 插入用户提及并关闭选择器
-  range.insertNode(mention);
-  
-  // 将光标移动到提及元素之后
-  const selection = window.getSelection();
-  if (selection) {
-    // 创建一个新的文本节点作为光标定位点
-    const textNode = document.createTextNode('\u200B'); // 使用零宽空格作为光标定位点
-    const newRange = document.createRange();
-    newRange.setStartAfter(mention);
-    newRange.collapse(true);
-    newRange.insertNode(textNode);
+  // 确保我们只在文本节点中操作
+  if (textNode.nodeType === Node.TEXT_NODE) {
+    const text = textNode.textContent || '';
+    const offset = range.startOffset;
     
-    // 将光标定位在零宽空格之后
-    newRange.setStartAfter(textNode);
-    newRange.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(newRange);
+    // 从当前光标位置向前搜索@符号
+    let atIndex = -1;
+    for (let i = offset - 1; i >= 0; i--) {
+      if (text[i] === '@') {
+        atIndex = i;
+        break;
+      }
+    }
+    
+    // 如果找到@符号，只删除@符号
+    if (atIndex !== -1) {
+      // 创建一个新的范围只包含@符号
+      const atRange = document.createRange();
+      atRange.setStart(textNode, atIndex);
+      atRange.setEnd(textNode, atIndex + 1); // 只选择@符号
+      atRange.deleteContents();
+      
+      // 在@符号的位置插入mention元素
+      atRange.insertNode(mention);
+    } else {
+      // 如果找不到@符号(异常情况)，直接在当前位置插入mention元素
+      range.insertNode(mention);
+    }
+  } else {
+    // 非文本节点情况，直接插入
+    range.insertNode(mention);
+  }
+  
+  // 修正中文输入法问题 - 插入固定的输入区域
+  const editableSpan = document.createElement('span');
+  editableSpan.className = 'editable-span';
+  editableSpan.setAttribute('contenteditable', 'true');
+  editableSpan.style.outline = 'none';
+  editableSpan.style.minWidth = '1px';
+  editableSpan.style.display = 'inline-block';
+  
+  // 在mention后插入可编辑的span
+  if (mention.parentNode) {
+    mention.parentNode.insertBefore(editableSpan, mention.nextSibling);
   }
   
   // 通知父组件AI助手被选择
   emit('agent-selected', agent);
   emit('close');
+  
+  // 立即设置焦点到可编辑区域
+  editableSpan.focus();
+  
+  // 创建一个新的选择范围，并设置它在可编辑区域的开始位置
+  const selection = window.getSelection();
+  if (selection) {
+    const newRange = document.createRange();
+    newRange.setStart(editableSpan, 0);
+    newRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(newRange);
+  }
+  
+  // 延迟处理以确保输入法事件正确处理
+  setTimeout(() => {
+    // 检查可编辑区域是否仍然存在
+    if (!editableSpan.isConnected) return;
+    
+    // 确保可编辑区域仍然有焦点
+    editableSpan.focus();
+    
+    // 如果使用高级浏览器API可用，尝试模拟用户点击
+    if (typeof InputDeviceCapabilities !== 'undefined') {
+      try {
+        // 创建一个鼠标事件，使输入法认为这是用户操作
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        });
+        editableSpan.dispatchEvent(clickEvent);
+      } catch (e) {
+        console.error('无法模拟点击事件:', e);
+      }
+    }
+  }, 50);
 };
 
 // 初始化时只添加事件监听，不加载数据

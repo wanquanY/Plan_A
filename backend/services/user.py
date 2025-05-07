@@ -34,7 +34,7 @@ async def create_default_manual_note(db: AsyncSession, user_id: int) -> Optional
         # 创建笔记
         default_note = Note(
             user_id=user_id,
-            title="欢迎使用FreeWrite - 用户指南",
+            title="欢迎使用Plan_A - 用户指南",
             content=manual_content,
             is_public=False
         )
