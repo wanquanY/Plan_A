@@ -23,12 +23,45 @@ DOMPurify.addHook('afterSanitizeAttributes', function(node) {
 // 用于生成思维导图的正则表达式
 const mindMapRegex = /^# .+(\n[#]+ .+)+$/m;
 
-// 检查内容是否可能是思维导图
+/**
+ * 判断文本内容是否是思维导图格式
+ * 思维导图格式通常是# 开头，带有缩进层级的markdown
+ * 优化版本：更高效地识别，减少不必要的计算
+ */
 export const isMindMapContent = (content: string): boolean => {
-  // 检查是否符合思维导图格式：以#开头的多行内容，至少有一个二级标题
-  return mindMapRegex.test(content) || 
-         // 至少包含一个一级标题和多个层级标题
-         (!!content.match(/^#\s+.+/m) && !!content.match(/^#{2,}\s+.+/m));
+  if (!content || typeof content !== 'string') return false;
+  
+  // 清理内容，去除前后空白
+  const text = content.trim();
+  
+  // 快速检查：必须以"# "开头
+  if (!text.startsWith('# ')) return false;
+  
+  // 快速检查：检查是否有多级标题
+  if (!text.includes('\n##')) return false;
+  
+  // 计算标题行的数量
+  const headingLines = text.match(/^#+\s/gm);
+  if (!headingLines || headingLines.length < 3) return false;  // 至少需要3个标题
+  
+  // 判断是否有至少两个不同级别的标题
+  let hasFirstLevel = false;
+  let hasSecondLevel = false;
+  
+  for (let i = 0; i < headingLines.length; i++) {
+    if (headingLines[i].startsWith('# ')) {
+      hasFirstLevel = true;
+    } else if (headingLines[i].startsWith('## ')) {
+      hasSecondLevel = true;
+    }
+    
+    // 如果同时有一级和二级标题，提前返回true
+    if (hasFirstLevel && hasSecondLevel) {
+      return true;
+    }
+  }
+  
+  return false;
 };
 
 // 检测代码块的语言

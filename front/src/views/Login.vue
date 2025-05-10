@@ -32,7 +32,7 @@ const handleLogin = async () => {
     loading.value = true;
     
     // 调用登录API
-    await authService.login(formState.username, formState.password);
+    const loginResult = await authService.login(formState.username, formState.password);
     
     // 显示成功消息
     message.success('登录成功');
@@ -71,21 +71,17 @@ const goToRegister = () => {
   <div class="login-container">
     <div class="login-wrapper">
       <div class="logo-area">
-        <div class="app-logo">
-          <div class="logo-icon">P</div>
-          <div class="title-container">
-            <h1 class="app-title">Plan<span class="highlight">_A</span></h1>
-            <p class="app-desc">简单、高效的写作平台</p>
-          </div>
-        </div>
+        <h1 class="app-title">Plan<span class="highlight">_A</span></h1>
+        <p class="app-desc">简单、高效的写作平台</p>
       </div>
       
       <div class="right-section">
-        <a-card class="login-card">
+        <a-card class="login-card" :bordered="false">
           <div class="card-header">
             <h2 class="card-title">用户登录</h2>
             <p class="card-subtitle">欢迎回来，请登录您的账号</p>
           </div>
+          
           <a-form
             :model="formState"
             :rules="rules"
@@ -140,7 +136,7 @@ const goToRegister = () => {
     </div>
     
     <div class="login-footer">
-      <p>Plan_A &copy; 2025 - 高效写作平台</p>
+      <p>Plan_A &copy; 2024 - 高效写作平台</p>
     </div>
     
     <!-- 装饰性元素 -->
@@ -188,55 +184,18 @@ const goToRegister = () => {
   z-index: 5;
 }
 
-.app-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 15px;
-  margin-bottom: 16px;
-}
-
-.title-container {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.logo-icon {
-  background: linear-gradient(135deg, #1890ff, #722ed1);
-  color: white;
-  width: 60px;
-  height: 60px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 36px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-}
-
 .app-title {
   font-size: 42px;
   font-weight: bold;
-  color: #333;
-  margin: 0;
-  letter-spacing: -0.5px;
-  line-height: 1.1;
-}
-
-.highlight {
   background: linear-gradient(45deg, #1890ff, #722ed1);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  background-clip: text;
-  color: transparent;
+  margin-bottom: 8px;
 }
 
 .app-desc {
+  color: #666;
   font-size: 16px;
-  color: rgba(0, 0, 0, 0.65);
-  margin-top: 8px;
   margin-bottom: 0;
 }
 
@@ -244,33 +203,34 @@ const goToRegister = () => {
   width: 100%;
   max-width: 400px;
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   background: white;
 }
 
 .card-header {
-  padding: 24px 24px 0;
+  text-align: center;
+  margin-bottom: 24px;
 }
 
 .card-title {
   font-size: 24px;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.85);
   margin-bottom: 8px;
+  color: #333;
 }
 
 .card-subtitle {
-  color: rgba(0, 0, 0, 0.45);
-  margin-bottom: 24px;
+  color: #666;
+  font-size: 14px;
 }
 
 .login-button {
-  height: 48px;
+  height: 44px;
   font-size: 16px;
   background: linear-gradient(45deg, #1890ff, #40a9ff);
   border: none;
-  transition: all 0.3s;
+  margin-bottom: 12px;
+  letter-spacing: -0.5px;
 }
 
 .login-button:hover {
@@ -397,7 +357,7 @@ const goToRegister = () => {
   }
   
   .app-desc {
-    font-size: 18px;
+    font-size: 22px;
   }
 }
-</style> 
+</style>

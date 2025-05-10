@@ -1,8 +1,9 @@
 from pydantic_settings import BaseSettings
-from pydantic import AnyHttpUrl
-from typing import List, Optional
+from pydantic import AnyHttpUrl, Field, PostgresDsn
+from typing import List, Optional, Dict, Any, Union
 import os
 from dotenv import load_dotenv
+from secrets import token_hex
 
 # 加载.env文件
 load_dotenv()
@@ -14,6 +15,8 @@ class Settings(BaseSettings):
     
     # 服务配置
     PROJECT_NAME: str = "FreeWrite API"
+    PROJECT_DESCRIPTION: str = "一个支持AI写作的笔记应用"
+    PROJECT_VERSION: str = "0.1.0"
     
     # CORS配置
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
@@ -31,7 +34,7 @@ class Settings(BaseSettings):
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
     
     # JWT配置
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "freewrite_secret_key")
+    SECRET_KEY: str = Field(default_factory=lambda: token_hex(32))
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "43200"))  # 默认30天
     
     # 日志配置
@@ -40,7 +43,7 @@ class Settings(BaseSettings):
     FILE_LOG_LEVEL: str = os.getenv("FILE_LOG_LEVEL", "info")
     LOG_DIR: str = os.getenv("LOG_DIR", "logs")
     LOG_ROTATION: str = os.getenv("LOG_ROTATION", "size")  # "size" 或 "time"
-    LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))  # 默认10MB
+    LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", "10485760").split('#')[0].strip())  # 默认10MB
     LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "30"))  # 默认保留30个备份
     
     # SQLAlchemy日志配置
@@ -65,6 +68,20 @@ class Settings(BaseSettings):
         if self.REDIS_PASSWORD:
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+    
+    # Tavily API配置
+    TAVILY_API_KEY: Optional[str] = None
+    
+    @property
+    def DATABASE_URI(self) -> Optional[PostgresDsn]:
+        return PostgresDsn.build(
+            scheme="postgresql+asyncpg",
+            user=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.POSTGRES_HOST,
+            port=self.POSTGRES_PORT,
+            path=f"/{self.POSTGRES_DB}"
+        )
     
     model_config = {
         "extra": "ignore",  # 允许额外的字段

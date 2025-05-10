@@ -1,11 +1,30 @@
 import apiClient from './api';
 import axios from 'axios';
+import type { User } from './user';
+
+// API响应接口
+export interface ApiResponse<T> {
+  code: number;
+  msg: string;
+  data: T;
+  errors: any;
+  timestamp: string;
+  request_id: string;
+}
 
 interface RegisterData {
   username: string;
-  phone: string;
   password: string;
-  password_confirm: string;
+  confirm_password: string;
+  phone: string;
+}
+
+interface RegisterResponse {
+  user: User;
+  default_note?: {
+    id: number;
+    title: string;
+  };
 }
 
 interface LoginResponse {
@@ -16,27 +35,6 @@ interface LoginResponse {
 interface DefaultNote {
   id: number;
   title: string;
-}
-
-interface RegisterResponse {
-  user: {
-    id: number;
-    username: string;
-    phone: string;
-    is_active: boolean;
-    created_at: string;
-    updated_at: string;
-  };
-  default_note?: DefaultNote;
-}
-
-interface ApiResponse<T> {
-  code: number;
-  msg: string;
-  data: T;
-  errors: any;
-  timestamp: string;
-  request_id: string;
 }
 
 const authService = {
@@ -61,21 +59,38 @@ const authService = {
     formData.append('client_id', 'string');
     formData.append('client_secret', 'string');
 
-    const response = await apiClient.post<LoginResponse>('/auth/login', formData, {
+    const response = await apiClient.post<ApiResponse<{
+      user: User,
+      access_token: string,
+      token_type: string
+    }>>('/auth/login', formData, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
     });
     
-    // 存储token到localStorage
-    localStorage.setItem('access_token', response.data.access_token);
-    return response.data;
+    if (response.data.code === 200 && response.data.data) {
+      const { access_token, user } = response.data.data;
+      
+      // 存储token到localStorage
+      localStorage.setItem('access_token', access_token);
+      
+      // 存储用户信息到localStorage
+      if (user) {
+        localStorage.setItem('user_info', JSON.stringify(user));
+      }
+      
+      return response.data.data;
+    } else {
+      throw new Error(response.data.msg || '登录失败');
+    }
   },
 
   // 退出登录
   logout: () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('default_note_id'); // 同时清除默认笔记ID
+    localStorage.removeItem('user_info'); // 清除用户信息
   },
 
   // 检查是否已登录
@@ -87,6 +102,24 @@ const authService = {
   getDefaultNoteId: (): number | null => {
     const noteId = localStorage.getItem('default_note_id');
     return noteId ? parseInt(noteId) : null;
+  },
+  
+  // 获取缓存的用户信息
+  getCachedUser: (): User | null => {
+    try {
+      const userJson = localStorage.getItem('user_info');
+      if (userJson) {
+        return JSON.parse(userJson) as User;
+      }
+    } catch (error) {
+      console.error('解析缓存用户信息失败:', error);
+    }
+    return null;
+  },
+  
+  // 清除缓存的用户信息
+  clearCachedUser: () => {
+    localStorage.removeItem('user_info');
   }
 };
 

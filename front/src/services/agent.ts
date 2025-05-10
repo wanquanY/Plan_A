@@ -8,6 +8,13 @@ export interface AgentModelSettings {
   max_tokens: number;
 }
 
+export interface ToolConfig {
+  enabled: boolean;
+  name: string;
+  api_key?: string;
+  config?: Record<string, any>;
+}
+
 export interface Agent {
   id: number;
   user_id: number;
@@ -17,6 +24,7 @@ export interface Agent {
   model: string;
   max_memory: number;
   model_settings: AgentModelSettings;
+  tools_enabled?: Record<string, ToolConfig>;
   is_public: boolean;
   created_at: string;
   updated_at: string;
@@ -128,6 +136,37 @@ const getAvailableModels = async (): Promise<string[]> => {
   }
 };
 
+// 基于现有Agent创建新Agent
+const createAgentFromTemplate = async (templateAgentId: number): Promise<Agent | null> => {
+  try {
+    // 先获取模板Agent的详情
+    const templateAgent = await getAgentDetail(templateAgentId);
+    if (!templateAgent) {
+      console.error(`模板Agent(ID:${templateAgentId})不存在或无法访问`);
+      return null;
+    }
+    
+    // 创建新Agent，复制模板Agent的关键设置
+    const newAgentData = {
+      name: `${templateAgent.name} (我的副本)`,
+      avatar_url: templateAgent.avatar_url,
+      system_prompt: templateAgent.system_prompt,
+      model: templateAgent.model,
+      max_memory: templateAgent.max_memory,
+      model_settings: templateAgent.model_settings,
+      tools_enabled: templateAgent.tools_enabled,
+      is_public: false // 默认设为私有
+    };
+    
+    // 创建新Agent
+    const result = await createAgent(newAgentData);
+    return result;
+  } catch (error) {
+    console.error(`基于模板创建Agent失败:`, error);
+    return null;
+  }
+};
+
 export default {
   getAllAgents,
   getPublicAgents,
@@ -136,5 +175,6 @@ export default {
   createAgent,
   updateAgent,
   deleteAgent,
-  getAvailableModels
+  getAvailableModels,
+  createAgentFromTemplate
 }; 

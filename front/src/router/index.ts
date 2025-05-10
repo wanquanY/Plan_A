@@ -5,6 +5,7 @@ import Register from '../views/Register.vue';
 import Test from '../views/Test.vue';
 import UserProfile from '../views/UserProfile.vue';
 import AgentManagement from '../views/AgentManagement.vue';
+import CreateAgent from '../views/CreateAgent.vue';
 import GlobalLayout from '../components/GlobalLayout.vue';
 import authService from '../services/auth';
 
@@ -33,6 +34,11 @@ const routes = [
         path: 'agent-management',
         name: 'AgentManagement',
         component: AgentManagement
+      },
+      {
+        path: 'create-agent',
+        name: 'CreateAgent',
+        component: CreateAgent
       }
     ]
   },

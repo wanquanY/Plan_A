@@ -41,6 +41,8 @@ const transformer = new Transformer();
 onMounted(() => {
   if (svgRef.value) {
     try {
+      // 直接渲染思维导图，不检查全局状态
+      console.log('直接渲染思维导图，不检查全局状态');
       renderMarkmap();
     } catch (error) {
       console.error('初始化思维导图失败:', error);
@@ -70,17 +72,38 @@ const renderMarkmap = async () => {
     // 清空现有的SVG内容
     svgRef.value.innerHTML = '';
     
-    // 创建新的markmap实例
+    // 创建新的markmap实例 - 优化配置提高性能
     const mm = Markmap.create(svgRef.value, {
       fontSize: 16,
       nodeFont: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial',
       linkShape: 'diagonal',
       color: d => d.children ? '#1677ff' : '#333',
+      duration: 200, // 减少动画时间
+      maxWidth: 500, // 节点最大宽度
       ...props.options
     }, transformedData.value.root);
     
+    // 保存实例引用
     markmap.value = mm;
-    isLoading.value = false;
+    
+    // 立即尝试适配一次
+    if (mm && typeof mm.fit === 'function') {
+      mm.fit();
+    }
+    
+    // 短延迟后再次适配并设置完成状态
+    setTimeout(() => {
+      try {
+        // 再次适配视图
+        if (mm && typeof mm.fit === 'function') {
+          mm.fit();
+        }
+        isLoading.value = false;
+      } catch (e) {
+        console.error('思维导图适配失败:', e);
+        isLoading.value = false;
+      }
+    }, 100); // 减少延迟时间
   } catch (error) {
     console.error('渲染思维导图失败:', error);
     isError.value = true;

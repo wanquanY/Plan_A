@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, JSON, ARRAY
 from sqlalchemy.orm import relationship
 
 from backend.models.base import BaseModel
@@ -16,6 +16,7 @@ class Agent(BaseModel):
     model = Column(String, nullable=False)  # 模型名称
     max_memory = Column(Integer, default=10)  # 最大记忆条数
     model_settings = Column(JSON, nullable=True)  # 模型相关的设置，如temperature等
+    tools_enabled = Column(JSON, nullable=True)  # 可用的工具配置，包含工具名称和相关参数
     is_public = Column(Boolean, default=False)  # 是否公开
     
     # 关联关系

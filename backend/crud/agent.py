@@ -21,6 +21,12 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         # 将obj_in.model_settings转换为字典，确保JSON可序列化
         model_settings = obj_in.model_settings.dict() if obj_in.model_settings else None
         
+        # 将工具配置转换为字典
+        tools_enabled = {}
+        if obj_in.tools_enabled:
+            for tool_name, tool_config in obj_in.tools_enabled.items():
+                tools_enabled[tool_name] = tool_config.dict() if hasattr(tool_config, 'dict') else tool_config
+        
         db_obj = Agent(
             user_id=user_id,
             name=obj_in.name,
@@ -29,6 +35,7 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
             model=obj_in.model,
             max_memory=obj_in.max_memory,
             model_settings=model_settings,
+            tools_enabled=tools_enabled if tools_enabled else None,
             is_public=obj_in.is_public
         )
         db.add(db_obj)
@@ -54,6 +61,14 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         if "model_settings" in update_data and update_data["model_settings"] is not None:
             if hasattr(update_data["model_settings"], "dict"):
                 update_data["model_settings"] = update_data["model_settings"].dict()
+        
+        # 处理tools_enabled特殊字段，确保是字典类型
+        if "tools_enabled" in update_data and update_data["tools_enabled"] is not None:
+            if isinstance(update_data["tools_enabled"], dict):
+                tools_dict = {}
+                for tool_name, tool_config in update_data["tools_enabled"].items():
+                    tools_dict[tool_name] = tool_config.dict() if hasattr(tool_config, 'dict') else tool_config
+                update_data["tools_enabled"] = tools_dict
         
         for field in update_data:
             if hasattr(agent, field) and field != "id" and field != "user_id":

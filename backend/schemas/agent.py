@@ -11,6 +11,14 @@ class ModelSettings(BaseModel):
     max_tokens: Optional[int] = Field(default=2048, ge=1)
 
 
+# 工具配置的Schema
+class ToolConfig(BaseModel):
+    enabled: bool = Field(default=False, description="是否启用此工具")
+    name: str = Field(..., description="工具名称")
+    api_key: Optional[str] = Field(None, description="API密钥")
+    config: Optional[Dict[str, Any]] = Field(None, description="工具特定配置")
+
+
 # Agent基础属性
 class AgentBase(BaseModel):
     name: str = Field(..., description="Agent昵称")
@@ -19,6 +27,7 @@ class AgentBase(BaseModel):
     model: str = Field(..., description="使用的模型")
     max_memory: Optional[int] = Field(10, description="最大记忆条数")
     model_settings: Optional[ModelSettings] = Field(None, description="模型相关设置")
+    tools_enabled: Optional[Dict[str, ToolConfig]] = Field(None, description="启用的工具配置")
     is_public: Optional[bool] = Field(False, description="是否公开")
 
 
@@ -35,6 +44,7 @@ class AgentUpdate(BaseModel):
     model: Optional[str] = None
     max_memory: Optional[int] = None
     model_settings: Optional[Dict[str, Any]] = None
+    tools_enabled: Optional[Dict[str, Any]] = None
     is_public: Optional[bool] = None
 
 

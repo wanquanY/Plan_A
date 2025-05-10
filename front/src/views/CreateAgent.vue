@@ -1,0 +1,623 @@
+<script setup lang="ts">
+import { ref, reactive, onMounted } from 'vue';
+import { Form, Input, Upload, Button, Slider, Switch, message, Collapse, Checkbox, Tooltip } from 'ant-design-vue';
+import { PlusOutlined, LoadingOutlined, QuestionCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons-vue';
+import { useRouter, useRoute } from 'vue-router';
+import type { UploadChangeParam } from 'ant-design-vue';
+import agentService from '@/services/agent';
+import type { ToolConfig, Agent } from '@/services/agent';
+
+const router = useRouter();
+const route = useRoute();
+const isEditMode = ref(false);
+const agentId = ref<number | null>(null);
+const pageTitle = ref('创建新Agent');
+
+// 表单引用
+const formRef = ref();
+
+// 头像上传相关
+const uploadLoading = ref(false);
+const imageUrl = ref('');
+const fileList = ref([]);
+
+// 表单数据
+const formState = reactive({
+  name: '',
+  avatar_url: '',
+  system_prompt: '你是一个有用的助手',
+  model: 'claude-3-7-sonnet-20250219',
+  max_memory: 100,
+  is_public: true,
+  model_settings: {
+    temperature: 0.7,
+    top_p: 1,
+    frequency_penalty: 0,
+    presence_penalty: 0,
+    max_tokens: 6400
+  },
+  tools_enabled: {
+    tavily: {
+      enabled: false,
+      name: 'tavily',
+      api_key: '',
+    }
+  }
+});
+
+// 表单验证规则
+const rules = {
+  name: [
+    { required: true, message: '请输入Agent名称', trigger: 'blur' },
+    { min: 2, max: 50, message: '名称长度应在2-50字符之间', trigger: 'blur' }
+  ],
+  system_prompt: [
+    { required: true, message: '请输入系统提示词', trigger: 'blur' }
+  ]
+};
+
+// 上传前验证
+const beforeUpload = (file) => {
+  const isImage = file.type.startsWith('image/');
+  if (!isImage) {
+    message.error('只能上传图片文件!');
+  }
+  const isLt2M = file.size / 1024 / 1024 < 2;
+  if (!isLt2M) {
+    message.error('图片大小不能超过2MB!');
+  }
+  return isImage && isLt2M;
+};
+
+// 处理上传变化
+const handleChange = (info: UploadChangeParam) => {
+  if (info.file.status === 'uploading') {
+    uploadLoading.value = true;
+    return;
+  }
+  
+  if (info.file.status === 'done') {
+    uploadLoading.value = false;
+    if (info.file.response && info.file.response.success) {
+      const fileInfo = info.file.response.file_info;
+      imageUrl.value = fileInfo.url;
+      formState.avatar_url = fileInfo.url;
+      message.success('头像上传成功!');
+    } else {
+      message.error('上传失败: ' + (info.file.response?.message || '未知错误'));
+    }
+  } else if (info.file.status === 'error') {
+    uploadLoading.value = false;
+    message.error('上传失败: ' + info.file.response?.message || '未知错误');
+  }
+};
+
+// 加载Agent详情
+const loadAgentDetails = async (id: number) => {
+  try {
+    const agent = await agentService.getAgentDetail(id);
+    if (agent) {
+      // 更新表单状态
+      formState.name = agent.name;
+      formState.avatar_url = agent.avatar_url;
+      formState.system_prompt = agent.system_prompt;
+      formState.model = agent.model;
+      formState.max_memory = agent.max_memory;
+      formState.is_public = agent.is_public;
+      if (agent.model_settings) {
+        formState.model_settings = {
+          temperature: agent.model_settings.temperature,
+          top_p: agent.model_settings.top_p,
+          frequency_penalty: agent.model_settings.frequency_penalty,
+          presence_penalty: agent.model_settings.presence_penalty,
+          max_tokens: agent.model_settings.max_tokens
+        };
+      }
+      if (agent.tools_enabled) {
+        formState.tools_enabled = agent.tools_enabled;
+      }
+      
+      // 更新图片预览
+      if (agent.avatar_url) {
+        imageUrl.value = agent.avatar_url;
+      }
+      
+      agentId.value = agent.id;
+      isEditMode.value = true;
+      pageTitle.value = '编辑Agent';
+    } else {
+      message.error('获取Agent详情失败');
+      router.push('/agent-management');
+    }
+  } catch (error) {
+    console.error('加载Agent详情失败:', error);
+    message.error('加载Agent详情失败');
+    router.push('/agent-management');
+  }
+};
+
+// 提交表单
+const submitForm = () => {
+  formRef.value.validate().then(async () => {
+    try {
+      let result;
+      if (isEditMode.value && agentId.value) {
+        // 编辑已有Agent
+        result = await agentService.updateAgent(agentId.value, formState);
+        if (result) {
+          message.success('Agent更新成功');
+          router.push('/agent-management');
+        } else {
+          message.error('Agent更新失败');
+        }
+      } else {
+        // 创建新Agent
+        result = await agentService.createAgent(formState);
+        if (result) {
+          message.success('Agent创建成功');
+          router.push('/agent-management');
+        } else {
+          message.error('Agent创建失败');
+        }
+      }
+    } catch (error) {
+      console.error(isEditMode.value ? '更新Agent失败:' : '创建Agent失败:', error);
+      message.error(isEditMode.value ? '更新Agent失败' : '创建Agent失败');
+    }
+  }).catch(error => {
+    console.log('表单验证失败:', error);
+  });
+};
+
+// 返回Agent管理页面
+const goBack = () => {
+  router.push('/agent-management');
+};
+
+// 可用模型列表
+const availableModels = ref([
+  'claude-3-7-sonnet-20250219',
+  'claude-3-5-sonnet-20240620',
+  'claude-3-opus-20240229',
+  'gpt-4-1106-preview',
+  'gpt-4-turbo',
+  'gpt-4-vision-preview',
+  'gpt-4',
+  'gpt-3.5-turbo'
+]);
+
+// 获取可用模型列表
+const fetchAvailableModels = async () => {
+  try {
+    const models = await agentService.getAvailableModels();
+    if (models && models.length > 0) {
+      availableModels.value = models;
+    }
+  } catch (error) {
+    console.error('获取可用模型列表失败:', error);
+  }
+};
+
+onMounted(async () => {
+  // 获取可用模型列表
+  await fetchAvailableModels();
+  
+  // 检查URL参数是否包含Agent ID，如果有则是编辑模式
+  const idParam = route.query.id;
+  if (idParam) {
+    const id = parseInt(idParam as string, 10);
+    if (!isNaN(id)) {
+      // 加载Agent详情
+      await loadAgentDetails(id);
+    }
+  }
+});
+</script>
+
+<template>
+  <div class="create-agent-page">
+    <div class="page-header">
+      <Button class="back-button" type="text" @click="goBack">
+        <ArrowLeftOutlined />
+        <span>返回Agent管理</span>
+      </Button>
+      <h1>{{ pageTitle }}</h1>
+    </div>
+    
+    <div class="page-content">
+      <Form 
+        ref="formRef"
+        :model="formState"
+        :rules="rules"
+        layout="vertical"
+        class="create-agent-form"
+      >
+        <div class="form-grid">
+          <!-- 左侧表单区域 -->
+          <div class="form-left">
+            <Form.Item label="名称" name="name">
+              <Input v-model:value="formState.name" placeholder="请输入Agent名称" />
+            </Form.Item>
+            
+            <Form.Item label="头像" name="avatar_url">
+              <div class="avatar-uploader">
+                <Upload
+                  v-model:file-list="fileList"
+                  :show-upload-list="false"
+                  :action="'http://101.42.168.191:18000/api/upload'"
+                  :before-upload="beforeUpload"
+                  :headers="{}"
+                  @change="handleChange"
+                  list-type="picture-card"
+                >
+                  <div v-if="imageUrl" class="avatar-preview">
+                    <img :src="imageUrl" alt="avatar" />
+                  </div>
+                  <div v-else class="upload-button">
+                    <div v-if="uploadLoading">
+                      <LoadingOutlined />
+                    </div>
+                    <div v-else>
+                      <PlusOutlined />
+                      <div style="margin-top: 8px">上传头像</div>
+                    </div>
+                  </div>
+                </Upload>
+              </div>
+            </Form.Item>
+            
+            <Form.Item label="系统提示词" name="system_prompt">
+              <Input.TextArea 
+                v-model:value="formState.system_prompt" 
+                placeholder="请输入系统提示词" 
+                :rows="6"
+                :autoSize="{ minRows: 6, maxRows: 12 }"
+              />
+            </Form.Item>
+          </div>
+          
+          <!-- 右侧表单区域 -->
+          <div class="form-right">
+            <Form.Item label="模型" name="model">
+              <div class="model-selection">
+                <div 
+                  v-for="model in availableModels" 
+                  :key="model"
+                  class="model-option"
+                  :class="{ 'model-selected': formState.model === model }"
+                  @click="formState.model = model"
+                >
+                  {{ model }}
+                </div>
+              </div>
+            </Form.Item>
+            
+            <div class="advanced-settings">
+              <h3>高级设置 <Tooltip title="这些设置会影响AI的回复风格和行为"><QuestionCircleOutlined /></Tooltip></h3>
+              
+              <Form.Item label="是否公开" name="is_public">
+                <div class="public-switch">
+                  <Switch v-model:checked="formState.is_public" />
+                  <span>{{ formState.is_public ? '公开' : '私有' }}</span>
+                  <Tooltip title="公开的Agent可以被其他用户查看和使用">
+                    <QuestionCircleOutlined />
+                  </Tooltip>
+                </div>
+              </Form.Item>
+              
+              <Form.Item label="最大记忆轮数" name="max_memory">
+                <Slider 
+                  v-model:value="formState.max_memory" 
+                  :min="1" 
+                  :max="200" 
+                  :step="1"
+                />
+                <div class="slider-value">{{ formState.max_memory }}</div>
+              </Form.Item>
+              
+              <Form.Item label="Temperature" name="temperature">
+                <Slider 
+                  v-model:value="formState.model_settings.temperature" 
+                  :min="0" 
+                  :max="2" 
+                  :step="0.1"
+                />
+                <div class="slider-value">{{ formState.model_settings.temperature }}</div>
+              </Form.Item>
+              
+              <Form.Item label="Max Tokens" name="max_tokens">
+                <Slider 
+                  v-model:value="formState.model_settings.max_tokens" 
+                  :min="500" 
+                  :max="8000" 
+                  :step="100"
+                />
+                <div class="slider-value">{{ formState.model_settings.max_tokens }}</div>
+              </Form.Item>
+              
+              <Form.Item label="工具能力" name="tools_enabled">
+                <div class="tools-config">
+                  <div class="tool-item">
+                    <Checkbox 
+                      v-model:checked="formState.tools_enabled.tavily.enabled"
+                    >
+                      启用网络搜索能力
+                    </Checkbox>
+                    <Tooltip title="允许AI通过互联网搜索获取最新信息">
+                      <QuestionCircleOutlined />
+                    </Tooltip>
+                  </div>
+                </div>
+              </Form.Item>
+            </div>
+          </div>
+        </div>
+        
+        <div class="form-actions">
+          <Button @click="goBack">取消</Button>
+          <Button type="primary" @click="submitForm">{{ isEditMode ? '更新' : '创建' }}</Button>
+        </div>
+      </Form>
+    </div>
+    
+    <div class="agent-preview">
+      <h3>{{ isEditMode ? 'Agent预览' : 'AI助手预览' }}</h3>
+      <div class="preview-card">
+        <div class="preview-header">
+          <div class="preview-avatar">
+            <img :src="imageUrl || 'https://via.placeholder.com/150'" alt="Agent Avatar" />
+          </div>
+          <div class="preview-name">{{ formState.name || (isEditMode ? '编辑中的Agent' : '新建Agent') }}</div>
+          <div v-if="isEditMode" class="preview-badge">编辑中</div>
+        </div>
+        <div class="preview-content">
+          <div class="preview-model">{{ formState.model }}</div>
+          <div class="preview-prompt">{{ formState.system_prompt.substring(0, 100) }}{{ formState.system_prompt.length > 100 ? '...' : '' }}</div>
+          <div v-if="isEditMode" class="preview-id">ID: {{ agentId }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.create-agent-page {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 24px;
+  position: relative;
+}
+
+.back-button {
+  display: flex;
+  align-items: center;
+  margin-right: 16px;
+  font-size: 14px;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.page-content {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.create-agent-form {
+  width: 100%;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+}
+
+.form-left, .form-right {
+  display: flex;
+  flex-direction: column;
+}
+
+.avatar-uploader {
+  display: flex;
+  justify-content: center;
+}
+
+.avatar-preview {
+  width: 104px;
+  height: 104px;
+  overflow: hidden;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.upload-button {
+  width: 104px;
+  height: 104px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #d9d9d9;
+  border-radius: 50%;
+  background: #fafafa;
+  cursor: pointer;
+}
+
+.advanced-settings {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f9f9f9;
+  border-radius: 8px;
+}
+
+.advanced-settings h3 {
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-value {
+  text-align: right;
+  color: #666;
+  font-size: 14px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 32px;
+}
+
+.public-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tools-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tool-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.model-option {
+  padding: 8px 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.model-option:hover {
+  border-color: #1890ff;
+  color: #1890ff;
+}
+
+.model-selected {
+  border-color: #1890ff;
+  color: #1890ff;
+  background-color: rgba(24, 144, 255, 0.05);
+}
+
+.agent-preview {
+  margin-top: 40px;
+}
+
+.agent-preview h3 {
+  margin-bottom: 16px;
+  font-size: 16px;
+}
+
+.preview-card {
+  border: 1px solid #e8e8e8;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 320px;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.preview-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.preview-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.preview-name {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.preview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-model {
+  font-size: 12px;
+  color: #666;
+}
+
+.preview-prompt {
+  font-size: 14px;
+  color: #333;
+  line-height: 1.5;
+}
+
+.preview-badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  background-color: #1890ff;
+  color: white;
+  border-radius: 10px;
+  margin-left: 8px;
+}
+
+.preview-id {
+  font-size: 12px;
+  color: #999;
+  margin-top: 8px;
+}
+
+@media (max-width: 992px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  
+  .preview-card {
+    max-width: 100%;
+  }
+}
+</style> 

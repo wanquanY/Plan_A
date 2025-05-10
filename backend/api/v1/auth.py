@@ -74,7 +74,7 @@ async def create_user(
         raise BusinessException(msg=str(e), status_code=status.HTTP_400_BAD_REQUEST)
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login")
 async def login_for_access_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -99,4 +99,37 @@ async def login_for_access_token(
     
     auth_logger.info(f"用户登录成功: {user.username}")
     
-    return {"access_token": access_token, "token_type": "bearer"} 
+    # 将UTC时间转换为北京时间（UTC+8）
+    def to_beijing_time(dt):
+        if dt:
+            # 确保datetime有时区信息
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            # 转换为北京时间
+            beijing_tz = timezone(timedelta(hours=8))
+            return dt.astimezone(beijing_tz)
+        return None
+    
+    # 转换用户信息为可序列化的字典
+    user_dict = {
+        "id": user.id,
+        "username": user.username,
+        "phone": user.phone,
+        "avatar_url": user.avatar_url,
+        "is_active": user.is_active,
+        "created_at": to_beijing_time(user.created_at).isoformat() if user.created_at else None,
+        "updated_at": to_beijing_time(user.updated_at).isoformat() if user.updated_at else None
+    }
+    
+    # 返回响应数据
+    response_data = {
+        "user": user_dict,
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
+    
+    return SuccessResponse(
+        data=response_data,
+        msg="登录成功",
+        request_id=getattr(request.state, "request_id", None)
+    ) 

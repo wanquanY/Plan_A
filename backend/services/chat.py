@@ -12,6 +12,7 @@ from backend.utils.logging import api_logger
 from backend.crud.chat import create_chat, get_chat, add_message, get_chat_messages, update_chat_agent
 from backend.crud.agent import agent as agent_crud
 from backend.services.memory import memory_service
+from backend.services.tools import tools_service
 
 # 获取配置并进行调整
 api_key = settings.OPENAI_API_KEY
@@ -40,6 +41,133 @@ async_client = AsyncOpenAI(
 
 # 打印客户端信息
 api_logger.info(f"OpenAI客户端初始化完成 - 同步客户端: {client.base_url}, 异步客户端: {async_client.base_url}")
+
+
+# 定义支持的工具配置
+AVAILABLE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "tavily_search",
+            "description": "通过Tavily搜索引擎查询信息",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "搜索查询关键词"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "返回的最大结果数量",
+                        "default": 10
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "tavily_extract",
+            "description": "从指定URL提取网页内容",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "urls": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "需要提取内容的URL列表"
+                    },
+                    "include_images": {
+                        "type": "boolean",
+                        "description": "是否包含图片",
+                        "default": False
+                    }
+                },
+                "required": ["urls"]
+            }
+        }
+    }
+]
+
+
+# 获取Agent配置的工具列表
+def get_agent_tools(agent):
+    """根据Agent的配置返回可用工具列表"""
+    if not agent or not agent.tools_enabled:
+        return []
+    
+    tools = []
+    
+    # 检查并添加Tavily搜索工具
+    if "tavily" in agent.tools_enabled and agent.tools_enabled["tavily"].get("enabled", False):
+        tavily_config = agent.tools_enabled["tavily"]
+        for tool in AVAILABLE_TOOLS:
+            if tool["function"]["name"].startswith("tavily_"):
+                tools.append(tool)
+    
+    api_logger.info(f"为Agent {agent.name} 配置了 {len(tools)} 个工具")
+    return tools
+
+
+# 处理工具调用请求
+async def handle_tool_calls(tool_calls, agent):
+    """处理工具调用请求并返回结果"""
+    results = []
+    
+    for tool_call in tool_calls:
+        tool_call_id = tool_call.id
+        function_name = tool_call.function.name
+        function_args = json.loads(tool_call.function.arguments)
+        
+        api_logger.info(f"处理工具调用: {function_name}, 参数: {function_args}")
+        
+        # 获取API密钥
+        api_key = None
+        if agent and agent.tools_enabled and "tavily" in agent.tools_enabled:
+            api_key = agent.tools_enabled["tavily"].get("api_key")
+        
+        # 根据函数名执行相应的工具
+        if function_name == "tavily_search":
+            search_result = tools_service.execute_tool(
+                tool_name="tavily",
+                action="search",
+                params={
+                    "query": function_args.get("query"),
+                    "max_results": function_args.get("max_results", 10)
+                },
+                config={"api_key": api_key} if api_key else None
+            )
+            results.append({
+                "tool_call_id": tool_call_id,
+                "role": "tool",
+                "name": function_name,
+                "content": json.dumps(search_result, ensure_ascii=False)
+            })
+            
+        elif function_name == "tavily_extract":
+            extract_result = tools_service.execute_tool(
+                tool_name="tavily",
+                action="extract",
+                params={
+                    "urls": function_args.get("urls"),
+                    "include_images": function_args.get("include_images", False)
+                },
+                config={"api_key": api_key} if api_key else None
+            )
+            results.append({
+                "tool_call_id": tool_call_id,
+                "role": "tool",
+                "name": function_name,
+                "content": json.dumps(extract_result, ensure_ascii=False)
+            })
+    
+    api_logger.info(f"完成 {len(results)} 个工具调用")
+    return results
 
 
 async def generate_chat_response(
@@ -188,17 +316,31 @@ async def generate_chat_response(
             
             api_logger.info(f"使用Agent模型设置: model={use_model}, temperature={temperature}, top_p={top_p}, max_tokens={max_tokens}")
         
+        # 获取工具配置
+        tools = get_agent_tools(current_agent) if current_agent else []
+        has_tools = len(tools) > 0
+        api_logger.info(f"当前聊天启用工具: {has_tools}, 工具数量: {len(tools)}")
+        
         # 调用API - 尝试直接使用同步客户端
         try:
             api_logger.info(f"使用同步客户端调用API - URL: {client.base_url}")
-            response = client.chat.completions.create(
-                model=use_model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                stream=False
-            )
+            
+            # 准备API调用参数
+            api_params = {
+                "model": use_model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "stream": False
+            }
+            
+            # 如果有工具，添加工具配置
+            if has_tools:
+                api_params["tools"] = tools
+            
+            # 调用API
+            response = client.chat.completions.create(**api_params)
             
             api_logger.debug(f"API原始响应类型: {type(response)}")
             # 记录原始响应内容
@@ -208,16 +350,67 @@ async def generate_chat_response(
             if isinstance(response, str):
                 api_logger.error(f"API返回了字符串而不是对象: {response}")
                 raise ValueError(f"API返回了错误格式: {response}")
-                
-            # 提取并返回响应
+            
+            # 检查是否有工具调用
             assistant_message = response.choices[0].message
-            token_usage = response.usage
-            assistant_content = assistant_message.content
+            tool_calls = assistant_message.tool_calls if hasattr(assistant_message, 'tool_calls') else None
             
-            # 将助手消息添加到记忆中
-            memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
-            
-            api_logger.info(f"OpenAI API调用成功, 生成文本长度: {len(assistant_content)}")
+            # 如果有工具调用
+            if tool_calls:
+                api_logger.info(f"检测到工具调用请求: {len(tool_calls)} 个工具调用")
+                
+                # 处理工具调用
+                tool_results = await handle_tool_calls(tool_calls, current_agent)
+                
+                # 将工具调用和结果添加到消息列表
+                messages.append({
+                    "role": "assistant",
+                    "content": assistant_message.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        } for tc in tool_calls
+                    ]
+                })
+                
+                # 添加工具结果
+                for tool_result in tool_results:
+                    messages.append(tool_result)
+                
+                api_logger.info(f"使用工具结果调用第二次API")
+                
+                # 第二次调用API，包含工具结果
+                second_response = client.chat.completions.create(
+                    model=use_model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    stream=False
+                )
+                
+                # 提取最终响应
+                token_usage = second_response.usage
+                assistant_content = second_response.choices[0].message.content
+                
+                # 将最终的助手消息添加到记忆中
+                memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
+                
+                api_logger.info(f"工具调用完成，最终响应长度: {len(assistant_content)}")
+            else:
+                # 常规响应处理
+                token_usage = response.usage
+                assistant_content = assistant_message.content
+                
+                # 将助手消息添加到记忆中
+                memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
+                
+                api_logger.info(f"OpenAI API调用成功, 生成文本长度: {len(assistant_content)}")
             
             # 如果提供了数据库会话，保存AI回复
             if db and user_id and conversation_id:

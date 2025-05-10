@@ -142,10 +142,91 @@ export const processUserInput = (content: string): string => {
   return processedContent;
 };
 
-// 处理渲染后的HTML内容，将特殊容器替换为组件
+// 流式输出处理服务中使用的状态控制变量
+let markmapRenderingInProgress = false;
+
+// 安全调用renderMarkMaps函数，防止重复渲染
+const safeRenderMarkMaps = () => {
+  // 如果已经有渲染正在进行中，跳过
+  if (markmapRenderingInProgress) {
+    console.log('已有MarkMap渲染进行中，跳过重复渲染');
+    return Promise.resolve();
+  }
+  
+  // 设置渲染中状态
+  markmapRenderingInProgress = true;
+  
+  // 预处理：标记已包含思维导图的容器
+  const agentResponseElements = document.querySelectorAll('.agent-response-paragraph');
+  if (agentResponseElements.length > 0) {
+    agentResponseElements.forEach(el => {
+      if (el.querySelector('.markmap-component-wrapper')) {
+        el.setAttribute('data-markmap-rendered', 'true');
+        el.setAttribute('data-contains-markmap', 'true');
+        console.log('标记已包含思维导图的代理响应段落');
+      }
+    });
+  }
+  
+  // 导入并调用渲染函数
+  return import('./renderService')
+    .then(({ renderMarkMaps }) => {
+      return renderMarkMaps();
+    })
+    .finally(() => {
+      // 无论成功或失败，都在一定延迟后重置状态
+      setTimeout(() => {
+        markmapRenderingInProgress = false;
+      }, 500);
+    });
+};
+
+/**
+ * 处理渲染后的HTML内容
+ * @param htmlContent HTML字符串
+ * @param container 容器元素
+ * @param isStreamEnd 是否是流式输出结束
+ */
 export const processRenderedHtml = async (htmlContent: string, container: HTMLElement, isStreamEnd = false) => {
   try {
-    // 处理普通代码块
+    console.log('处理渲染HTML内容，isStreamEnd =', isStreamEnd);
+    
+    // 预处理：直接识别并标记原始思维导图内容，但不渲染
+    const potentialMarkdownElements = container.querySelectorAll('pre > code.language-markdown, pre > code.language-md, .markmap-content, p');
+    potentialMarkdownElements.forEach(el => {
+      const content = el.textContent || '';
+      // 检查是否是思维导图内容
+      if (isMindMapContent(content)) {
+        console.log('预处理：标记原始思维导图内容，但暂不渲染');
+        el.setAttribute('data-contains-markmap-content', 'true');
+        el.classList.add('original-markmap-content');
+        
+        // 标记父元素
+        const parentPre = el.closest('pre');
+        if (parentPre) {
+          parentPre.classList.add('markmap-processed');
+          parentPre.setAttribute('data-markmap-processed', 'true');
+          
+          // 在流式输出结束前不隐藏原始内容
+          if (isStreamEnd) {
+            (parentPre as HTMLElement).style.display = 'none';
+          }
+        }
+        
+        // 标记最近的段落容器
+        const agentResponseParagraph = el.closest('.agent-response-paragraph');
+        if (agentResponseParagraph) {
+          agentResponseParagraph.setAttribute('data-contains-markmap-content', 'true');
+        }
+        
+        // 仅在流式输出结束时隐藏元素
+        if (isStreamEnd && el instanceof HTMLElement) {
+          el.style.display = 'none';
+        }
+      }
+    });
+    
+    // 处理普通代码块（可以在流式输出过程中处理）
     const codeContainers = container.querySelectorAll('.code-container');
     for (const codeContainer of codeContainers) {
       const code = decodeURIComponent(codeContainer.getAttribute('data-code') || '');
@@ -172,7 +253,7 @@ export const processRenderedHtml = async (htmlContent: string, container: HTMLEl
       codeBlockApp.mount(codeBlockEl);
     }
     
-    // 获取页面上的所有代码块元素
+    // 获取页面上的所有代码块元素，仅进行标记，不实际渲染
     const allCodeBlocks = container.querySelectorAll('pre code');
     for (const codeBlock of allCodeBlocks) {
       // 提取语言
@@ -180,7 +261,7 @@ export const processRenderedHtml = async (htmlContent: string, container: HTMLEl
       const langClass = classNames.find(cls => cls.startsWith('language-'));
       const language = langClass ? langClass.replace('language-', '') : 'text';
       
-      // 如果是mermaid代码块
+      // 如果是mermaid代码块，仅标记不渲染
       if (language === 'mermaid') {
         const code = codeBlock.textContent || '';
         const preElement = codeBlock.closest('pre');
@@ -189,38 +270,43 @@ export const processRenderedHtml = async (htmlContent: string, container: HTMLEl
         // 标记为已处理，防止重复处理
         preElement.setAttribute('data-mermaid-processed', 'true');
         
-        // 创建一个新的mermaid渲染容器
-        const mermaidContainer = document.createElement('div');
-        mermaidContainer.className = 'mermaid-container';
-        
-        // 创建唯一ID的mermaid元素
-        const mermaidEl = document.createElement('div');
-        const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-        mermaidEl.id = mermaidId;
-        mermaidEl.className = 'mermaid'; // 不再添加flow-processed标记
-        mermaidEl.textContent = code; // 直接设置mermaid内容
-        mermaidEl.setAttribute('data-original-content', code); // 保存原始内容
-        
-        // 添加复制按钮
-        const copyButton = document.createElement('button');
-        copyButton.className = 'copy-button';
-        copyButton.textContent = '复制';
-        copyButton.onclick = () => {
-          navigator.clipboard.writeText(code);
-          copyButton.textContent = '已复制';
-          setTimeout(() => {
-            copyButton.textContent = '复制';
-          }, 2000);
-        };
-        
-        // 组装DOM
-        mermaidContainer.appendChild(mermaidEl);
-        mermaidContainer.appendChild(copyButton);
-        
-        // 替换原始pre元素
-        preElement.replaceWith(mermaidContainer);
-        
-        console.log(`创建新的mermaid元素: ${mermaidId}`);
+        // 仅在流式输出结束时渲染
+        if (isStreamEnd) {
+          // 创建一个新的mermaid渲染容器
+          const mermaidContainer = document.createElement('div');
+          mermaidContainer.className = 'mermaid-container';
+          
+          // 创建唯一ID的mermaid元素
+          const mermaidEl = document.createElement('div');
+          const mermaidId = `mermaid-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+          mermaidEl.id = mermaidId;
+          mermaidEl.className = 'mermaid'; // 不再添加flow-processed标记
+          mermaidEl.textContent = code; // 直接设置mermaid内容
+          mermaidEl.setAttribute('data-original-content', code); // 保存原始内容
+          
+          // 添加复制按钮
+          const copyButton = document.createElement('button');
+          copyButton.className = 'copy-button';
+          copyButton.textContent = '复制';
+          copyButton.onclick = () => {
+            navigator.clipboard.writeText(code);
+            copyButton.textContent = '已复制';
+            setTimeout(() => {
+              copyButton.textContent = '复制';
+            }, 2000);
+          };
+          
+          // 组装DOM
+          mermaidContainer.appendChild(mermaidEl);
+          mermaidContainer.appendChild(copyButton);
+          
+          // 替换原始pre元素
+          preElement.replaceWith(mermaidContainer);
+          
+          console.log(`创建新的mermaid元素: ${mermaidId}`);
+        } else {
+          console.log('流式输出中，标记mermaid代码块但暂不渲染');
+        }
       }
       // 如果是markdown代码块（可能是思维导图）
       else if (language === 'markdown' || language === 'md') {
@@ -240,22 +326,6 @@ export const processRenderedHtml = async (htmlContent: string, container: HTMLEl
       }
     }
     
-    // 仅在流式输出结束时才渲染mermaid图表和思维导图
-    if (isStreamEnd) {
-      // 在流式输出结束时，立即尝试渲染mermaid图表
-      try {
-        console.log('流式输出结束，渲染mermaid图表和思维导图');
-        import('./renderService').then(({ renderMermaidDynamically, renderMarkMaps }) => {
-          renderMermaidDynamically();
-          renderMarkMaps();
-        });
-      } catch (error) {
-        console.error('图表渲染失败:', error);
-      }
-    } else {
-      console.log('流式输出中，标记图表等待最终渲染');
-    }
-    
     // 查找可能的思维导图内容 (基于内容格式判断)
     const paragraphs = container.querySelectorAll('p:not([data-markmap-processed])');
     for (const p of paragraphs) {
@@ -269,6 +339,28 @@ export const processRenderedHtml = async (htmlContent: string, container: HTMLEl
         // 流式输出过程中不直接创建组件，只添加标记
         p.setAttribute('data-markmap-content', encodeURIComponent(content));
       }
+    }
+    
+    // 仅在流式输出结束时才渲染mermaid图表和思维导图
+    if (isStreamEnd) {
+      console.log('流式输出结束，开始渲染图表和思维导图');
+      // 在流式输出结束时，立即尝试渲染mermaid图表
+      try {
+        console.log('流式输出结束，渲染mermaid图表和思维导图');
+        import('./renderService').then(({ renderMermaidDynamically }) => {
+          // 先渲染mermaid图表
+          renderMermaidDynamically();
+          // 然后渲染思维导图
+          setTimeout(() => {
+            console.log('延迟渲染思维导图，确保DOM更新完成');
+            safeRenderMarkMaps();
+          }, 300);
+        });
+      } catch (error) {
+        console.error('图表渲染失败:', error);
+      }
+    } else {
+      console.log('流式输出中，只进行标记，暂不渲染图表和思维导图');
     }
   } catch (error) {
     console.error('处理渲染HTML时出错:', error);
@@ -497,9 +589,9 @@ export const forceRenderDiagrams = () => {
   
   // 直接调用渲染方法
   console.log('调用渲染方法');
-  import('./renderService').then(({ renderMermaidDynamically, renderMarkMaps }) => {
+  import('./renderService').then(({ renderMermaidDynamically }) => {
     renderMermaidDynamically();
-    renderMarkMaps();
+    safeRenderMarkMaps();
   });
   
   // 为确保渲染完成，延迟一段时间后再次尝试渲染
@@ -546,9 +638,7 @@ export const forceRenderDiagrams = () => {
     }
     
     // 再次尝试渲染思维导图
-    import('./renderService').then(({ renderMarkMaps }) => {
-      renderMarkMaps();
-    });
+    safeRenderMarkMaps();
   }, 300);
 };
 

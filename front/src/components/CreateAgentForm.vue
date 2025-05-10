@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
-import { Form, Input, Upload, Button, Slider, Switch, message } from 'ant-design-vue';
-import { PlusOutlined, LoadingOutlined } from '@ant-design/icons-vue';
+import { ref, reactive, onMounted } from 'vue';
+import { Form, Input, Upload, Button, Slider, Switch, message, Collapse, Checkbox, Tooltip } from 'ant-design-vue';
+import { PlusOutlined, LoadingOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue';
 import type { UploadChangeParam } from 'ant-design-vue';
 import agentService from '@/services/agent';
+import type { ToolConfig } from '@/services/agent';
 
 const props = defineProps({
   editMode: {
@@ -40,6 +41,13 @@ const formState = reactive({
     frequency_penalty: 0,
     presence_penalty: 0,
     max_tokens: 6400
+  },
+  tools_enabled: {
+    tavily: {
+      enabled: false,
+      name: 'tavily',
+      api_key: '',
+    }
   }
 });
 
@@ -94,16 +102,27 @@ const handleChange = (info: UploadChangeParam) => {
 const submitForm = () => {
   formRef.value.validate().then(async () => {
     try {
-      const result = await agentService.createAgent(formState);
-      if (result) {
-        message.success('Agent创建成功');
-        emit('success');
+      let result;
+      if (props.editMode && props.agentData.id) {
+        result = await agentService.updateAgent(props.agentData.id, formState);
+        if (result) {
+          message.success('Agent更新成功');
+          emit('success');
+        } else {
+          message.error('Agent更新失败');
+        }
       } else {
-        message.error('Agent创建失败');
+        result = await agentService.createAgent(formState);
+        if (result) {
+          message.success('Agent创建成功');
+          emit('success');
+        } else {
+          message.error('Agent创建失败');
+        }
       }
     } catch (error) {
-      console.error('创建Agent失败:', error);
-      message.error('创建Agent失败');
+      console.error(props.editMode ? '更新Agent失败:' : '创建Agent失败:', error);
+      message.error(props.editMode ? '更新Agent失败' : '创建Agent失败');
     }
   }).catch(error => {
     console.log('表单验证失败:', error);
@@ -114,6 +133,37 @@ const submitForm = () => {
 const cancelForm = () => {
   emit('cancel');
 };
+
+// 编辑模式下加载现有数据
+onMounted(() => {
+  if (props.editMode && props.agentData) {
+    const agent = props.agentData;
+    formState.name = agent.name || '';
+    formState.avatar_url = agent.avatar_url || '';
+    formState.system_prompt = agent.system_prompt || '你是一个有用的助手';
+    formState.model = agent.model || 'claude-3-7-sonnet-20250219';
+    formState.max_memory = agent.max_memory || 100;
+    formState.is_public = agent.is_public !== undefined ? agent.is_public : true;
+    
+    if (agent.model_settings) {
+      formState.model_settings = {
+        temperature: agent.model_settings.temperature || 0.7,
+        top_p: agent.model_settings.top_p || 1,
+        frequency_penalty: agent.model_settings.frequency_penalty || 0,
+        presence_penalty: agent.model_settings.presence_penalty || 0,
+        max_tokens: agent.model_settings.max_tokens || 6400
+      };
+    }
+    
+    if (agent.tools_enabled) {
+      formState.tools_enabled = agent.tools_enabled;
+    }
+    
+    if (agent.avatar_url) {
+      imageUrl.value = agent.avatar_url;
+    }
+  }
+});
 </script>
 
 <template>
@@ -200,9 +250,36 @@ const cancelForm = () => {
       <Switch v-model:checked="formState.is_public" />
     </Form.Item>
     
+    <!-- 工具配置部分 -->
+    <Collapse class="tool-settings-collapse">
+      <Collapse.Panel key="tools" header="工具配置">
+        <div class="tool-section">
+          <div class="tool-header">
+            <Checkbox v-model:checked="formState.tools_enabled.tavily.enabled">
+              启用Tavily搜索工具
+            </Checkbox>
+            <Tooltip title="Tavily是一个能够进行搜索和网页内容解析的工具，让AI可以获取最新的网络信息">
+              <QuestionCircleOutlined class="help-icon" />
+            </Tooltip>
+          </div>
+          
+          <div class="tool-config" v-if="formState.tools_enabled.tavily.enabled">
+            <Form.Item label="API密钥" name="tavily_api_key">
+              <Input 
+                v-model:value="formState.tools_enabled.tavily.api_key" 
+                placeholder="请输入Tavily API密钥"
+                type="password"
+              />
+              <div class="api-key-hint">前往 <a href="https://tavily.com" target="_blank">Tavily官网</a> 获取API密钥</div>
+            </Form.Item>
+          </div>
+        </div>
+      </Collapse.Panel>
+    </Collapse>
+    
     <div class="form-actions">
       <Button @click="cancelForm">取消</Button>
-      <Button type="primary" @click="submitForm">确认</Button>
+      <Button type="primary" @click="submitForm">{{ props.editMode ? '更新' : '创建' }}</Button>
     </div>
   </Form>
 </template>
@@ -255,5 +332,39 @@ const cancelForm = () => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+
+.tool-settings-collapse {
+  margin-bottom: 20px;
+}
+
+.tool-section {
+  padding: 10px 0;
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.help-icon {
+  margin-left: 8px;
+  color: #999;
+  cursor: pointer;
+}
+
+.help-icon:hover {
+  color: #1890ff;
+}
+
+.tool-config {
+  padding-left: 20px;
+}
+
+.api-key-hint {
+  font-size: 12px;
+  color: #666;
+  margin-top: 4px;
 }
 </style> 

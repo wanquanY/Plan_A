@@ -25,6 +25,7 @@ def agent_to_dict(db_agent) -> Dict[str, Any]:
         "model": db_agent.model,
         "max_memory": db_agent.max_memory,
         "model_settings": db_agent.model_settings,
+        "tools_enabled": db_agent.tools_enabled,
         "is_public": db_agent.is_public,
         "created_at": db_agent.created_at.isoformat() if db_agent.created_at else None,
         "updated_at": db_agent.updated_at.isoformat() if db_agent.updated_at else None

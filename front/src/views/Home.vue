@@ -231,30 +231,24 @@ const fetchSessionDetail = async (sessionId) => {
         editorContent.value = messagesHtml;
         editorTitle.value = sessionData.title || '未命名笔记';
         
-        // 在DOM更新后处理代码块和图表
+        // 在DOM更新后处理代码块和图表，但避免在此时渲染思维导图
         nextTick(() => {
-          // 处理代码块和图表
+          // 首次加载时，先不渲染思维导图，等待DOM完全加载
+          renderContentComponents(false);
+          
+          // 在页面完全加载后，再强制渲染思维导图
           setTimeout(() => {
-            const editorContainer = document.querySelector('.editor-content');
-            if (!editorContainer) return;
-            
-            // 导入渲染服务
-            import('../services/renderService').then(({ renderCodeBlocks, renderMermaidDynamically, renderMarkMaps }) => {
-              // 处理普通代码块，但保留mermaid代码块和思维导图代码块
-              renderCodeBlocks(false).then(() => {
-                // 处理mermaid图表
-                console.log('处理历史会话中的mermaid图表');
-                
-                // 渲染mermaid图表
-                renderMermaidDynamically();
-                
-                // 渲染思维导图
-                renderMarkMaps();
-                
-                console.log('已处理会话历史记录中的所有图表和思维导图');
-              });
-            });
-          }, 800);
+            if (document.readyState === 'complete') {
+              console.log('页面完全加载，强制渲染思维导图');
+              renderContentComponents(true);
+            } else {
+              // 如果页面尚未完全加载，等待加载完成再渲染
+              window.addEventListener('load', () => {
+                console.log('页面加载完成，开始完整渲染');
+                renderContentComponents(true);
+              }, { once: true });
+            }
+          }, 1500);
         });
       }
     } else {
@@ -269,56 +263,76 @@ const fetchSessionDetail = async (sessionId) => {
 // 获取笔记详情
 const fetchNoteDetail = async (noteId: number) => {
   try {
-    const noteData = await noteService.getNoteDetail(noteId);
-    if (noteData) {
-      // 确保设置当前笔记ID
-      currentNoteId.value = noteId;
-      console.log(`从笔记详情设置笔记ID: ${noteId}`);
-      
-      // 检查笔记是否已关联会话，只设置会话ID但不加载会话内容
-      if (noteData.session_id) {
-        currentSessionId.value = noteData.session_id;
-        console.log(`笔记已关联会话ID: ${noteData.session_id}，但优先显示笔记内容`);
-      } else {
-        // 如果笔记没有关联会话，确保清空currentSessionId
-        currentSessionId.value = null;
-        console.log('笔记未关联会话，清空currentSessionId');
-      }
-      
-      // 始终加载笔记内容
-      editorContent.value = noteData.content || '<p></p>';
-      editorTitle.value = noteData.title || '未命名笔记';
-      lastSavedContent.value = noteData.content || '';
-      
-      // 如果笔记标题为空，说明是新创建的笔记，需要从用户输入中获取标题
-      if (!noteData.title || noteData.title.trim() === '') {
-        console.log('检测到新创建的笔记，将从用户输入的第一行设置标题');
-        firstUserInputDetected.value = false; // 设置为false，等待用户输入
-      } else {
-        firstUserInputDetected.value = true; // 已有标题的笔记不需要检测第一行
-      }
-      
-      // 在DOM更新后处理代码块和图表
-      nextTick(() => {
-        setTimeout(() => {
-          const editorContainer = document.querySelector('.editor-content');
-          if (!editorContainer) return;
-          
-          // 导入渲染服务
-          import('../services/renderService').then(({ renderCodeBlocks, renderMermaidDynamically, renderMarkMaps }) => {
-            renderCodeBlocks(false).then(() => {
-              console.log('处理笔记中的mermaid图表');
-              renderMermaidDynamically();
-              renderMarkMaps();
-              console.log('已处理笔记中的所有图表和思维导图');
-            });
-          });
-        }, 800);
-      });
+    console.log(`从笔记详情设置笔记ID: ${noteId}`);
+    currentNoteId.value = noteId;
+    
+    // 检查笔记关联的会话
+    if (route.query.sessionId) {
+      currentSessionId.value = Number(route.query.sessionId);
+    } else {
+      // 如果URL中没有sessionId，则清空currentSessionId
+      console.log('笔记未关联会话，清空currentSessionId');
+      currentSessionId.value = null;
     }
+    
+    // 加载笔记内容
+    const noteRes = await noteService.getNoteDetail(noteId);
+    const note = noteRes.data;
+    
+    // 判断是否是新创建的笔记
+    const isNewNote = note.content === null || note.content === '';
+    
+    // 设置编辑器内容和标题
+    editorContent.value = isNewNote ? '# ' : note.content;
+    editorTitle.value = note.title || '无标题笔记';
+    
+    // 在DOM更新后立即渲染组件
+    nextTick(async () => {
+      try {
+        // 先立即尝试渲染一次
+        console.log('立即强制渲染思维导图，不等待DOM完全加载');
+        
+        // 导入需要的渲染服务
+        const { renderContentComponents, cleanupMarkmapElements } = await import('../services/renderService');
+        
+        // 先清理所有已存在的思维导图元素
+        cleanupMarkmapElements();
+        
+        // 立即强制渲染一次
+        renderContentComponents(true);
+        
+        // 设置短延迟后再次尝试渲染，确保内容完全加载
+        setTimeout(() => {
+          console.log('设置短延迟再次尝试渲染思维导图');
+          renderContentComponents(true);
+        }, 300);
+        
+        // 如果检测到特殊内容，给予更长的时间再尝试一次
+        setTimeout(() => {
+          if (note.content.includes('```markdown') || note.content.includes('# ')) {
+            console.log('检测到可能包含思维导图的内容，再次尝试渲染');
+            renderContentComponents(true);
+          }
+        }, 800);
+      } catch (error) {
+        console.error('思维导图渲染失败:', error);
+      }
+    });
+    
+    // 保存最近打开的笔记ID到localStorage
+    localStorage.setItem('lastNoteId', noteId.toString());
+    
+    saved.value = true;
   } catch (error) {
     console.error('获取笔记详情失败:', error);
-    message.error('获取笔记详情失败，请稍后重试');
+    // 错误处理
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      // 处理笔记不存在的情况
+      message.error('笔记不存在');
+      router.push('/');
+    } else {
+      message.error('获取笔记详情失败');
+    }
   }
 };
 
@@ -516,6 +530,159 @@ const handleLoadMore = () => {
   if (nextPage <= pagination.pages) {
     fetchSessions(nextPage, true);
   }
+};
+
+// DOM缓存对象，避免重复查询选择器
+const domCache = {
+  renderingInProgress: false,
+  renderTimeout: null as number | null,
+  // 跟踪已处理的元素，避免重复渲染
+  processedElements: new Set<string>()
+};
+
+// 封装渲染方法，添加防抖和防重渲染逻辑
+const renderContentComponents = (forceRender = true) => {
+  // 如果已经有渲染进行中，清除之前的定时器
+  if (domCache.renderTimeout) {
+    clearTimeout(domCache.renderTimeout);
+  }
+  
+  // 避免短时间内多次渲染
+  if (domCache.renderingInProgress) {
+    console.log('已有渲染任务进行中，跳过重复渲染');
+    return;
+  }
+  
+  // 设置渲染中状态
+  domCache.renderingInProgress = true;
+  
+  // 在开始渲染前记录是否已加载完毕
+  const isDocumentLoaded = document.readyState === 'complete';
+  console.log(`开始准备渲染，document.readyState = ${document.readyState}, forceRender = ${forceRender}`);
+  
+  // 清空已处理元素的集合
+  domCache.processedElements.clear();
+  
+  // 添加延时执行
+  domCache.renderTimeout = setTimeout(async () => {
+    try {
+      const editorContainer = document.querySelector('.editor-content');
+      if (!editorContainer) {
+        console.log('未找到编辑器容器，跳过渲染');
+        return;
+      }
+      
+      console.log(`开始处理渲染，forceRender = ${forceRender}, isDocumentLoaded = ${isDocumentLoaded}`);
+      
+      // 导入渲染服务
+      const { renderCodeBlocks, renderMermaidDynamically, renderMarkMaps, setupMermaidAutoRender, cleanupMarkmapElements } = await import('../services/renderService');
+      
+      // 在渲染前彻底清理思维导图元素
+      cleanupMarkmapElements();
+      
+      // 创建唯一标识函数，用于跟踪已处理的元素
+      const createElementId = (el: Element, content: string): string => {
+        // 使用内容的哈希和元素位置作为唯一标识
+        const contentHash = content.substring(0, 50); // 取内容前50个字符
+        const parent = el.closest('.agent-response-paragraph');
+        const siblings = Array.from(parent?.children || []);
+        const index = siblings.indexOf(el as HTMLElement);
+        return `${contentHash}_${index}`;
+      };
+      
+      // 预处理：直接检测并标记所有可能包含思维导图内容的元素
+      const potentialMarkdownElements = document.querySelectorAll('pre > code.language-markdown, pre > code.language-md, .markmap-content, p');
+      potentialMarkdownElements.forEach(el => {
+        const content = el.textContent || '';
+        // 使用markdownService中的isMindMapContent函数检查
+        if (isMindMapContent(content)) {
+          // 创建元素的唯一标识
+          const elementId = createElementId(el, content);
+          
+          // 如果已处理过该元素，跳过
+          if (domCache.processedElements.has(elementId)) {
+            console.log('跳过已处理过的思维导图元素');
+            return;
+          }
+          
+          // 标记为已处理
+          domCache.processedElements.add(elementId);
+          
+          console.log('预处理：找到思维导图内容元素，添加标记');
+          el.setAttribute('data-contains-markmap-content', 'true');
+          el.classList.add('original-markmap-content');
+          el.setAttribute('data-element-id', elementId); // 添加唯一标识
+          
+          // 标记父元素
+          const parentPre = el.closest('pre');
+          if (parentPre) {
+            parentPre.classList.add('markmap-to-process');
+            parentPre.setAttribute('data-element-id', elementId); // 添加唯一标识
+            
+            // 只有在强制渲染时才隐藏原始内容
+            if (forceRender && isDocumentLoaded) {
+              parentPre.style.display = 'none';
+            }
+          }
+          
+          // 找到最近的agent-response-paragraph元素
+          const agentResponseParagraph = el.closest('.agent-response-paragraph');
+          if (agentResponseParagraph) {
+            agentResponseParagraph.setAttribute('data-contains-markmap', 'true');
+          }
+          
+          // 只有在强制渲染时才隐藏原始内容
+          if (forceRender && isDocumentLoaded && el instanceof HTMLElement) {
+            el.style.display = 'none';
+          }
+        }
+      });
+      
+      // 传递已处理元素集合到全局
+      (window as any)['processedMarkMapElements'] = Array.from(domCache.processedElements);
+      
+      // 处理代码块 - 文档加载完成且有强制渲染标记时才处理思维导图
+      if (forceRender && isDocumentLoaded) {
+        console.log('执行完整渲染，包括思维导图');
+        await renderCodeBlocks(true);
+      } else {
+        console.log('流式输出中，暂不渲染思维导图');
+        // 仅处理普通代码块，不处理思维导图
+        await renderCodeBlocks(false);
+      }
+      
+      // 处理mermaid图表 - 可以在流式输出过程中处理
+      console.log('处理mermaid图表');
+      renderMermaidDynamically();
+      
+      // 只有在强制渲染且文档加载完成时才处理思维导图
+      if (forceRender && isDocumentLoaded) {
+        // 处理思维导图
+        console.log('处理思维导图');
+        
+        // 立即调用渲染思维导图
+        renderMarkMaps();
+      } else {
+        console.log('流式输出中，仅标记思维导图内容，暂不渲染');
+        
+        // 获取自动渲染控制器，但不触发渲染
+        const autoRenderController = setupMermaidAutoRender();
+        
+        // 将控制器保存到全局，以便流式输出结束时触发渲染
+        (window as any).autoRenderController = autoRenderController;
+      }
+      
+      console.log('渲染处理完成');
+    } catch (error) {
+      console.error('渲染组件时出错:', error);
+    } finally {
+      // 重置渲染状态，允许下次渲染
+      setTimeout(() => {
+        domCache.renderingInProgress = false;
+        domCache.renderTimeout = null;
+      }, 500);
+    }
+  }, 800);
 };
 </script>
 
@@ -760,6 +927,61 @@ const handleLoadMore = () => {
 [id^="markmap-"] {
   margin: 0 auto;
   display: block;
+}
+
+/* 确保在同一个agent-response-paragraph中，只有第一个思维导图显示控制按钮 */
+.agent-response-paragraph .markmap-component-wrapper:not(:first-of-type) .fit-button,
+.agent-response-paragraph .markmap-component-wrapper ~ .markmap-component-wrapper .fit-button {
+  display: none !important;
+}
+
+/* 隐藏重复渲染的思维导图 */
+.agent-response-paragraph[data-contains-markmap="true"] pre[data-markmap-processed="true"],
+.agent-response-paragraph[data-markmap-rendered="true"] pre[data-markmap-processed="true"] {
+  display: none !important;
+}
+
+/* 隐藏所有思维导图渲染后的原始markdown内容 */
+.markmap-component-wrapper + pre,
+.markmap-component-wrapper + p[data-markmap-processed],
+.markmap-component-wrapper + p[data-markmap-completed], 
+.markmap-component-wrapper + div,
+.markmap-component-wrapper ~ pre[data-markmap-processed],
+.markmap-component-wrapper ~ code.language-markdown,
+.agent-response-paragraph[data-contains-markmap="true"] > div:not(.markmap-component-wrapper) > pre > code.language-markdown,
+.agent-response-paragraph[data-contains-markmap="true"] > p,
+.agent-response-paragraph[data-contains-markmap="true"] pre,
+.agent-response-paragraph[data-markmap-rendered="true"] > div:not(.markmap-component-wrapper) > pre > code.language-markdown,
+.agent-response-paragraph[data-markmap-rendered="true"] > pre > code.language-markdown,
+.agent-response-paragraph[data-markmap-rendered="true"] > p[data-markmap-processed],
+.agent-response-paragraph[data-markmap-rendered="true"] > p[data-markmap-completed],
+div[data-markmap-processed="true"],
+div[data-markmap-completed="true"],
+[data-contains-markmap-content="true"],
+.original-markmap-content,
+pre.markmap-processed,
+p.markmap-processed,
+.markmap-component-wrapper ~ pre,
+.markmap-component-wrapper ~ .markmap-content,
+.markmap-content {
+  display: none !important;
+}
+
+/* 隐藏包含data-markmap-content属性的元素 */
+[data-markmap-content] {
+  display: none !important;
+}
+
+/* 确保在agent-response-paragraph中显示第一个思维导图后，隐藏其余内容 */
+.agent-response-paragraph[data-contains-markmap="true"] > *:not(.markmap-component-wrapper):not(h1):not(h2):not(h3):not(h4):not(h5):not(h6),
+.agent-response-paragraph[data-markmap-rendered="true"] > *:not(.markmap-component-wrapper):not(h1):not(h2):not(h3):not(h4):not(h5):not(h6) {
+  display: none !important;
+}
+
+/* 显示思维导图组件和标题 */
+.agent-response-paragraph[data-contains-markmap="true"] > .markmap-component-wrapper,
+.agent-response-paragraph[data-markmap-rendered="true"] > .markmap-component-wrapper {
+  display: block !important;
 }
 
 /* CodeBlock组件样式 */
