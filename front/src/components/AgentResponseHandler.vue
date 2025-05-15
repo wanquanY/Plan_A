@@ -27,6 +27,9 @@ onMounted(() => {
   setTimeout(() => {
     agentResponseService.renderAllMermaidDiagrams();
   }, 500);
+  
+  // 设置Agent输入框事件监听
+  setupAgentInputEvents();
 });
 
 // 组件卸载时清理observer
@@ -99,55 +102,339 @@ const removeLoadingElement = (element) => {
   }
 };
 
-// 用于处理与AI助手的聊天
-const handleChat = async (agentId: string, userInput: string, editorRef: HTMLElement) => {
+// 在AgentResponseHandler.vue中修复handleChat方法
+// 添加一个安全处理selection的辅助函数
+const safelyManageSelection = (callback) => {
+  try {
+    const selection = window.getSelection();
+    if (selection && typeof selection.removeAllRanges === 'function') {
+      callback(selection);
+    } else {
+      console.warn('Selection对象不可用或缺少removeAllRanges方法');
+    }
+  } catch (error) {
+    console.error('处理selection时出错:', error);
+  }
+};
+
+// 修改handleChat方法，增加对selection的安全处理
+const handleChat = async (agentId, userInput, editor, range) => {
+  if (isProcessing.value) {
+    console.warn('AI正在处理中，请等待上一个请求完成');
+    return;
+  }
+  
+  // 设置为处理中状态
+  isProcessing.value = true;
+  
+  try {
+    // 生成响应元素的唯一ID
+    const responseId = `agent-response-${Date.now()}`;
+    
+    // 确保范围有效
+    if (!range) {
+      console.warn('未提供有效的选择范围，将尝试使用当前选择');
+      const currentSelection = window.getSelection();
+      if (currentSelection && currentSelection.rangeCount > 0) {
+        range = currentSelection.getRangeAt(0);
+      } else {
+        // 无法获取范围，创建一个新范围指向编辑器末尾
+        if (editor) {
+          range = document.createRange();
+          range.selectNodeContents(editor);
+          range.collapse(false); // 折叠到末尾
+        } else {
+          console.error('无法获取有效范围且未提供editor参数');
+          isProcessing.value = false;
+          return;
+        }
+      }
+    }
+    
+    // 创建一个新的选择对象
+    let selection;
+    try {
+      selection = window.getSelection();
+      if (!selection) throw new Error('无法获取Selection对象');
+    } catch (error) {
+      console.error('获取Selection对象失败:', error);
+      isProcessing.value = false;
+      return;
+    }
+    
+    // 安全地处理选择范围
+    safelyManageSelection((selection) => {
+      // 删除所有现有选区
+      selection.removeAllRanges();
+      // 添加我们的范围
+      selection.addRange(range.cloneRange());
+    });
+    
+    // 处理输入内容
+    const processedInput = agentResponseService.processUserInput(userInput);
+    
+    // 创建响应容器，并插入到当前选择位置
+    const responseContainer = document.createElement('div');
+    responseContainer.className = 'agent-response-container';
+    
+    // 创建响应段落，添加加载动画
+    const responseParagraph = document.createElement('p');
+    responseParagraph.className = 'agent-response-paragraph';
+    responseParagraph.id = responseId; // 添加唯一ID以便后续查找
+    responseParagraph.appendChild(createLoadingElement());
+    
+    // 将响应容器添加到响应段落
+    responseContainer.appendChild(responseParagraph);
+    
+    // 使用当前选择的范围插入响应容器
+    try {
+      range.deleteContents();
+      range.insertNode(responseContainer);
+      
+      // 更新范围指向响应容器后面
+      range.setStartAfter(responseContainer);
+      range.collapse(true);
+      
+      // 安全地更新选择
+      safelyManageSelection((selection) => {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+      
+      // 触发编辑器内容更新事件
+      setTimeout(() => {
+        const editorContent = responseContainer.closest('.editor-content');
+        if (editorContent) {
+          editorContent.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }, 0);
+      
+      // 更新触发聊天请求
+      triggerChatRequest(agentId, processedInput, responseParagraph);
+      
+    } catch (error) {
+      console.error('插入响应容器时出错:', error);
+      isProcessing.value = false;
+    }
+  } catch (error) {
+    console.error('处理聊天请求时出错:', error);
+    isProcessing.value = false;
+  }
+};
+
+// 设置Agent输入框事件监听
+const setupAgentInputEvents = () => {
+  // 使用事件委托，监听document上的事件
+  document.addEventListener('keydown', (event) => {
+    // 检查事件目标是否是agent-input类的输入框
+    if (event.target && (event.target as HTMLElement).classList.contains('agent-input')) {
+      const input = event.target as HTMLInputElement;
+      
+      // 跳过没有关联Agent的输入框
+      if (input.classList.contains('no-agent')) {
+        return;
+      }
+      
+      // 按Enter键发送消息
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault(); // 阻止默认的换行行为
+        
+        // 从输入框获取Agent ID
+        const agentId = input.getAttribute('data-agent-id');
+        if (agentId) {
+          // 获取编辑器引用
+          const editorRef = input.closest('.editor-content');
+          if (editorRef) {
+            handleInputChat(input, agentId, editorRef);
+          }
+        }
+      }
+    }
+  });
+  
+  // 监听发送按钮点击事件
+  document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+    if (target && target.classList.contains('agent-send-button') && !target.disabled) {
+      // 获取相关的输入框
+      const inputContainer = target.closest('.agent-input-container');
+      if (inputContainer) {
+        const input = inputContainer.querySelector('.agent-input') as HTMLInputElement;
+        
+        // 跳过没有关联Agent的输入框
+        if (input && !input.classList.contains('no-agent')) {
+          const agentId = input.getAttribute('data-agent-id');
+          if (agentId) {
+            // 获取编辑器引用
+            const editorRef = input.closest('.editor-content');
+            if (editorRef) {
+              handleInputChat(input, agentId, editorRef);
+            }
+          }
+        }
+      }
+    }
+  });
+};
+
+// 处理输入框中的聊天消息
+const handleInputChat = async (inputElement, agentId, userInput, containerElement) => {
   if (isProcessing.value || !userInput.trim() || !agentId) return;
   
   // 处理用户输入，自动检测代码块语言
   const processedInput = agentResponseService.processUserInput(userInput);
   
-  // 用于保存响应段落的ID
-  let responseId = '';
-  
   try {
     isProcessing.value = true;
     console.log(`发送消息到助手，agentId: ${agentId}, 会话ID: ${conversationId.value || '新会话'}, 笔记ID: ${currentNoteId.value || '无'}, 内容长度: ${processedInput.length}`);
     
-    // 保存当前光标位置
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      console.warn('无法获取当前选区');
-      return;
+    // 禁用输入框和发送按钮，显示处理中状态
+    if (inputElement) {
+      inputElement.disabled = true;
+      inputElement.placeholder = '处理中...';
+      
+      // 禁用发送按钮
+      const sendButton = containerElement?.querySelector('.agent-send-button');
+      if (sendButton) {
+        sendButton.disabled = true;
+      }
     }
     
     // 创建响应段落
     const responseParagraph = document.createElement('div');
-    responseParagraph.className = 'agent-response-paragraph markdown-content';
-    // 添加唯一ID以便后续引用
-    responseId = `agent-response-${Date.now()}`;
-    responseParagraph.id = responseId;
-    console.log(`创建响应段落，ID: ${responseId}`);
+    responseParagraph.className = 'agent-response-paragraph';
+    responseParagraph.innerHTML = '<div class="agent-response-loading">AI思考中...</div>';
     
-    // 获取当前光标所在的位置，并插入响应段落
-    const range = selection.getRangeAt(0);
-    range.insertNode(responseParagraph);
+    // 如果有容器元素，将响应段落插入到容器元素后面
+    if (containerElement && containerElement.parentNode) {
+      containerElement.parentNode.insertBefore(responseParagraph, containerElement.nextSibling);
+      
+      // 添加样式，使容器不可编辑
+      containerElement.classList.add('processing');
+    }
     
-    // 创建并添加加载动画，而不是静态文本
-    const loadingElement = createLoadingElement();
-    responseParagraph.appendChild(loadingElement);
+    // 准备发送数据
+    const payload = {
+      prompt: processedInput,
+      agent_id: agentId,
+      conversation_id: conversationId.value || null,
+      note_id: currentNoteId.value
+    };
     
-    // 确保编辑器内容更新
-    setTimeout(() => {
-      const editorContent = responseParagraph.closest('.editor-content');
-      if (editorContent) {
-        editorContent.dispatchEvent(new Event('input', { bubbles: true }));
+    // 发送请求
+    const response = await apiService.post('/completions', payload);
+    console.log('AI响应:', response.data);
+    
+    // 处理响应
+    if (response.data && response.data.data) {
+      const completionData = response.data.data;
+      
+      // 保存会话ID
+      if (completionData.conversation_id) {
+        conversationId.value = completionData.conversation_id;
+        localStorage.setItem('lastConversationId', completionData.conversation_id.toString());
+        console.log(`更新会话ID: ${conversationId.value}`);
       }
-    }, 0);
+      
+      // 更新响应内容
+      responseParagraph.innerHTML = '';
+      responseParagraph.className = 'agent-response-paragraph';
+      
+      // 创建响应头部
+      const headerDiv = document.createElement('div');
+      headerDiv.className = 'agent-response-header';
+      
+      // 添加Agent头像和名称
+      const agentHeader = document.createElement('div');
+      agentHeader.className = 'agent-header';
+      
+      const agentAvatar = document.createElement('img');
+      agentAvatar.className = 'agent-avatar';
+      agentAvatar.src = completionData.agent?.avatar_url || 'https://placehold.co/40x40?text=AI';
+      agentAvatar.alt = 'Agent Avatar';
+      agentAvatar.onerror = function() {
+        this.src = 'https://placehold.co/40x40?text=AI';
+      };
+      
+      const agentName = document.createElement('span');
+      agentName.className = 'agent-name';
+      agentName.textContent = completionData.agent?.name || 'AI助手';
+      
+      agentHeader.appendChild(agentAvatar);
+      agentHeader.appendChild(agentName);
+      headerDiv.appendChild(agentHeader);
+      
+      // 添加响应内容
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'agent-response-content';
+      contentDiv.innerHTML = agentResponseService.processMarkdown(completionData.completion || '');
+      
+      // 添加到响应段落
+      responseParagraph.appendChild(headerDiv);
+      responseParagraph.appendChild(contentDiv);
+      
+      // 渲染Mermaid图表
+      setTimeout(() => {
+        agentResponseService.renderMermaidDiagrams();
+      }, 100);
+    }
+  } catch (error) {
+    console.error('处理AI助手响应时出错:', error);
+    
+    // 创建错误响应
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'agent-response-error';
+    errorDiv.innerHTML = '处理请求时出错，请重试。';
+    
+    // 如果有容器元素，将错误消息插入到容器元素后面
+    if (containerElement && containerElement.parentNode) {
+      containerElement.parentNode.insertBefore(errorDiv, containerElement.nextSibling);
+    }
+  } finally {
+    isProcessing.value = false;
+    
+    // 重置输入框状态
+    if (inputElement) {
+      inputElement.value = '';
+      inputElement.disabled = false;
+      inputElement.placeholder = `问${inputElement.getAttribute('data-agent-name') || 'AI助手'}...`;
+      
+      // 启用发送按钮
+      const sendButton = containerElement?.querySelector('.agent-send-button');
+      if (sendButton) {
+        sendButton.disabled = false;
+      }
+      
+      // 恢复容器样式
+      if (containerElement) {
+        containerElement.classList.remove('processing');
+      }
+      
+      // 聚焦到输入框
+      setTimeout(() => {
+        inputElement.focus();
+      }, 0);
+    }
+  }
+};
+
+// 添加triggerChatRequest函数，将流式响应处理分离为单独函数
+const triggerChatRequest = async (agentId, processedInput, responseParagraph) => {
+  try {
+    // 确保响应段落存在
+    if (!responseParagraph || !responseParagraph.id) {
+      console.error('响应段落不存在或没有ID');
+      isProcessing.value = false;
+      return;
+    }
+    
+    const responseId = responseParagraph.id;
     
     // 准备聊天请求
     const chatRequest = {
       content: processedInput,
-      stream: true
+      stream: true,
+      agent_id: parseInt(agentId)
     };
     
     // 如果有会话ID，则添加到请求中
@@ -165,9 +452,6 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
         chatRequest.note_id = parseInt(currentNoteId.value);
       }
     }
-    
-    // 添加agent_id
-    chatRequest.agent_id = parseInt(agentId);
     
     console.log(`发送聊天请求:`, chatRequest);
     
@@ -247,61 +531,9 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
           responseParagraph.textContent = content || "无响应内容";
         }
         
-        // 当响应完成时，保存会话ID，并确保内容保留
+        // 当响应完成时
         if (isEnd) {
-          // 只有在有效的会话ID时才更新
-          if (convId && convId !== 0) {
-            conversationId.value = convId.toString();
-            console.log(`响应完成，保存会话ID: ${conversationId.value}, 最终内容长度: ${content.length}`);
-            
-            // 确保EditorContent组件的模型值得到更新，但不过度触发
-            const editorContent = responseParagraph.closest('.editor-content');
-            if (editorContent) {
-              // 最终更新一次内容
-              try {
-                editorContent.dispatchEvent(new Event('input', { bubbles: true }));
-                console.log('流式响应完成，编辑器内容已更新');
-                
-                // 将光标定位到响应段落的末尾
-                const selection = window.getSelection();
-                selection.removeAllRanges();
-                const range = document.createRange();
-                // 检查响应段落是否存在于DOM中
-                if (responseParagraph && responseParagraph.parentNode) {
-                  // 设置光标在响应段落后面
-                  range.setStartAfter(responseParagraph);
-                  range.collapse(true);
-                  selection.addRange(range);
-                  console.log('已将光标定位到响应内容后面');
-                }
-                
-                // 延迟处理代码块，等待DOM渲染完成
-                setTimeout(() => {
-                  // 处理代码块，但避免触发额外的更新
-                  try {
-                    // 先确保所有代码块都有语言标识
-                    agentResponseService.ensureCodeBlocksHaveLanguage();
-                    
-                    // 然后使用CodeBlock组件替换代码块
-                    agentResponseService.setupCodeBlocks();
-                    
-                    // 触发渲染流式输出期间累积的mermaid图表
-                    if (mermaidObserver && typeof mermaidObserver.renderPending === 'function') {
-                      console.log('流式输出完成，触发累积的mermaid图表渲染');
-                      mermaidObserver.renderPending();
-                    } else {
-                      // 如果mermaidObserver不可用，则使用服务中的方法直接渲染
-                      agentResponseService.renderMermaidDiagrams();
-                    }
-                  } catch (codeBlockError) {
-                    console.error('处理代码块或图表时出错:', codeBlockError);
-                  }
-                }, 500);
-              } catch (eventError) {
-                console.error('触发内容更新事件时出错:', eventError);
-              }
-            }
-          }
+          finishResponse(responseParagraph, convId, content);
         }
       } catch (error) {
         console.error('处理流式响应时出错:', error);
@@ -323,28 +555,74 @@ const handleChat = async (agentId: string, userInput: string, editorRef: HTMLEle
     // 调用chatWithAgent发送请求
     await chatService.chatWithAgent(chatRequest, streamCallback);
     
-    // 防止永久加载状态：设置一个安全超时，确保即使回调没有正确完成，也会清除加载状态
+    // 安全超时处理
     const safetyTimeout = setTimeout(() => {
-      // 如果5秒后仍然在处理中，则强制结束处理状态
       if (isProcessing.value) {
         console.warn('检测到流式响应处理超时，强制结束处理状态');
-        
-        // 移除加载动画并显示错误信息
         const responseParagraph = document.getElementById(responseId);
         if (responseParagraph) {
           const loadingElements = responseParagraph.querySelectorAll('.loading-animation-container');
           loadingElements.forEach(el => removeLoadingElement(el));
-          
           responseParagraph.textContent = "响应超时，请重试";
         }
-        
         isProcessing.value = false;
       }
-    }, 5000);
-    
+    }, 30000); // 30秒超时
+
+    return safetyTimeout;
   } catch (error) {
-    console.error('调用AI助手时出错:', error);
+    console.error('触发聊天请求时出错:', error);
     isProcessing.value = false;
+  }
+};
+
+// 添加完成响应的辅助函数
+const finishResponse = (responseParagraph, convId, content) => {
+  try {
+    // 只有在有效的会话ID时才更新
+    if (convId && convId !== 0) {
+      conversationId.value = convId.toString();
+      console.log(`响应完成，保存会话ID: ${conversationId.value}, 最终内容长度: ${content.length}`);
+      
+      // 确保EditorContent组件的模型值得到更新
+      const editorContent = responseParagraph.closest('.editor-content');
+      if (editorContent) {
+        try {
+          editorContent.dispatchEvent(new Event('input', { bubbles: true }));
+          
+          // 安全地更新选择位置
+          safelyManageSelection((selection) => {
+            const range = document.createRange();
+            if (responseParagraph && responseParagraph.parentNode) {
+              range.setStartAfter(responseParagraph);
+              range.collapse(true);
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+          });
+          
+          // 延迟处理代码块和图表
+          setTimeout(() => {
+            try {
+              agentResponseService.ensureCodeBlocksHaveLanguage();
+              agentResponseService.setupCodeBlocks();
+              
+              if (mermaidObserver && typeof mermaidObserver.renderPending === 'function') {
+                mermaidObserver.renderPending();
+              } else {
+                agentResponseService.renderMermaidDiagrams();
+              }
+            } catch (error) {
+              console.error('处理代码块或图表时出错:', error);
+            }
+          }, 500);
+        } catch (error) {
+          console.error('完成响应时出错:', error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('完成响应处理时出错:', error);
   }
 };
 
@@ -362,7 +640,8 @@ defineExpose({
   setupCodeCopyButtons: agentResponseService.setupCodeCopyButtons,
   setupCodeBlocks: agentResponseService.setupCodeBlocks,
   processRenderedHtml: agentResponseService.processRenderedHtml,
-  forceRenderDiagrams: agentResponseService.forceRenderDiagrams
+  forceRenderDiagrams: agentResponseService.forceRenderDiagrams,
+  handleInputChat  // 暴露新的方法
 });
 </script>
 

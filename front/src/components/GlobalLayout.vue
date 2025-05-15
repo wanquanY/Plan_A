@@ -168,19 +168,26 @@ const fetchSessionDetail = async (sessionId) => {
 // 处理笔记点击
 const handleNoteClick = async (noteId) => {
   try {
+    console.log(`尝试打开笔记，ID: ${noteId}`);
     // 获取笔记的详细信息
     const noteDetail = await noteService.getNoteDetail(noteId);
     
     // 不管笔记是否关联会话，始终只使用笔记ID导航
     if (noteDetail) {
       // 只使用笔记ID进行导航，确保始终显示笔记内容
+      console.log(`笔记详情获取成功，导航到笔记页面，ID: ${noteId}`);
       router.push(`/?note=${noteId}`);
     } else {
+      console.error(`无法获取笔记详情，ID: ${noteId}`);
       message.error('无法打开笔记，请稍后重试');
     }
   } catch (error) {
     console.error('打开笔记失败:', error);
-    message.error('打开笔记失败，请稍后重试');
+    // 即使发生错误，我们仍然尝试导航到笔记页面
+    // 在Home组件中会处理加载失败的情况
+    console.log('尽管发生错误，仍然尝试导航到笔记页面');
+    router.push(`/?note=${noteId}`);
+    message.error('笔记加载可能不完整，请尝试刷新页面');
   }
 };
 
@@ -235,6 +242,9 @@ provide('notes', notes);
 provide('fetchSessions', fetchSessions);
 provide('fetchNotes', fetchNotes);
 provide('currentSessionId', currentSessionId);
+
+// 添加事件监听调试日志
+console.log('GlobalLayout组件已加载，监听Sidebar的note-click事件');
 </script>
 
 <template>

@@ -10,13 +10,52 @@
     @click="handleEditorClick"
     @paste="handlePaste"
     @drop="handleDrop"
-  ></div>
+  >
+    <!-- 在EditorContent内部直接显示输入框 -->
+    <div v-if="showAgentInput" class="agent-input-container" :style="agentInputStyle">
+      <div class="agent-input-card">
+        <div class="agent-input-header">
+          <div class="agent-selector">
+            <img 
+              v-if="selectedAgent" 
+              :src="selectedAgent.avatar_url || 'https://placehold.co/20x20?text=AI'" 
+              :alt="selectedAgent.name" 
+              class="agent-avatar"
+            />
+            <span class="agent-name">{{ selectedAgent ? selectedAgent.name : '选择AI助手' }}</span>
+          </div>
+          <button @click="closeAgentInput" class="close-button">×</button>
+        </div>
+        <div class="agent-input-body">
+          <input 
+            ref="agentInputRef"
+            type="text" 
+            class="agent-input-field"
+            :placeholder="selectedAgent ? `向${selectedAgent.name}提问...` : '请先选择AI助手...'"
+            v-model="agentInputText"
+            @keydown.enter="sendToAgent"
+            @keydown.esc="closeAgentInput"
+          />
+          <button 
+            class="send-button"
+            @click="sendToAgent"
+            :disabled="!agentInputText.trim()"
+          >
+            <svg class="send-icon" viewBox="0 0 24 24" width="16" height="16">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, nextTick } from 'vue';
+import { ref, watch, onMounted, nextTick, computed } from 'vue';
 import uploadService from '../services/uploadService';
 import { message } from 'ant-design-vue';
+import agentService from '../services/agent';
 
 const props = defineProps({
   modelValue: {
@@ -38,13 +77,36 @@ const emit = defineEmits([
   'word-count', 
   'key-down', 
   'show-agent-selector',
+  'show-agent-modal',
   'composition-start',
   'composition-end',
-  'input-update'
+  'input-update',
+  'send-to-agent'
 ]);
 
 const editorRef = ref<HTMLElement | null>(null);
 const isComposing = ref(false);
+
+// Agent输入框相关状态
+const showAgentInput = ref(false);
+const agentInputText = ref('');
+const selectedAgent = ref(null);
+const agents = ref([]);
+const cursorPosition = ref({ x: 0, y: 0 });
+const activeRange = ref(null);
+const agentInputRef = ref(null);
+
+// 计算输入框位置样式
+const agentInputStyle = computed(() => {
+  return {
+    position: 'absolute',
+    top: `${cursorPosition.value.y}px`,
+    left: 0,
+    right: 0,
+    width: '100%',
+    zIndex: 100
+  };
+});
 
 // 监听值变化，更新编辑器内容
 watch(() => props.modelValue, (newValue) => {
@@ -222,7 +284,7 @@ const handleInput = (event) => {
     content: cleanedContent
   });
   
-  // 检查是否刚输入了@符号
+  // 检查是否刚输入了/符号
   if (selection && selection.rangeCount > 0 && !props.showAgentSelector) {
     const range = selection.getRangeAt(0);
     
@@ -231,9 +293,9 @@ const handleInput = (event) => {
       const textContent = range.startContainer.textContent || '';
       const offset = range.startOffset;
       
-      // 检查光标前面的字符是否是@
-      if (offset > 0 && textContent[offset - 1] === '@') {
-        console.log('检测到@符号，触发选择器显示');
+      // 检查光标前面的字符是否是/
+      if (offset > 0 && textContent[offset - 1] === '/') {
+        console.log('检测到/符号，触发选择器显示');
         emit('show-agent-selector', range);
       }
     }
@@ -318,10 +380,24 @@ const preventEditInReadOnlyArea = (event) => {
 };
 
 // 处理键盘事件
-const handleKeyDown = (event: KeyboardEvent) => {
-  // 如果正在输入中文，不拦截任何键盘事件
-  if (isComposing.value || !editorRef.value) return;
-  
+const handleKeyDown = (event) => {
+  // 优先处理/符号
+  if (event.key === '/' && event.currentTarget.classList.contains('editor-content')) {
+    if (handleSlashSymbol(event)) {
+      return; // 已处理/键，不需要继续处理
+    }
+  }
+
+  // 如果正在中文输入或编辑器不存在，不处理特殊键
+  if (isComposing.value || !editorRef.value) {
+    emit('key-down', {
+      event,
+      editorRef: editorRef.value,
+      selection: window.getSelection()
+    });
+    return;
+  }
+   
   // 检查并防止在只读区域编辑
   if (preventEditInReadOnlyArea(event)) {
     return;
@@ -329,22 +405,18 @@ const handleKeyDown = (event: KeyboardEvent) => {
   
   // 处理Tab键
   if (event.key === 'Tab') {
-    event.preventDefault(); // 阻止默认的Tab行为（切换焦点）
+    event.preventDefault(); // 阻止默认的Tab行为
     
+    // 获取当前选中的范围
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
     
     const range = selection.getRangeAt(0);
-    let currentNode = range.commonAncestorContainer;
     
-    // 查找当前段落节点
-    let paragraphNode = currentNode;
+    // 获取当前光标所在的段落
+    let paragraphNode = range.startContainer;
     while (paragraphNode && paragraphNode.nodeName !== 'P') {
-      if (paragraphNode.nodeType === 3) { // 文本节点
-        paragraphNode = paragraphNode.parentNode;
-      } else {
-        break;
-      }
+      paragraphNode = paragraphNode.parentNode;
     }
     
     // 只处理段落节点
@@ -372,21 +444,6 @@ const handleKeyDown = (event: KeyboardEvent) => {
     }
     
     return; // 已处理Tab键，不需要继续处理
-  }
-  
-  // 处理@键
-  if (event.key === '@' && !props.showAgentSelector) {
-    console.log('检测到@键被按下');
-    
-    // 让浏览器先插入@符号
-    setTimeout(() => {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        console.log('准备显示选择器，范围:', range);
-        emit('show-agent-selector', range);
-      }
-    }, 0);
   }
   
   // 处理在文档末尾的回车键
@@ -1111,6 +1168,167 @@ const setupImageResizing = (container, img) => {
   // 添加事件监听
   resizeHandle.addEventListener('mousedown', onMouseDown);
 };
+
+// 处理/符号
+const handleSlashSymbol = (event) => {
+  console.log('检测到/键被按下，准备触发输入框');
+  event.preventDefault(); // 阻止默认/符号插入
+  
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+  
+  const range = selection.getRangeAt(0);
+  
+  try {
+    // 创建临时标记用于获取准确位置
+    const tempSpan = document.createElement('span');
+    tempSpan.id = 'temp-cursor-marker';
+    tempSpan.innerHTML = '&nbsp;';
+    
+    // 插入临时标记到光标位置
+    const tempRange = range.cloneRange();
+    tempRange.insertNode(tempSpan);
+    
+    // 获取标记位置（相对于视口）
+    const markerRect = tempSpan.getBoundingClientRect();
+    
+    // 获取编辑器位置（相对于视口）
+    const editorRect = editorRef.value.getBoundingClientRect();
+    
+    // 获取编辑器的offsetParent以计算正确的offsetLeft
+    const editorOffsetParent = editorRef.value.offsetParent;
+    const editorOffsetLeft = editorRef.value.offsetLeft;
+    
+    // 计算编辑区域中的实际可编辑宽度信息
+    const editorContent = {
+      left: editorRect.left,
+      right: editorRect.right,
+      width: editorRect.width,
+      // 使用offsetLeft获取编辑区域相对于其父容器的水平偏移
+      // 这是大纲区域的宽度（如果存在大纲的话）
+      editorOffsetLeft: editorOffsetLeft
+    };
+    
+    console.log('光标位置信息:', {
+      markerPosition: { x: markerRect.left, y: markerRect.bottom },
+      editorPosition: { left: editorRect.left, right: editorRect.right, width: editorRect.width },
+      editorOffset: editorOffsetLeft
+    });
+    
+    // 移除临时标记
+    if (tempSpan.parentNode) {
+      tempSpan.parentNode.removeChild(tempSpan);
+    }
+    
+    // 恢复原始选区
+    selection.removeAllRanges();
+    selection.addRange(range);
+    
+    // 发送事件显示弹窗在光标所在行下方
+    emit('show-agent-modal', { 
+      range,
+      cursorPosition: {
+        // 提供绝对位置（相对于视口）
+        viewport: {
+          y: markerRect.bottom,
+          x: markerRect.left
+        },
+        // 提供相对位置（相对于编辑器）
+        editor: {
+          y: markerRect.bottom - editorRect.top,
+          x: markerRect.left - editorRect.left
+        }
+      },
+      editorInfo: editorContent
+    });
+    
+    return true;
+  } catch (error) {
+    console.error('计算光标位置时出错:', error);
+    
+    // 备用方案：使用鼠标事件坐标
+    const editorRect = editorRef.value.getBoundingClientRect();
+    const editorOffsetLeft = editorRef.value.offsetLeft;
+    
+    emit('show-agent-modal', { 
+      range,
+      cursorPosition: {
+        viewport: {
+          y: event.clientY || 0,
+          x: event.clientX || 0
+        },
+        editor: {
+          y: (event.clientY || 0) - editorRect.top,
+          x: (event.clientX || 0) - editorRect.left
+        }
+      },
+      editorInfo: {
+        left: editorRect.left,
+        right: editorRect.right,
+        width: editorRect.width,
+        editorOffsetLeft: editorOffsetLeft
+      }
+    });
+    
+    return true;
+  }
+};
+
+// 加载Agent列表
+const loadAgents = async () => {
+  try {
+    const agentList = await agentService.getAllAgents();
+    agents.value = agentList;
+    
+    // 默认选择第一个Agent
+    if (agentList.length > 0 && !selectedAgent.value) {
+      selectedAgent.value = agentList[0];
+    }
+  } catch (error) {
+    console.error('加载AI助手列表失败:', error);
+  }
+};
+
+// 显示Agent输入框
+const showAgentInputAt = (position, range) => {
+  // 保存当前位置和Range
+  cursorPosition.value = position;
+  activeRange.value = range;
+  
+  // 显示输入框
+  showAgentInput.value = true;
+  
+  // 加载Agent列表
+  if (agents.value.length === 0) {
+    loadAgents();
+  }
+  
+  // 输入框聚焦
+  nextTick(() => {
+    agentInputRef.value?.focus();
+  });
+};
+
+// 关闭Agent输入框
+const closeAgentInput = () => {
+  showAgentInput.value = false;
+  agentInputText.value = '';
+};
+
+// 发送消息到Agent
+const sendToAgent = () => {
+  if (!agentInputText.value.trim() || !selectedAgent.value) return;
+  
+  // 传递给父组件处理发送逻辑
+  emit('send-to-agent', {
+    agentId: selectedAgent.value.id,
+    content: agentInputText.value.trim(),
+    range: activeRange.value
+  });
+  
+  // 关闭输入框
+  closeAgentInput();
+};
 </script>
 
 <style>
@@ -1128,8 +1346,9 @@ const setupImageResizing = (container, img) => {
   background-color: #fff;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
   border-radius: 0 4px 4px 0;
-  position: relative;
+  position: relative; /* 确保相对定位，作为绝对定位元素的参考 */
   max-height: none; /* 移除高度限制 */
+  z-index: 1; /* 确保有正确的层叠顺序 */
 }
 
 /* 响应式样式 */
@@ -1381,5 +1600,113 @@ const setupImageResizing = (container, img) => {
 /* 调整代码块后的段落边距 */
 .after-code-block-paragraph {
   margin-top: 1em;
+}
+
+/* Agent输入框样式 */
+.agent-input-container {
+  padding: 0 10px;
+  box-sizing: border-box;
+  position: absolute; /* 使用绝对定位 */
+  left: 0;
+  right: 0;
+  z-index: 1000; /* 确保显示在编辑内容上方 */
+}
+
+.agent-input-card {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  border: 1px solid #e0e3e9;
+  margin: 4px 0;
+  animation: slideIn 0.2s ease;
+}
+
+.agent-input-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background-color: #f9f9f9;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.agent-selector {
+  display: flex;
+  align-items: center;
+}
+
+.agent-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.agent-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: #999;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.agent-input-body {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+}
+
+.agent-input-field {
+  flex: 1;
+  border: none;
+  background-color: #f5f7fa;
+  border-radius: 20px;
+  padding: 8px 12px;
+  height: 36px;
+  font-size: 14px;
+  outline: none;
+}
+
+.agent-input-field:focus {
+  background-color: #e8f0fe;
+}
+
+.send-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #1677ff;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  margin-left: 8px;
+  cursor: pointer;
+}
+
+.send-button:disabled {
+  background-color: #b8d2f8;
+  cursor: not-allowed;
+}
+
+@keyframes slideIn {
+  from { 
+    opacity: 0; 
+    transform: translateY(-10px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style> 

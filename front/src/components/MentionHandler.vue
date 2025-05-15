@@ -70,218 +70,173 @@ const fetchAgents = async () => {
 
 // 监听点击事件，检查是否点击在选择器外部
 const handleClickOutside = (event: MouseEvent) => {
-  if (
-    selectorRef.value &&
-    !selectorRef.value.contains(event.target as Node)
-  ) {
+  if (selectorRef.value && !selectorRef.value.contains(event.target as Node)) {
     emit('close');
   }
 };
 
 // 选择AI助手
-const selectAgent = (agent) => {
-  if (!props.currentRange) return;
-  
-  // 创建一个新的用户提及元素
-  const mention = document.createElement('span');
-  mention.className = 'user-mention';
-  mention.setAttribute('data-agent-id', agent.id);
-  mention.setAttribute('data-processed', 'false');
-  
-  // 创建头像元素
-  const avatar = document.createElement('img');
-  avatar.src = agent.avatar_url;
-  avatar.alt = agent.name;
-  avatar.className = 'mention-avatar';
-  avatar.style.width = '16px';
-  avatar.style.height = '16px';
-  avatar.style.borderRadius = '50%';
-  avatar.style.marginRight = '4px';
-  avatar.style.verticalAlign = 'middle';
-  
-  // 创建名称文本
-  const nameText = document.createTextNode(agent.name);
-  
-  // 将头像和名称添加到提及元素中
-  mention.appendChild(avatar);
-  mention.appendChild(nameText);
-  
-  // 设置提及元素的样式
-  mention.contentEditable = 'false';
-  mention.style.backgroundColor = '#e6f7ff';
-  mention.style.color = '#1890ff';
-  mention.style.borderRadius = '3px';
-  mention.style.padding = '0 4px';
-  mention.style.margin = '0 2px';
-  mention.style.display = 'inline-flex';
-  mention.style.alignItems = 'center';
-  
-  // 创建一个新的Range，用于插入用户提及
-  const range = props.currentRange.cloneRange();
-  
-  // 只删除@符号，不删除其他字符
-  const textNode = range.startContainer;
-  
-  // 确保我们只在文本节点中操作
-  if (textNode.nodeType === Node.TEXT_NODE) {
-    const text = textNode.textContent || '';
-    const offset = range.startOffset;
-    
-    // 从当前光标位置向前搜索@符号
-    let atIndex = -1;
-    for (let i = offset - 1; i >= 0; i--) {
-      if (text[i] === '@') {
-        atIndex = i;
-        break;
-      }
-    }
-    
-    // 如果找到@符号，只删除@符号
-    if (atIndex !== -1) {
-      // 创建一个新的范围只包含@符号
-      const atRange = document.createRange();
-      atRange.setStart(textNode, atIndex);
-      atRange.setEnd(textNode, atIndex + 1); // 只选择@符号
-      atRange.deleteContents();
-      
-      // 在@符号的位置插入mention元素
-      atRange.insertNode(mention);
-    } else {
-      // 如果找不到@符号(异常情况)，直接在当前位置插入mention元素
-      range.insertNode(mention);
-    }
-  } else {
-    // 非文本节点情况，直接插入
-    range.insertNode(mention);
+const selectAgent = (agent: any) => {
+  // 获取最近创建的"无Agent"输入框
+  const noAgentInputs = document.querySelectorAll('.agent-input.no-agent');
+  if (noAgentInputs.length === 0) {
+    console.error('未找到等待关联Agent的输入框');
+    emit('close');
+    return;
   }
   
-  // 修正中文输入法问题 - 插入固定的输入区域
-  const editableSpan = document.createElement('span');
-  editableSpan.className = 'editable-span';
-  editableSpan.setAttribute('contenteditable', 'true');
-  editableSpan.style.outline = 'none';
-  editableSpan.style.minWidth = '1px';
-  editableSpan.style.display = 'inline-block';
-  
-  // 在mention后插入可编辑的span
-  if (mention.parentNode) {
-    mention.parentNode.insertBefore(editableSpan, mention.nextSibling);
+  // 获取最后一个"无Agent"输入框（最近创建的）
+  const inputElement = noAgentInputs[noAgentInputs.length - 1] as HTMLInputElement;
+  if (!inputElement) {
+    console.error('无法获取输入框元素');
+    emit('close');
+    return;
   }
   
-  // 通知父组件AI助手被选择
-  emit('agent-selected', agent);
-  emit('close');
-  
-  // 立即设置焦点到可编辑区域
-  editableSpan.focus();
-  
-  // 创建一个新的选择范围，并设置它在可编辑区域的开始位置
-  const selection = window.getSelection();
-  if (selection) {
-    const newRange = document.createRange();
-    newRange.setStart(editableSpan, 0);
-    newRange.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(newRange);
+  // 获取输入框的容器
+  const inputContainer = inputElement.closest('.agent-input-container');
+  if (!inputContainer) {
+    console.error('无法获取输入框容器');
+    emit('close');
+    return;
   }
   
-  // 延迟处理以确保输入法事件正确处理
+  // 获取选择按钮并更新为已选择的Agent
+  const selectorButton = inputContainer.querySelector('.agent-selector-button');
+  if (selectorButton) {
+    // 设置按钮内容为已选择的Agent
+    selectorButton.innerHTML = `
+      <img src="${agent.avatar_url || 'https://placehold.co/40x40?text=AI'}" 
+           alt="${agent.name}" 
+           onerror="this.src='https://placehold.co/40x40?text=AI'" />
+      <span>${agent.name}</span>
+    `;
+  }
+  
+  // 更新输入框属性和状态
+  inputElement.disabled = false;
+  inputElement.placeholder = `问${agent.name}...`;
+  inputElement.classList.remove('no-agent');
+  inputElement.setAttribute('data-agent-id', agent.id);
+  
+  // 启用发送按钮
+  const sendButton = inputContainer.querySelector('.agent-send-button');
+  if (sendButton) {
+    sendButton.removeAttribute('disabled');
+  }
+  
+  // 聚焦到输入框
   setTimeout(() => {
-    // 检查可编辑区域是否仍然存在
-    if (!editableSpan.isConnected) return;
-    
-    // 确保可编辑区域仍然有焦点
-    editableSpan.focus();
-    
-    // 如果使用高级浏览器API可用，尝试模拟用户点击
-    if (typeof InputDeviceCapabilities !== 'undefined') {
-      try {
-        // 创建一个鼠标事件，使输入法认为这是用户操作
-        const clickEvent = new MouseEvent('click', {
-          bubbles: true,
-          cancelable: true,
-          view: window
-        });
-        editableSpan.dispatchEvent(clickEvent);
-      } catch (e) {
-        console.error('无法模拟点击事件:', e);
-      }
-    }
-  }, 50);
+    inputElement.focus();
+  }, 0);
+  
+  // 关闭选择器
+  emit('close');
+  emit('select', agent);
 };
 
-// 初始化时只添加事件监听，不加载数据
-onMounted(() => {
-  document.addEventListener('click', handleClickOutside);
-  console.log('[MentionHandler] 组件已挂载，但不会自动加载数据');
+// 当组件显示时，加载AI助手
+watch(() => props.showSelector, (value) => {
+  if (value) {
+    fetchAgents();
+  }
 });
 
-// 监听选择器显示状态变化，只在首次显示时加载数据
-watch(() => props.showSelector, (isVisible) => {
-  if (isVisible) {
-    console.log('[MentionHandler] 选择器显示，加载Agent列表');
-    // 每次显示选择器时都重新请求一次数据
-    fetchAgents().catch(err => {
-      console.error('[MentionHandler] 加载Agent列表失败:', err);
-    });
+onMounted(() => {
+  if (props.showSelector) {
+    fetchAgents();
   }
-}, { immediate: false });
+  document.addEventListener('click', handleClickOutside);
+});
 
-// 移除点击事件监听
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside);
+});
+
+// 更新选择器位置方法
+const updateSelectorPosition = () => {
+  if (!selectorRef.value || !props.range) return;
+  
+  const rect = props.range.getBoundingClientRect();
+  const selectorElement = selectorRef.value;
+  
+  // 获取编辑器容器
+  const editorContainer = document.querySelector('.editor-content');
+  if (!editorContainer) return;
+  
+  const editorRect = editorContainer.getBoundingClientRect();
+  
+  // 计算选择器应该显示的位置，优先显示在输入框下方
+  const inputContainer = props.range.parentElement;
+  if (inputContainer && inputContainer.classList.contains('agent-input-container')) {
+    const inputRect = inputContainer.getBoundingClientRect();
+    
+    // 设置位置到输入框下方
+    selectorElement.style.top = `${inputRect.bottom + 5}px`;
+    selectorElement.style.left = `${inputRect.left}px`;
+    
+    // 确保选择器不会超出编辑器的右边界
+    const rightOverflow = inputRect.left + selectorElement.offsetWidth - (editorRect.left + editorRect.width);
+    if (rightOverflow > 0) {
+      selectorElement.style.left = `${inputRect.left - rightOverflow - 10}px`;
+    }
+  } else {
+    // 设置位置到光标位置下方
+    selectorElement.style.top = `${rect.bottom + 5}px`;
+    selectorElement.style.left = `${rect.left}px`;
+    
+    // 确保选择器不会超出编辑器的右边界
+    const rightOverflow = rect.left + selectorElement.offsetWidth - (editorRect.left + editorRect.width);
+    if (rightOverflow > 0) {
+      selectorElement.style.left = `${rect.left - rightOverflow - 10}px`;
+    }
+  }
+};
+
+// 暴露方法给父组件
+defineExpose({
+  selectAgent,
+  updateSelectorPosition
 });
 </script>
 
 <style scoped>
 .agent-selector {
   position: absolute;
-  width: 300px;
-  max-height: 300px;
-  height: auto;
-  background-color: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  border-radius: 4px;
   z-index: 1000;
-  display: flex;
-  flex-direction: column;
+  min-width: 320px;
+  max-width: 400px;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  border: 1px solid #e8e8e8;
+  overflow: hidden;
 }
 
 .agent-selector-header {
-  padding: 8px 12px;
+  padding: 10px 16px;
   border-bottom: 1px solid #f0f0f0;
   background-color: #fafafa;
-  border-radius: 4px 4px 0 0;
 }
 
 .header-title {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: #000;
 }
 
 .agent-list {
+  max-height: 300px;
   overflow-y: auto;
-  max-height: 250px;
-}
-
-.no-agents {
-  padding: 20px;
-  text-align: center;
-  color: #666;
+  padding: 8px 0;
 }
 
 .agent-item {
   display: flex;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: background-color 0.2s;
   align-items: center;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
-}
-
-.agent-item:last-child {
-  border-bottom: none;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background-color 0.3s;
 }
 
 .agent-item:hover {
@@ -289,29 +244,33 @@ onUnmounted(() => {
 }
 
 .agent-avatar {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
   margin-right: 12px;
+  flex-shrink: 0;
 }
 
 .agent-avatar img {
   width: 100%;
   height: 100%;
-  border-radius: 50%;
   object-fit: cover;
-  border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .agent-info {
   flex: 1;
-  overflow: hidden;
+  min-width: 0;
 }
 
 .agent-name {
+  font-size: 14px;
   font-weight: 500;
-  margin-bottom: 4px;
-  color: #333;
+  color: #1f1f1f;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-description {
@@ -320,5 +279,12 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.no-agents {
+  text-align: center;
+  padding: 16px;
+  color: #999;
+  font-size: 14px;
 }
 </style> 

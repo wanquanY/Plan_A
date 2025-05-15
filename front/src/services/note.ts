@@ -68,11 +68,40 @@ class NoteService {
    */
   async getNoteDetail(noteId: number): Promise<Note> {
     try {
+      console.log(`NoteService.getNoteDetail 正在请求笔记详情，ID: ${noteId}`);
       const response = await api.get(`/note/${noteId}`);
+      console.log(`NoteService.getNoteDetail 请求成功, 返回数据:`, response.data);
+      
+      // 检查返回的数据格式是否符合预期
+      if (!response.data || !response.data.data) {
+        console.error('getNoteDetail: API返回数据格式异常', response.data);
+        // 返回一个包含默认值的Note对象，避免上层调用崩溃
+        return {
+          id: noteId,
+          title: '无法加载笔记',
+          content: '<p>笔记加载失败，请刷新页面重试</p>',
+          session_id: null,
+          is_public: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+      }
+      
       return response.data.data;
     } catch (error) {
       console.error('获取笔记详情失败:', error);
-      throw error;
+      // 抛出一个更明确的错误，同时提供默认的Note对象
+      const err = new Error('获取笔记详情失败') as any;
+      err.noteData = {
+        id: noteId,
+        title: '无法加载笔记',
+        content: '<p>笔记加载失败，请刷新页面重试</p>',
+        session_id: null,
+        is_public: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      throw err;
     }
   }
 

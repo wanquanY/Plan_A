@@ -25,12 +25,14 @@
       <div class="editor-main">
         <EditorContent
           ref="editorContentRef"
-          :model-value="modelValue"
+          :modelValue="modelValue"
           @update:model-value="$emit('update:modelValue', $event)"
           :show-agent-selector="showAgentSelector"
           @word-count="updateWordCount"
           @key-down="handleKeyDown"
           @show-agent-selector="showAgentSelectorAt"
+          @show-agent-modal="showAgentModalAt"
+          @send-to-agent="handleSendToAgent"
           @composition-start="isComposing = true"
           @composition-end="isComposing = false"
           @input-update="handleInputUpdate"
@@ -45,6 +47,13 @@
       </div>
     </div>
     <AgentResponseHandler ref="agentResponseHandlerRef" />
+    <AgentInputModal
+      :visible="showAgentModal"
+      :position="modalPosition"
+      :editor-info="editorInfo"
+      @close="showAgentModal = false"
+      @send="handleAgentMessage"
+    />
   </div>
 </template>
 
@@ -55,6 +64,7 @@ import EditorContent from './EditorContent.vue';
 import MentionHandler from './MentionHandler.vue';
 import AgentResponseHandler from './AgentResponseHandler.vue';
 import DocumentOutline from './DocumentOutline.vue';
+import AgentInputModal from './AgentInputModal.vue';
 
 // Props声明
 const props = defineProps({
@@ -82,11 +92,16 @@ const showAgentSelector = ref(false);
 const currentRange = ref(null);
 const selectedHeading = ref('p');
 const showOutline = ref(true); // 默认显示大纲
+const showAgentModal = ref(false);
+const currentCursorRange = ref(null);
+const modalPosition = ref({ y: 0, x: 0 });
+const editorInfo = ref({ left: 0, right: 0, width: 0, editorOffsetLeft: 0 });
 
 // 组件引用
 const editorContentRef = ref(null);
 const agentResponseHandlerRef = ref(null);
 const documentOutlineRef = ref(null);
+const mentionHandlerRef = ref(null);
 
 // 切换大纲显示状态
 const toggleOutline = () => {
@@ -177,7 +192,10 @@ const setHeading = (heading: string) => {
 
 // 获取完整内容的辅助方法
 const getFullContent = () => {
-  return editorContentRef.value?.editorRef?.innerHTML || '';
+  if (editorContentRef.value && editorContentRef.value.editorRef) {
+    return editorContentRef.value.editorRef.innerHTML;
+  }
+  return props.modelValue;
 };
 
 // 设置字号
@@ -287,50 +305,35 @@ const showAgentSelectorAt = (range) => {
   
   // 使用nextTick确保选择器DOM已经渲染
   nextTick(() => {
-    if (range) {
-      const rect = range.getBoundingClientRect();
-      if (rect) {
-        // 查找选择器元素
-        const selectorElement = document.querySelector('.agent-selector') as HTMLElement;
-        if (selectorElement) {
-          console.log('找到选择器元素，将设置位置');
-          
-          // 获取编辑器内容区域的位置
-          const editorContentElement = editorContentRef.value?.editorRef;
-          const editorRect = editorContentElement?.getBoundingClientRect();
-          
-          if (editorRect) {
-            // 计算相对于编辑器的位置
-            let top = rect.bottom - editorRect.top + window.scrollY + 5;
-            const left = rect.left - editorRect.left + window.scrollX;
-            
-            // 检查选择器是否会超出窗口底部
-            const viewportHeight = window.innerHeight;
-            const selectorHeight = selectorElement.offsetHeight;
-            const absoluteBottom = rect.bottom + selectorHeight + 5;
-            
-            // 如果超出底部，则向上显示
-            if (absoluteBottom > viewportHeight) {
-              // 在@符号上方显示
-              top = rect.top - editorRect.top + window.scrollY - selectorHeight - 5;
-              console.log('选择器将在上方显示，避免超出窗口');
-            }
-            
-            console.log(`设置选择器位置: top=${top}px, left=${left}px`);
-            selectorElement.style.top = `${top}px`;
-            selectorElement.style.left = `${left}px`;
-          }
-        } else {
-          console.warn('未找到选择器元素');
-        }
-      }
+    // 选择器已经渲染完成，可以计算位置
+    if (mentionHandlerRef.value) {
+      mentionHandlerRef.value.updateSelectorPosition();
     }
   });
 };
 
 // 当选择了AI助手
 const onAgentSelected = (agent) => {
-  console.log('选择了AI助手:', agent.name);
+  showAgentSelector.value = false;
+  
+  // 通过更新编辑器内容触发变更事件
+  setTimeout(() => {
+    const newContent = getFullContent();
+    emit('update:modelValue', newContent);
+    
+    // 给输入框一点时间来渲染，然后确保它获得焦点
+    setTimeout(() => {
+      // 查找刚刚添加的输入框并聚焦
+      const agentInputs = document.querySelectorAll('.agent-input');
+      if (agentInputs.length > 0) {
+        // 获取最后一个输入框（最新添加的）
+        const latestInput = agentInputs[agentInputs.length - 1] as HTMLInputElement;
+        if (latestInput) {
+          latestInput.focus();
+        }
+      }
+    }, 100);
+  }, 0);
 };
 
 // 更新字数计数
@@ -431,6 +434,110 @@ const redoAction = () => {
   nextTick(() => {
     editorContentRef.value?.focus();
   });
+};
+
+// 处理发送消息到Agent
+const handleSendToAgent = (data) => {
+  console.log('发送消息到Agent', data);
+  
+  // 获取AgentResponseHandler引用
+  const agentResponseHandler = agentResponseHandlerRef.value;
+  if (!agentResponseHandler) {
+    console.error('无法获取AgentResponseHandler引用');
+    return;
+  }
+  
+  // 调用AgentResponseHandler的handleInputChat方法
+  agentResponseHandler.handleInputChat(
+    data.inputElement,
+    data.agentId,
+    data.content,
+    data.containerElement
+  );
+};
+
+// 显示Agent输入弹窗
+const showAgentModalAt = (data) => {
+  console.log('显示Agent输入弹窗，接收到的定位数据:', data);
+  
+  // 保存当前范围，用于后续插入响应
+  currentCursorRange.value = data.range;
+  
+  // 设置弹窗位置（使用视口位置）
+  if (data.cursorPosition && data.cursorPosition.viewport) {
+    modalPosition.value = {
+      y: data.cursorPosition.viewport.y,
+      x: data.cursorPosition.viewport.x
+    };
+  }
+  
+  // 保存编辑器信息，用于计算输入框位置
+  if (data.editorInfo) {
+    editorInfo.value = {
+      ...data.editorInfo,
+      // 确保传递所有必要的编辑器信息
+      left: data.editorInfo.left,
+      right: data.editorInfo.right,
+      width: data.editorInfo.width,
+      editorOffsetLeft: data.editorInfo.editorOffsetLeft
+    };
+    
+    console.log('已更新编辑器信息:', editorInfo.value);
+  }
+  
+  // 显示弹窗
+  showAgentModal.value = true;
+};
+
+// 处理Agent消息发送
+const handleAgentMessage = (data) => {
+  try {
+    // 如果有保存的范围，在该位置插入响应
+    if (currentCursorRange.value && agentResponseHandlerRef.value) {
+      // 使用保存的范围，调用handleChat插入响应
+      agentResponseHandlerRef.value.handleChat(
+        data.agentId,
+        data.content,
+        editorContentRef.value.editorRef,
+        currentCursorRange.value
+      );
+      
+      // 重置范围
+      currentCursorRange.value = null;
+    } else {
+      console.warn('缺少光标位置信息或响应处理器，无法插入AI响应');
+    }
+  } catch (error) {
+    console.error('处理Agent消息时出错:', error);
+    // 尝试优雅地处理错误
+    if (error.message && error.message.includes('removeAllRanges')) {
+      // 特殊处理selection错误
+      console.warn('处理选择范围时出现问题，尝试简单插入响应');
+      // 尝试直接在编辑器当前位置插入文本
+      const editor = editorContentRef.value?.editorRef;
+      if (editor && data.content) {
+        try {
+          // 创建AI响应段落并直接插入到编辑器内容末尾
+          const responseDiv = document.createElement('div');
+          responseDiv.className = 'agent-response-container';
+          responseDiv.innerHTML = `<p class="agent-response-paragraph">正在思考...</p>`;
+          editor.appendChild(responseDiv);
+          
+          // 触发聊天请求
+          agentResponseHandlerRef.value.triggerChatRequest(
+            data.agentId, 
+            data.content,
+            responseDiv.querySelector('.agent-response-paragraph')
+          );
+        } catch (fallbackError) {
+          console.error('备选插入方法也失败:', fallbackError);
+        }
+      }
+    }
+  } finally {
+    // 关闭弹窗
+    showAgentModal.value = false;
+  }
 };
 
 // 组件挂载后聚焦编辑器

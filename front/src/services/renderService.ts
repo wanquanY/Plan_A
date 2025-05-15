@@ -1080,4 +1080,37 @@ export const renderMarkMaps = async () => {
     // 确保出错时也释放锁
     (window as any)['markmap-rendering-in-progress'] = false;
   }
+};
+
+/**
+ * 统一渲染内容组件（思维导图和图表）
+ * 该函数作为主入口点，处理所有类型的渲染内容
+ * @param force 是否强制渲染所有元素，无视处理标记
+ */
+export const renderContentComponents = (force = false) => {
+  console.log('开始统一渲染内容组件，force =', force);
+  
+  try {
+    // 首先渲染代码块
+    renderCodeBlocks(true);
+    
+    // 然后渲染图表
+    renderMermaidDiagrams();
+    
+    // 最后渲染思维导图
+    renderMarkMaps();
+    
+    // 如果设置了自动渲染监听，也触发一次
+    const mermaidObserver = (window as any).mermaidAutoRenderObserver;
+    if (mermaidObserver && typeof mermaidObserver.renderPending === 'function') {
+      console.log('触发自动渲染监听器');
+      mermaidObserver.renderPending(force);
+    }
+    
+    console.log('统一渲染内容组件完成');
+    return true;
+  } catch (error) {
+    console.error('统一渲染内容组件失败:', error);
+    return false;
+  }
 }; 

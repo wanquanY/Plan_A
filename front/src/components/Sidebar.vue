@@ -335,6 +335,13 @@ const handleSessionDeleteClick = async (event, session) => {
     message.error('删除失败，请稍后重试');
   }
 };
+
+// 处理笔记点击
+const noteItemClick = (noteId, event) => {
+  console.log(`笔记被点击，ID: ${noteId}`);
+  event.stopPropagation();
+  emit('note-click', noteId);
+};
 </script>
 
 <template>
@@ -381,7 +388,7 @@ const handleSessionDeleteClick = async (event, session) => {
           :key="note.id" 
           class="note-item" 
           :class="{ active: note.id.toString() === route.query.note }"
-          @click="emit('note-click', note.id)"
+          @click="noteItemClick(note.id, $event)"
         >
           <div class="note-content">
             <div v-if="showRenameInput && editingNoteId === note.id" class="rename-input-wrapper" @click.stop>

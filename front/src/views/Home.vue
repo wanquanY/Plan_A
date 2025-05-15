@@ -263,7 +263,7 @@ const fetchSessionDetail = async (sessionId) => {
 // 获取笔记详情
 const fetchNoteDetail = async (noteId: number) => {
   try {
-    console.log(`从笔记详情设置笔记ID: ${noteId}`);
+    console.log(`开始获取笔记详情，ID: ${noteId}`);
     currentNoteId.value = noteId;
     
     // 检查笔记关联的会话
@@ -277,13 +277,16 @@ const fetchNoteDetail = async (noteId: number) => {
     
     // 加载笔记内容
     const noteRes = await noteService.getNoteDetail(noteId);
-    const note = noteRes.data;
+    console.log('笔记详情获取成功:', noteRes);
+    
+    // 安全地访问数据，确保即使数据格式不符合预期也不会崩溃
+    const note = noteRes?.data || noteRes || {};
     
     // 判断是否是新创建的笔记
-    const isNewNote = note.content === null || note.content === '';
+    const isNewNote = !note.content || note.content === '';
     
     // 设置编辑器内容和标题
-    editorContent.value = isNewNote ? '# ' : note.content;
+    editorContent.value = isNewNote ? '# ' : (note.content || '<p></p>');
     editorTitle.value = note.title || '无标题笔记';
     
     // 在DOM更新后立即渲染组件
@@ -309,7 +312,8 @@ const fetchNoteDetail = async (noteId: number) => {
         
         // 如果检测到特殊内容，给予更长的时间再尝试一次
         setTimeout(() => {
-          if (note.content.includes('```markdown') || note.content.includes('# ')) {
+          const content = note.content || '';
+          if (content.includes('```markdown') || content.includes('# ')) {
             console.log('检测到可能包含思维导图的内容，再次尝试渲染');
             renderContentComponents(true);
           }
@@ -325,8 +329,20 @@ const fetchNoteDetail = async (noteId: number) => {
     saved.value = true;
   } catch (error) {
     console.error('获取笔记详情失败:', error);
-    // 错误处理
-    if (axios.isAxiosError(error) && error.response?.status === 404) {
+    
+    // 尝试使用错误中附带的默认笔记数据
+    if (error && (error as any).noteData) {
+      console.log('使用错误中的默认笔记数据');
+      const defaultNote = (error as any).noteData;
+      editorContent.value = defaultNote.content || '<p>笔记加载失败，请刷新页面重试</p>';
+      editorTitle.value = defaultNote.title || '无法加载笔记';
+      saved.value = true;
+      return;
+    }
+    
+    // 错误处理，使用import导入axios而不是直接引用
+    const isAxiosError = (err) => err && err.isAxiosError;
+    if (isAxiosError(error) && error.response?.status === 404) {
       // 处理笔记不存在的情况
       message.error('笔记不存在');
       router.push('/');
