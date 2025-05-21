@@ -12,6 +12,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from backend.middlewares import RequestIdMiddleware
 from backend.utils.random_util import RandomUtil
+from backend.db.session import init_db
 
 
 # 创建API请求日志中间件
@@ -94,6 +95,7 @@ async def root(request: Request):
 @app.on_event("startup")
 async def startup_event():
     app_logger.info("应用程序启动")
+    await init_db()
     app_logger.info(f"随机测试ID: {RandomUtil.generate_request_id()}")
 
 

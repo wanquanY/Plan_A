@@ -438,7 +438,7 @@ const deleteSession = async (sessionId: number): Promise<boolean> => {
       return false;
     }
   } catch (error) {
-    console.error('删除会话请求出错:', error);
+    console.error(`删除会话 ${sessionId} 失败:`, error);
     return false;
   }
 };
@@ -460,11 +460,13 @@ if (typeof window !== 'undefined') {
   };
 }
 
-export default {
-  chatWithAgent,
+const chatService = {
+  streamChat: chatWithAgent,
   getSessions,
   getSessionDetail,
   createSession,
   updateSession,
   deleteSession
-}; 
+};
+
+export default chatService; 

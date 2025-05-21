@@ -1,6 +1,37 @@
 <template>
   <div v-if="visible" class="agent-input-modal-wrapper" :style="modalStyle">
     <div class="agent-input-modal" ref="modalRef">
+      <!-- Agent Response Display Area -->
+      <div v-if="isAgentResponding || agentResponse || historyLength > 0" class="agent-response-area">
+        <div class="history-navigation" v-if="historyLength > 0 && !isAgentResponding">
+          <button 
+            @click="emit('navigate-history', { direction: 'prev' })" 
+            :disabled="historyIndex <= 0"
+            class="history-nav-button prev-button"
+          >
+            &lt; Prev
+          </button>
+          <span class="history-indicator" v-if="historyLength > 0">
+            {{ historyIndex + 1 }} / {{ historyLength }}
+          </span>
+          <button 
+            @click="emit('navigate-history', { direction: 'next' })" 
+            :disabled="historyIndex >= historyLength - 1"
+            class="history-nav-button next-button"
+          >
+            Next &gt;
+          </button>
+        </div>
+
+        <div v-if="isAgentResponding && !agentResponse && historyIndex === -1" class="loading-indicator">
+          AI正在思考中...
+        </div>
+        <pre v-if="agentResponse" class="response-content">{{ agentResponse }}</pre>
+        <div v-if="agentResponse && !isAgentResponding" class="response-actions">
+          <button @click="handleInsertToEditor" class="insert-button">插入到编辑器</button>
+        </div>
+      </div>
+
       <div class="input-area">
         <textarea
           ref="inputRef"
@@ -96,6 +127,7 @@
   flex-direction: column;
   overflow: hidden;
   border: 1px solid rgba(0, 0, 0, 0.06);
+  box-sizing: border-box;
 }
 
 .input-area {
@@ -317,11 +349,97 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+.agent-response-area {
+  padding: 12px 20px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  max-height: 300px; /* Or as needed */
+  overflow-y: auto;
+  background-color: #f8f8f8; /* Slightly different background for distinction */
+}
+
+.loading-indicator {
+  text-align: center;
+  color: #666;
+  padding: 20px;
+}
+
+.response-content-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.response-content {
+  white-space: pre-wrap; /* Allows text to wrap */
+  word-wrap: break-word;
+  font-family: inherit; /* Inherit from modal */
+  font-size: 15px;     /* Slightly smaller than input potentially */
+  color: #333;
+  background-color: #fff;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+  margin-bottom: 10px;
+  min-height: 50px; /* Ensure it has some height even with short content */
+}
+
+.response-actions {
+  display: flex;
+  justify-content: flex-end; /* Aligns button to the right */
+  /* padding-top: 5px; Optional: space above the button if content is short */
+}
+
+.insert-button {
+  align-self: flex-end; /* This is fine, or can be removed if parent handles alignment */
+  padding: 6px 12px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.insert-button:hover {
+  background-color: #0056b3;
+}
+
+.history-navigation {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.history-nav-button {
+  background-color: #f0f0f0;
+  border: 1px solid #ddd;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.history-nav-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.history-indicator {
+  font-size: 12px;
+  color: #555;
+}
 </style>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue';
 import agentService from '../services/agent';
+
+const PROSEMIRROR_PADDING = 16; // 编辑器内边距 (px)
+const FIXED_MODAL_WIDTH = 650; // 弹窗固定宽度 (px)
+const VIEWPORT_BOTTOM_MARGIN = '20px'; // 弹窗距离视口底部距离
 
 const props = defineProps({
   visible: {
@@ -335,10 +453,26 @@ const props = defineProps({
   editorInfo: {
     type: Object,
     default: () => ({ left: 0, right: 0, width: 0, editorOffsetLeft: 0 })
+  },
+  agentResponse: {
+    type: String,
+    default: ''
+  },
+  isAgentResponding: {
+    type: Boolean,
+    default: false
+  },
+  historyIndex: {
+    type: Number,
+    default: -1
+  },
+  historyLength: {
+    type: Number,
+    default: 0
   }
 });
 
-const emit = defineEmits(['close', 'send', 'select-agent']);
+const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history']);
 
 // 状态变量
 const modalRef = ref(null);
@@ -349,133 +483,37 @@ const agents = ref([]);
 const loading = ref(false);
 const selectedAgent = ref(null);
 
+watch(() => props.agentResponse, (newValue) => {
+  console.log('[AgentInputModal] prop agentResponse updated:', newValue);
+});
+
+watch(() => props.isAgentResponding, (newValue) => {
+  console.log('[AgentInputModal] prop isAgentResponding updated:', newValue);
+});
+
 // 计算弹窗位置样式
 const modalStyle = computed(() => {
-  // 计算合适的位置，确保显示在编辑区域内
-  console.log('计算输入框位置，当前信息:', {
-    position: props.position,
-    editorInfo: props.editorInfo
-  });
-  
-  // 获取编辑器内容区域
-  const editorContent = document.querySelector('.editor-content');
-  // 获取编辑器主区域
-  const editorMain = document.querySelector('.editor-main');
-  // 获取大纲是否显示
-  const outlineVisible = !!document.querySelector('.document-outline');
-  
-  console.log('大纲是否可见:', outlineVisible);
-  
-  let leftPos = props.editorInfo.left; // 默认位置
-  let contentWidth = props.editorInfo.width; // 默认宽度
-  
-  if (editorContent) {
-    // 获取编辑内容区域的信息
-    const contentRect = editorContent.getBoundingClientRect();
-    
-    // 尝试找到第一个文本字符
-    const paragraphs = editorContent.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div:not(.bottom-placeholder)');
-    
-    // 遍历段落，寻找有实际文本内容的第一个元素
-    for (const para of paragraphs) {
-      // 排除空段落或仅含空白字符的段落
-      if (para.textContent && para.textContent.trim()) {
-        // 创建一个range定位到段落的第一个字符
-        const range = document.createRange();
-        range.setStart(para, 0);
-        
-        // 尝试找到第一个文本节点中的第一个字符
-        let firstTextNode = null;
-        for (const node of para.childNodes) {
-          if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-            firstTextNode = node;
-            break;
-          }
-        }
-        
-        if (firstTextNode) {
-          range.setStart(firstTextNode, 0);
-          const rect = range.getBoundingClientRect();
-          if (rect && rect.left) {
-            leftPos = rect.left;
-            console.log('找到第一个文本字符位置:', leftPos);
-            break;
-          }
-        } else {
-          // 如果没有文本节点，至少使用段落的左边界
-          const rect = para.getBoundingClientRect();
-          leftPos = rect.left;
-          console.log('使用段落左边界:', leftPos);
-          break;
-        }
-      }
-    }
-    
-    // 如果找不到，使用内容区域左边界
-    if (leftPos === props.editorInfo.left) {
-      leftPos = contentRect.left;
-      console.log('未找到文本，使用编辑区域左边界:', leftPos);
-    }
-    
-    // 宽度计算根据是否有大纲而调整
-    if (editorMain) {
-      const mainRect = editorMain.getBoundingClientRect();
-      // 获取实际文本内容区域宽度
-      contentWidth = mainRect.width;
-      
-      // 测量实际文本宽度 - 使用第一个段落
-      let textWidth = mainRect.width - 40; // 减去默认边距
-      if (paragraphs.length > 0) {
-        const firstPara = paragraphs[0];
-        const paraRect = firstPara.getBoundingClientRect();
-        // 计算段落宽度
-        const paraWidth = paraRect.width;
-        // 计算段落左右边距
-        const leftMargin = paraRect.left - mainRect.left;
-        textWidth = paraWidth;
-        console.log('段落宽度:', paraWidth, '左边距:', leftMargin);
-      }
-      
-      // 计算弹窗实际宽度 - 与文本内容区域一致
-      const rightBoundary = leftPos + textWidth;
-      contentWidth = rightBoundary - leftPos;
-      
-      console.log('编辑器主区域宽度:', mainRect.width, '计算得到内容宽度:', contentWidth);
-    }
-  }
-  
-  // 设置弹窗宽度，考虑编辑区域大小
-  let modalWidth = contentWidth;
-  
-  // 确保有最小宽度
-  modalWidth = Math.max(modalWidth, 400);
-  
-  // 确保不超过最大宽度
-  modalWidth = Math.min(modalWidth, 800);
-  
-  console.log('最终使用的弹窗宽度:', modalWidth);
-  
-  // 处理垂直位置
-  let topPos = props.position.y;
-  const initialModalHeight = 100; // 初始弹窗高度估计值
-  const windowHeight = window.innerHeight;
-  
-  // 检查是否会超出窗口底部
-  if (topPos + initialModalHeight > windowHeight) {
-    // 如果会超出底部，则显示在光标上方
-    topPos = props.position.y - initialModalHeight - 10;
-    
-    // 如果上方空间不足，则尽量贴近窗口底部，避免被截断
-    if (topPos < 50) { // 50px是顶部安全边距
-      topPos = Math.max(windowHeight - initialModalHeight - 20, 50);
-    }
+  let calculatedLeft = '50%'; // 默认视口居中
+  let calculatedTransform = 'translateX(-50%)'; // 配合默认视口居中
+
+  if (props.editorInfo && props.editorInfo.left !== undefined && props.editorInfo.width !== undefined) {
+    // 编辑器文本区域的左侧实际位置
+    const textAreaLeft = props.editorInfo.left + PROSEMIRROR_PADDING;
+    // 编辑器文本区域的实际宽度
+    const textAreaWidth = props.editorInfo.width - (2 * PROSEMIRROR_PADDING);
+
+    // 计算弹窗左侧位置，使其在文本区域内居中
+    calculatedLeft = `${textAreaLeft + (textAreaWidth / 2) - (FIXED_MODAL_WIDTH / 2)}px`;
+    calculatedTransform = 'none'; // 已经通过计算精确定位，不再需要 transform
   }
   
   return {
-    position: 'fixed', // 使用fixed定位，相对于视口
-    left: `${leftPos}px`, 
-    top: `${topPos}px`,
-    width: `${modalWidth}px`, // 设置宽度为文本区域实际宽度
+    position: 'fixed',
+    left: calculatedLeft,
+    bottom: VIEWPORT_BOTTOM_MARGIN, // 固定在视口底部
+    width: `${FIXED_MODAL_WIDTH}px`, // 应用固定宽度
+    maxWidth: '95vw', // 增加一个最大宽度限制，防止在极小屏幕溢出
+    transform: calculatedTransform,
     zIndex: 9999
   };
 });
@@ -513,25 +551,51 @@ const selectAgent = (agent) => {
 
 // 发送消息 - 修改为处理selection问题的安全版本
 const handleSendMessage = () => {
-  if (!selectedAgent.value || !inputValue.value.trim()) return;
-  
-  // 准备发送消息所需的数据
+  console.log('[AgentInputModal] handleSendMessage called.');
+  console.log('[AgentInputModal] inputValue:', inputValue.value);
+  console.log('[AgentInputModal] selectedAgent.value before checks:', JSON.parse(JSON.stringify(selectedAgent.value || null)));
+
+  if (!selectedAgent.value) {
+    console.error('[AgentInputModal] Send failed: selectedAgent is null or undefined.');
+    alert('发送失败：未选择AI助手。');
+    return;
+  }
+  if (!selectedAgent.value.id) {
+    console.error('[AgentInputModal] Send failed: selectedAgent.id is null or undefined. Agent object:', JSON.parse(JSON.stringify(selectedAgent.value)));
+    alert('发送失败：选中的AI助手信息不完整 (缺少ID)。');
+    return;
+  }
+  if (!inputValue.value.trim()) {
+    console.warn('[AgentInputModal] Send attempt with empty input.');
+    return;
+  }
+
   const messageData = {
     agentId: selectedAgent.value.id,
     content: inputValue.value.trim(),
     agent: selectedAgent.value
   };
+  console.log('[AgentInputModal] Prepared messageData:', messageData);
   
-  // 清空输入框
-  inputValue.value = '';
-  
-  // 发送消息前关闭弹窗
-  close();
-  
-  // 确保DOM更新后再发送事件
+  // 清空输入框，但**不关闭弹窗**，等待父组件传递响应
+  inputValue.value = ''; 
+  // close(); // 移除 close() 调用
+
   nextTick(() => {
-    emit('send', messageData);
+    console.log('[AgentInputModal] Emitting send event with data:', messageData);
+    emit('send', messageData); 
+    // 用户发送后，可以不清空输入框，或者由父组件决定何时清空
+    // inputValue.value = ''; // 移到父组件成功处理'send'事件后，或者用户点击'insert'或'close'后
   });
+};
+
+// 新增：处理插入到编辑器
+const handleInsertToEditor = () => {
+  if (props.agentResponse) {
+    emit('request-insert', props.agentResponse);
+    // 可以在这里决定插入后是否关闭弹窗，或由父组件处理
+    // close(); 
+  }
 };
 
 // 处理键盘按键事件
@@ -559,28 +623,6 @@ const handleKeydown = (event) => {
 // 关闭弹窗
 const close = () => {
   emit('close');
-};
-
-// 监听ESC键按下
-const handleKeyDown = (event) => {
-  if (event.key === 'Escape' && props.visible) {
-    close();
-  }
-};
-
-// 处理点击事件，点击输入框外部区域关闭
-const handleClickOutside = (event) => {
-  if (props.visible && modalRef.value && !modalRef.value.contains(event.target)) {
-    close();
-    event.stopPropagation(); // 阻止事件冒泡
-  } else if (props.visible && showAgentSelector.value) {
-    // 如果点击的不是选择器区域，则关闭选择器
-    const dropdown = modalRef.value?.querySelector('.model-dropdown');
-    const selector = modalRef.value?.querySelector('.model-selector');
-    if (dropdown && !dropdown.contains(event.target) && !selector.contains(event.target)) {
-      showAgentSelector.value = false;
-    }
-  }
 };
 
 // 添加自动调整输入框高度的方法
@@ -647,14 +689,13 @@ watch(() => inputValue.value, () => {
 
 // 组件挂载时添加键盘事件监听
 onMounted(() => {
-  document.addEventListener('keydown', handleKeyDown);
-  // 确保全局点击监听是在捕获阶段添加，优先处理点击事件
-  document.addEventListener('click', handleClickOutside, true);
+  // document.addEventListener('keydown', handleKeyDown); // The one in setup for keydown on textarea is different
+  // document.addEventListener('click', handleClickOutside, true); // REMOVING
 });
 
 // 组件卸载时移除事件监听
 onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeyDown);
-  document.removeEventListener('click', handleClickOutside, true);
+  // document.removeEventListener('keydown', handleKeyDown); // REMOVING
+  // document.removeEventListener('click', handleClickOutside, true); // REMOVING
 });
 </script> 

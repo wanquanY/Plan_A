@@ -36,6 +36,13 @@ sync_session_factory = sessionmaker(
 Base = declarative_base()
 
 
+async def init_db():
+    async with engine.begin() as conn:
+        # await conn.run_sync(Base.metadata.drop_all)  # 如果需要，可以取消注释以在每次启动时删除所有表
+        await conn.run_sync(Base.metadata.create_all)
+    db_logger.info("数据库表初始化完成")
+
+
 # 获取异步数据库会话
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     db_logger.debug("创建新的数据库会话")

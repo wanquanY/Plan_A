@@ -46,13 +46,24 @@
         />
       </div>
     </div>
-    <AgentResponseHandler ref="agentResponseHandlerRef" />
+    <AgentResponseHandler 
+      ref="agentResponseHandlerRef" 
+      @agent-response-chunk="onAgentResponseChunk"
+      @agent-response-complete="onAgentResponseComplete"
+      @agent-response-error="onAgentResponseError"
+    />
     <AgentInputModal
       :visible="showAgentModal"
       :position="modalPosition"
       :editor-info="editorInfo"
+      :agentResponse="currentAgentResponse" 
+      :isAgentResponding="isAgentResponding"
+      :historyIndex="historyDisplayIndex"
+      :historyLength="conversationHistory.length"
       @close="showAgentModal = false"
       @send="handleAgentMessage"
+      @request-insert="handleInsertResponse" 
+      @navigate-history="handleHistoryNavigation"
     />
   </div>
 </template>
@@ -83,7 +94,7 @@ const props = defineProps({
 });
 
 // 事件声明
-const emit = defineEmits(['update:modelValue', 'word-count']);
+const emit = defineEmits(['update:modelValue', 'word-count', 'update:conversationId']);
 
 // 状态变量
 const wordCount = ref(0);
@@ -97,13 +108,20 @@ const currentCursorRange = ref(null);
 const modalPosition = ref({ y: 0, x: 0 });
 const editorInfo = ref({ left: 0, right: 0, width: 0, editorOffsetLeft: 0 });
 
+// 新状态变量
+const currentAgentResponse = ref('');
+const isAgentResponding = ref(false);
+const currentSentMessageData = ref(null);
+const conversationHistory = ref([]); // { user: string, agent: string }[]
+const historyDisplayIndex = ref(-1);
+
 // 组件引用
 const editorContentRef = ref(null);
 const agentResponseHandlerRef = ref(null);
 const documentOutlineRef = ref(null);
 const mentionHandlerRef = ref(null);
 
-// 切换大纲显示状态
+// 确保 toggleOutline 方法存在且正确
 const toggleOutline = () => {
   showOutline.value = !showOutline.value;
 };
@@ -113,7 +131,7 @@ watch(() => props.conversationId, (newId) => {
   if (agentResponseHandlerRef.value) {
     console.log(`编辑器接收到会话ID: ${newId || 'null'}，设置到AgentResponseHandler`);
     // 无论newId是否为null都要设置，确保新建会话时能正确清空
-    agentResponseHandlerRef.value.setConversationId(newId ? newId.toString() : null);
+    agentResponseHandlerRef.value.setConversationId(newId ? String(newId) : null);
   }
 }, { immediate: true });
 
@@ -122,7 +140,7 @@ watch(() => props.noteId, (newId) => {
   if (agentResponseHandlerRef.value) {
     console.log(`编辑器接收到笔记ID: ${newId || 'null'}，设置到AgentResponseHandler`);
     // 无论newId是否为null都要设置，确保新建笔记时能正确传递ID
-    agentResponseHandlerRef.value.setCurrentNoteId(newId ? newId.toString() : null);
+    agentResponseHandlerRef.value.setCurrentNoteId(newId ? String(newId) : null);
     
     // 调试输出：确认AgentResponseHandler内部的noteId已被设置
     setTimeout(() => {
@@ -491,53 +509,144 @@ const showAgentModalAt = (data) => {
 
 // 处理Agent消息发送
 const handleAgentMessage = (data) => {
-  try {
-    // 如果有保存的范围，在该位置插入响应
-    if (currentCursorRange.value && agentResponseHandlerRef.value) {
-      // 使用保存的范围，调用handleChat插入响应
-      agentResponseHandlerRef.value.handleChat(
+  console.log('[Editor.vue] handleAgentMessage, data:', data);
+  currentSentMessageData.value = data; // Store sent message data
+  isAgentResponding.value = true;
+  currentAgentResponse.value = ''; // Clear previous response
+
+  if (agentResponseHandlerRef.value) {
+    console.log('[Editor.vue] agentResponseHandlerRef.value is:', agentResponseHandlerRef.value);
+    if (typeof agentResponseHandlerRef.value.triggerChatRequest === 'function') {
+      console.log('[Editor.vue] Calling agentResponseHandlerRef.value.triggerChatRequest');
+      agentResponseHandlerRef.value.triggerChatRequest(
         data.agentId,
-        data.content,
-        editorContentRef.value.editorRef,
-        currentCursorRange.value
+        data.content
       );
-      
-      // 重置范围
-      currentCursorRange.value = null;
     } else {
-      console.warn('缺少光标位置信息或响应处理器，无法插入AI响应');
+      console.error('[Editor.vue] triggerChatRequest is NOT a function on agentResponseHandlerRef.value');
+      isAgentResponding.value = false;
+      currentAgentResponse.value = 'Error: Agent handler function not found.';
     }
-  } catch (error) {
-    console.error('处理Agent消息时出错:', error);
-    // 尝试优雅地处理错误
-    if (error.message && error.message.includes('removeAllRanges')) {
-      // 特殊处理selection错误
-      console.warn('处理选择范围时出现问题，尝试简单插入响应');
-      // 尝试直接在编辑器当前位置插入文本
-      const editor = editorContentRef.value?.editorRef;
-      if (editor && data.content) {
-        try {
-          // 创建AI响应段落并直接插入到编辑器内容末尾
-          const responseDiv = document.createElement('div');
-          responseDiv.className = 'agent-response-container';
-          responseDiv.innerHTML = `<p class="agent-response-paragraph">正在思考...</p>`;
-          editor.appendChild(responseDiv);
-          
-          // 触发聊天请求
-          agentResponseHandlerRef.value.triggerChatRequest(
-            data.agentId, 
-            data.content,
-            responseDiv.querySelector('.agent-response-paragraph')
-          );
-        } catch (fallbackError) {
-          console.error('备选插入方法也失败:', fallbackError);
-        }
-      }
-    }
-  } finally {
-    // 关闭弹窗
-    showAgentModal.value = false;
+  } else {
+    console.error('[Editor.vue] AgentResponseHandler ref not available at call time');
+    isAgentResponding.value = false;
+    currentAgentResponse.value = 'Error: Agent handler not ready.';
   }
+};
+
+// Event Handlers for AgentResponseHandler events
+const onAgentResponseChunk = (chunk: string) => {
+  console.log('[Editor.vue] Received chunk:', chunk);
+  currentAgentResponse.value += chunk;
+};
+
+const onAgentResponseComplete = (data: { responseText: string, conversationId?: string | number }) => {
+  console.log('[Editor.vue] Response complete:', data);
+  currentAgentResponse.value = data.responseText; // Chunk might have already built it
+  isAgentResponding.value = false;
+
+  // Add to history if there was a preceding user message data
+  if (currentSentMessageData.value && currentSentMessageData.value.content) {
+    console.log('[Editor.vue] Storing to history - User:', currentSentMessageData.value.content, 'Agent:', data.responseText);
+    conversationHistory.value.push({
+      user: currentSentMessageData.value.content,
+      agent: data.responseText
+    });
+    historyDisplayIndex.value = conversationHistory.value.length - 1;
+    console.log('[Editor.vue] Added to conversation history. New length:', conversationHistory.value.length, 'Current index:', historyDisplayIndex.value);
+  } else {
+    console.warn('[Editor.vue] No currentSentMessageData found, cannot save to history reliably.');
+    // Handle cases where AI responds without direct user input if necessary, 
+    // or simply update current response without adding to history.
+    // For now, if no user input, we might not want to push to history or reset index.
+  }
+
+  if (data.conversationId && props.conversationId !== data.conversationId) {
+    emit('update:conversationId', data.conversationId);
+    console.log('[Editor.vue] Updated conversationId to:', data.conversationId);
+  }
+  // TODO: Clear input in AgentInputModal if needed
+  // For example, if AgentInputModal has a ref and a clearInput method: agentInputModalRef.value.clearInput();
+};
+
+const onAgentResponseError = (error) => {
+  console.error('[Editor.vue] Agent response error:', error);
+  isAgentResponding.value = false;
+  currentAgentResponse.value = `抱歉，AI助手出错了: ${error.message || '未知错误'}`;
+};
+
+// New method for handling history navigation
+const handleHistoryNavigation = (payload: { direction: 'prev' | 'next' }) => {
+  if (!conversationHistory.value || conversationHistory.value.length === 0) return;
+
+  const { direction } = payload;
+  let newIndex = historyDisplayIndex.value;
+
+  if (direction === 'prev' && historyDisplayIndex.value > 0) {
+    newIndex--;
+  } else if (direction === 'next' && historyDisplayIndex.value < conversationHistory.value.length - 1) {
+    newIndex++;
+  }
+
+  if (newIndex !== historyDisplayIndex.value) {
+    historyDisplayIndex.value = newIndex;
+    const historicResponse = conversationHistory.value[newIndex].agent;
+    currentAgentResponse.value = historicResponse;
+    console.log('[Editor.vue] Displaying historic response:', historicResponse);
+    console.log('[Editor.vue] Full history for debugging:', JSON.parse(JSON.stringify(conversationHistory.value)));
+    // We might also want to show the corresponding user input, 
+    // but AgentInputModal currently doesn't have a prop for that. 
+    // For now, only agent response changes.
+    console.log(`[Editor.vue] Navigated history to index: ${newIndex}. Displaying new agent response.`);
+  }
+};
+
+// Handler for inserting content from modal into editor
+const handleInsertResponse = (responseText: string) => {
+  console.log('[Editor.vue] Request to insert:', responseText);
+  // Use editorContentRef.value.editor for the TipTap instance
+  if (editorContentRef.value && editorContentRef.value.editor && responseText) { 
+    const tiptapEditor = editorContentRef.value.editor; // Correct way to get TipTap instance
+
+    // Ensure tiptapEditor and its state are valid
+    if (!tiptapEditor.state || !tiptapEditor.state.selection) {
+      console.error('[Editor.vue] TipTap editor state or selection is not available for insert.');
+      return;
+    }
+
+    // state.selection.to might not be reliable if editor lost focus.
+    // currentCursorRange.value was stored when modal was opened.
+    const rangeToInsert = currentCursorRange.value; 
+
+    if (!rangeToInsert) {
+        console.warn('[Editor.vue] currentCursorRange.value is not set. Attempting to insert at current selection or end.');
+        // Fallback: Try to get current selection if possible, or insert at the end.
+        // This situation should ideally be avoided by ensuring currentCursorRange is always set.
+        const currentSelection = tiptapEditor.state.selection;
+        const endPos = tiptapEditor.state.doc.content.size;
+        const insertPos = (currentSelection && currentSelection.to <= endPos) ? currentSelection : { from: endPos, to: endPos };
+        tiptapEditor.chain().focus().insertContentAt(insertPos, responseText).run();
+    } else {
+        // Check if rangeToInsert is valid within the document
+        if (rangeToInsert.from > tiptapEditor.state.doc.content.size || rangeToInsert.to > tiptapEditor.state.doc.content.size) {
+            console.error('[Editor.vue] Saved rangeToInsert is out of bounds. Inserting at the end instead.', rangeToInsert, 'Doc size:', tiptapEditor.state.doc.content.size);
+            const endPos = tiptapEditor.state.doc.content.size;
+            tiptapEditor.chain().focus().insertContentAt(endPos, responseText).run();
+        } else {
+            tiptapEditor.chain().focus().insertContentAt(rangeToInsert, responseText).run();
+        }
+    }
+    
+    emit('update:modelValue', tiptapEditor.getHTML()); 
+  } else {
+    console.warn('[Editor.vue] Editor instance or responseText not available for insert.');
+    if (!responseText) console.warn('[Editor.vue] responseText for insert is empty');
+    if (!editorContentRef.value) console.warn('[Editor.vue] editorContentRef.value is null');
+    else if (!editorContentRef.value.editor) console.warn('[Editor.vue] editorContentRef.value.editor (TipTap instance) is null');
+  }
+  currentAgentResponse.value = ''; // Clear response from modal display
+  // showAgentModal.value = false; // Optionally close modal after insert
+  // TODO: Clear input in AgentInputModal
 };
 
 // 组件挂载后聚焦编辑器
