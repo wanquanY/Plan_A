@@ -282,6 +282,12 @@ const fetchNoteDetail = async (noteId: number) => {
     // 安全地访问数据，确保即使数据格式不符合预期也不会崩溃
     const note = noteRes?.data || noteRes || {};
     
+    // 如果笔记有关联的session_id，设置currentSessionId
+    if (note.session_id && !route.query.sessionId) {
+      console.log(`笔记关联了会话ID: ${note.session_id}，设置currentSessionId`);
+      currentSessionId.value = note.session_id;
+    }
+    
     // 判断是否是新创建的笔记
     const isNewNote = !note.content || note.content === '';
     

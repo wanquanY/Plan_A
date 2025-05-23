@@ -59,30 +59,34 @@ const authService = {
     formData.append('client_id', 'string');
     formData.append('client_secret', 'string');
 
-    const response = await apiClient.post<ApiResponse<{
-      user: User,
+    const response = await apiClient.post<{
       access_token: string,
       token_type: string
-    }>>('/auth/login', formData, {
+    }>('/auth/login', formData, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
     });
     
-    if (response.data.code === 200 && response.data.data) {
-      const { access_token, user } = response.data.data;
+    // 后端直接返回token信息，不是包装在ApiResponse中
+    if (response.data && response.data.access_token) {
+      const { access_token, token_type } = response.data;
       
       // 存储token到localStorage
       localStorage.setItem('access_token', access_token);
+      localStorage.setItem('token_type', token_type || 'bearer');
       
-      // 存储用户信息到localStorage
-      if (user) {
-        localStorage.setItem('user_info', JSON.stringify(user));
-      }
+      // 存储用户信息到localStorage（从token中解析或从其他接口获取）
+      // 暂时存储基本信息，可以后续通过其他接口获取完整用户信息
+      const userInfo = {
+        username: username,
+        // 可以从JWT token中解析更多信息
+      };
+      localStorage.setItem('user_info', JSON.stringify(userInfo));
       
-      return response.data.data;
+      return response.data;
     } else {
-      throw new Error(response.data.msg || '登录失败');
+      throw new Error('登录响应格式错误');
     }
   },
 

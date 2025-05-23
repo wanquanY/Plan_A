@@ -122,14 +122,9 @@ async def login_for_access_token(
     }
     
     # 返回响应数据
-    response_data = {
-        "user": user_dict,
+    return {
         "access_token": access_token,
-        "token_type": "bearer"
-    }
-    
-    return SuccessResponse(
-        data=response_data,
-        msg="登录成功",
-        request_id=getattr(request.state, "request_id", None)
-    ) 
+        "token_type": "bearer",
+        # 如果需要，你仍然可以包含user信息，但这对于OAuth2流程不是必需的
+        # "user": user_dict 
+    } 

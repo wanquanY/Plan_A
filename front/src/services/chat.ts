@@ -393,6 +393,74 @@ const getSessionDetail = async (sessionId: number): Promise<ChatSessionDetail | 
   }
 };
 
+// 根据会话ID获取历史Agent记录（用于笔记关联的对话历史）
+const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: string, agent: string}> | null> => {
+  try {
+    if (!sessionId) {
+      console.log('没有会话ID，返回空历史记录');
+      return null;
+    }
+
+    console.log(`获取会话 ${sessionId} 的Agent历史记录`);
+    
+    const sessionDetail = await getSessionDetail(sessionId);
+    if (!sessionDetail || !sessionDetail.messages) {
+      console.log(`会话 ${sessionId} 没有消息记录`);
+      return null;
+    }
+
+    // 将消息按照用户-AI的配对方式组织
+    const agentHistory: Array<{user: string, agent: string}> = [];
+    const messages = sessionDetail.messages.sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    let currentUserMessage = '';
+    let currentAgentMessage = '';
+    
+    for (const message of messages) {
+      if (message.role === 'user') {
+        // 如果已经有一对完整的对话，先保存它
+        if (currentUserMessage && currentAgentMessage) {
+          agentHistory.push({
+            user: currentUserMessage,
+            agent: currentAgentMessage
+          });
+          currentUserMessage = '';
+          currentAgentMessage = '';
+        }
+        currentUserMessage = message.content;
+      } else if (message.role === 'assistant') {
+        currentAgentMessage = message.content;
+        
+        // 如果有用户消息，立即配对
+        if (currentUserMessage) {
+          agentHistory.push({
+            user: currentUserMessage,
+            agent: currentAgentMessage
+          });
+          currentUserMessage = '';
+          currentAgentMessage = '';
+        }
+      }
+    }
+    
+    // 处理剩余的单独消息
+    if (currentUserMessage && currentAgentMessage) {
+      agentHistory.push({
+        user: currentUserMessage,
+        agent: currentAgentMessage
+      });
+    }
+
+    console.log(`会话 ${sessionId} 的Agent历史记录:`, agentHistory);
+    return agentHistory;
+  } catch (error) {
+    console.error(`获取会话 ${sessionId} 的历史记录失败:`, error);
+    return null;
+  }
+};
+
 // 创建新的会话
 const createSession = async (title: string = '新会话'): Promise<ChatSession | null> => {
   try {
@@ -464,6 +532,7 @@ const chatService = {
   streamChat: chatWithAgent,
   getSessions,
   getSessionDetail,
+  getSessionAgentHistory,
   createSession,
   updateSession,
   deleteSession

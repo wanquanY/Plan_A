@@ -454,14 +454,21 @@ const triggerChatRequest = async (agentId, userInputContent) => {
 
       try {
         const data = response.data?.data || {};
-        const chunkContent = data.content || ''; 
-        // Use the accumulator for finalContent only if data.full_content is not available or stream is not done yet.
-        // If stream is done and data.full_content exists, it should be preferred.
-        let resolvedFinalContent = data.full_content;
-        if (!resolvedFinalContent && (data.done || isComplete)) {
-            resolvedFinalContent = fullResponseAccumulator;
+        let chunkContent = '';
+        
+        // 检查是否有增量内容字段
+        if (data.content) {
+          // 如果有增量内容，直接使用
+          chunkContent = data.content;
+        } else if (data.full_content) {
+          // 如果只有完整内容，计算与上次的差异
+          const currentFullContent = data.full_content;
+          if (currentFullContent.length > fullResponseAccumulator.length) {
+            // 提取新增的部分
+            chunkContent = currentFullContent.substring(fullResponseAccumulator.length);
+          }
         }
-
+        
         const isStreamDone = data.done || isComplete;
 
         if (chunkContent) {
@@ -471,10 +478,10 @@ const triggerChatRequest = async (agentId, userInputContent) => {
 
         if (isStreamDone) {
           streamSignaledEnd = true;
-          // Ensure resolvedFinalContent is up-to-date if chunkContent was the last piece of info
-          if (chunkContent && !data.full_content) resolvedFinalContent = fullResponseAccumulator;
-          console.log(`[AgentResponseHandler] Stream ended. Emitting complete. ConvID: ${convId}, Response: ${resolvedFinalContent}`);
-          emit('agent-response-complete', { responseText: resolvedFinalContent, conversationId: convId });
+          // 确保最终内容是完整的
+          const finalContent = data.full_content || fullResponseAccumulator;
+          console.log(`[AgentResponseHandler] Stream ended. Emitting complete. ConvID: ${convId}, Response: ${finalContent}`);
+          emit('agent-response-complete', { responseText: finalContent, conversationId: convId });
         }
       } catch (errorInCallback) {
         if (!streamSignaledEnd) {

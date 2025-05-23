@@ -1,111 +1,175 @@
 <template>
   <div v-if="visible" class="agent-input-modal-wrapper" :style="modalStyle">
     <div class="agent-input-modal" ref="modalRef">
+      <!-- Mac风格关闭按钮 -->
+      <div class="mac-close-button" @click="close" title="关闭">
+        <div class="close-x">×</div>
+      </div>
+      
       <!-- Agent Response Display Area -->
       <div v-if="isAgentResponding || agentResponse || historyLength > 0" class="agent-response-area">
-        <div class="history-navigation" v-if="historyLength > 0 && !isAgentResponding">
-          <button 
-            @click="emit('navigate-history', { direction: 'prev' })" 
-            :disabled="historyIndex <= 0"
-            class="history-nav-button prev-button"
-          >
-            &lt; Prev
-          </button>
-          <span class="history-indicator" v-if="historyLength > 0">
-            {{ historyIndex + 1 }} / {{ historyLength }}
-          </span>
-          <button 
-            @click="emit('navigate-history', { direction: 'next' })" 
-            :disabled="historyIndex >= historyLength - 1"
-            class="history-nav-button next-button"
-          >
-            Next &gt;
-          </button>
+        <!-- 显示流式响应内容 -->
+        <div v-if="agentResponse" class="response-content">
+          {{ agentResponse }}
+          <!-- 在流式响应过程中显示打字指示器 -->
+          <span v-if="isAgentResponding" class="typing-indicator">|</span>
         </div>
-
-        <div v-if="isAgentResponding && !agentResponse && historyIndex === -1" class="loading-indicator">
-          AI正在思考中...
+        
+        <!-- 初始加载指示器（仅在没有任何响应内容时显示） -->
+        <div v-else-if="isAgentResponding && historyIndex === -1" class="loading-indicator">
+          <div class="loading-spinner"></div>
+          <span>AI正在思考中...</span>
         </div>
-        <pre v-if="agentResponse" class="response-content">{{ agentResponse }}</pre>
+        
+        <!-- 操作按钮栏 - 仿照截图的布局 -->
         <div v-if="agentResponse && !isAgentResponding" class="response-actions">
-          <button @click="handleInsertToEditor" class="insert-button">插入到编辑器</button>
+          <div class="action-buttons-left">
+            <button @click="handleInsertToEditor" class="action-button primary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14,2 14,8 20,8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10,9 9,9 8,9"></polyline>
+              </svg>
+              插入文档
+            </button>
+            
+            <button @click="copyResponse" class="action-button secondary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              复制
+            </button>
+            
+            <div class="action-button-dropdown">
+              <button @click="toggleAdjustMenu" class="action-button secondary dropdown-trigger">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
+                </svg>
+                调整
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="dropdown-arrow">
+                  <polyline points="6,9 12,15 18,9"></polyline>
+                </svg>
+              </button>
+              
+              <div v-if="showAdjustMenu" class="adjust-dropdown">
+                <button @click="adjustTone('formal')" class="adjust-option">更正式</button>
+                <button @click="adjustTone('casual')" class="adjust-option">更随意</button>
+                <button @click="adjustTone('shorter')" class="adjust-option">更简短</button>
+                <button @click="adjustTone('longer')" class="adjust-option">更详细</button>
+              </div>
+            </div>
+          </div>
+          
+          <div class="action-buttons-right">
+            <!-- 历史导航 -->
+            <div class="history-controls" v-if="historyLength > 0">
+              <button 
+                @click="emit('navigate-history', { direction: 'prev' })" 
+                :disabled="historyIndex <= 0"
+                class="nav-button"
+                title="上一条回复"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="15,18 9,12 15,6"></polyline>
+                </svg>
+              </button>
+              
+              <span class="page-indicator">{{ historyIndex + 1 }}/{{ historyLength }}</span>
+              
+              <button 
+                @click="emit('navigate-history', { direction: 'next' })" 
+                :disabled="historyIndex >= historyLength - 1"
+                class="nav-button"
+                title="下一条回复"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="9,18 15,12 9,6"></polyline>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
       <div class="input-area">
-        <textarea
-          ref="inputRef"
-          class="agent-input"
-          placeholder="告诉我你想写点什么"
-          v-model="inputValue"
-          @keydown="handleKeydown"
-          @click.stop
-          @input="autoResize"
-          rows="1"
-        ></textarea>
-      </div>
-      
-      <div class="bottom-controls">
-        <div class="model-selector-container">
-          <div 
-            class="model-selector"
-            @click.stop="showAgentSelector = !showAgentSelector"
-          >
-            <div class="model-avatar" v-if="selectedAgent">
-              <img 
-                :src="selectedAgent.avatar_url || 'https://placehold.co/40x40?text=AI'" 
-                :alt="selectedAgent.name" 
-                onerror="this.src='https://placehold.co/40x40?text=AI'"
-              />
+        <div class="unified-input-container">
+          <!-- Agent选择器 -->
+          <div class="model-selector-container">
+            <div 
+              class="model-selector"
+              @click.stop="showAgentSelector = !showAgentSelector"
+            >
+              <span class="model-name">{{ selectedAgent ? selectedAgent.name : 'AI助手' }}</span>
+              <svg class="dropdown-icon" viewBox="0 0 24 24" width="12" height="12">
+                <path fill="currentColor" d="M7 10l5 5 5-5z"></path>
+              </svg>
             </div>
-            <span class="model-name">{{ selectedAgent ? selectedAgent.name : 'claude3.7 (我的副本)' }}</span>
-            <svg class="dropdown-icon" viewBox="0 0 24 24" width="16" height="16">
-              <path fill="currentColor" d="M7 10l5 5 5-5z"></path>
-            </svg>
-          </div>
-          
-          <div v-if="showAgentSelector" class="model-dropdown">
-            <div class="model-list">
-              <div
-                v-for="agent in agents"
-                :key="agent.id"
-                class="model-item"
-                @click.stop="selectAgent(agent)"
-              >
-                <div class="model-item-avatar">
-                  <img 
-                    :src="agent.avatar_url || 'https://placehold.co/40x40?text=AI'" 
-                    :alt="agent.name" 
-                    onerror="this.src='https://placehold.co/40x40?text=AI'"
-                  />
+            
+            <div v-if="showAgentSelector" class="model-dropdown">
+              <div class="model-list">
+                <div
+                  v-for="agent in agents"
+                  :key="agent.id"
+                  class="model-item"
+                  @click.stop="selectAgent(agent)"
+                >
+                  <div class="model-item-avatar">
+                    <img 
+                      :src="agent.avatar_url || 'https://placehold.co/40x40?text=AI'" 
+                      :alt="agent.name" 
+                      onerror="this.src='https://placehold.co/40x40?text=AI'"
+                    />
+                  </div>
+                  <span class="model-item-name">{{ agent.name }}</span>
                 </div>
-                <span class="model-item-name">{{ agent.name }}</span>
+                <div v-if="loading" class="model-loading">
+                  <div class="loading-spinner small"></div>
+                  加载中...
+                </div>
+                <div v-if="!loading && agents.length === 0" class="model-empty">暂无可用AI助手</div>
               </div>
-              <div v-if="loading" class="model-loading">加载中...</div>
-              <div v-if="!loading && agents.length === 0" class="model-empty">暂无可用AI助手</div>
             </div>
           </div>
-        </div>
-        
-        <div class="right-buttons">
-          <button 
-            class="attach-button"
+
+          <!-- 输入框 -->
+          <textarea
+            ref="inputRef"
+            class="agent-input"
+            placeholder="问个问题，或者告诉我你想写点什么"
+            v-model="inputValue"
+            @keydown="handleKeydown"
             @click.stop
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path>
-            </svg>
-          </button>
+            @input="autoResize"
+            rows="1"
+          ></textarea>
           
-          <button 
-            class="send-button" 
-            @click.stop="handleSendMessage"
-            :disabled="!selectedAgent || !inputValue.trim()"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
-            </svg>
-          </button>
+          <!-- 右侧操作按钮 -->
+          <div class="input-actions">
+            <button 
+              class="attach-button"
+              @click.stop
+              title="附件"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"></path>
+              </svg>
+            </button>
+            
+            <button 
+              class="send-button" 
+              @click.stop="handleSendMessage"
+              :disabled="!selectedAgent || !inputValue.trim()"
+              title="发送"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -116,98 +180,557 @@
 .agent-input-modal-wrapper {
   position: fixed;
   z-index: 9999;
+  pointer-events: all;
 }
 
 .agent-input-modal {
   width: 100%;
-  background-color: white;
-  border-radius: 14px;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.06);
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 
+    0 24px 48px rgba(0, 0, 0, 0.12),
+    0 12px 24px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  overflow: visible;
+  border: 1px solid rgba(229, 231, 235, 0.8);
   box-sizing: border-box;
+  position: relative;
+}
+
+/* Mac风格关闭按钮 */
+.mac-close-button {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ff5f57;
+  border: 1px solid #e0443e;
+  cursor: pointer;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.mac-close-button:hover {
+  background: #ff4136;
+  border-color: #d73027;
+  transform: scale(1.1);
+}
+
+.mac-close-button:active {
+  transform: scale(0.95);
+}
+
+.close-x {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.6);
+  font-weight: 500;
 }
 
 .input-area {
-  padding: 16px 20px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  max-height: 250px;
-  overflow: hidden;
+  padding: 24px;
   position: relative;
+  background: #ffffff;
 }
 
-.agent-input {
-  width: 100%;
-  box-sizing: border-box;
-  border: none;
-  outline: none;
-  font-size: 16px;
-  line-height: 1.5;
-  color: #333;
-  background: transparent;
-  resize: none;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 24px;
-  max-height: 220px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  padding: 0;
-  margin: 0;
-  word-wrap: break-word;
-  display: block;
-}
-
-.agent-input::placeholder {
-  color: #929292;
-  font-weight: 400;
-}
-
-.bottom-controls {
+.unified-input-container {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 20px;
-  background-color: #fafafa;
-  position: relative;
-  box-sizing: border-box;
-  max-width: 100%;
+  align-items: flex-end;
+  gap: 12px;
+  background: #f1f3f4;
+  border-radius: 24px;
+  padding: 12px 16px;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+  transition: all 0.2s ease;
+}
+
+.unified-input-container:focus-within {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
 .model-selector-container {
-  display: flex;
-  align-items: center;
-  position: static;
-  box-sizing: border-box;
-  max-width: 100%;
+  position: relative;
+  flex-shrink: 0;
 }
 
 .model-selector {
   display: flex;
   align-items: center;
-  background-color: #f1f1f1;
-  border-radius: 20px;
-  padding: 4px 12px 4px 4px;
+  background: transparent;
+  border: none;
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition: all 0.2s ease;
   user-select: none;
-  box-sizing: border-box;
-  max-width: 100%;
-  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 12px;
 }
 
 .model-selector:hover {
-  background-color: #e9e9e9;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.model-name {
+  font-size: 14px;
+  color: #374151;
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.dropdown-icon {
+  color: #6b7280;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.agent-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #1f2937;
+  resize: none;
+  overflow-y: hidden;
+  min-height: 24px;
+  max-height: 120px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  padding: 0;
+  margin: 0;
+  word-wrap: break-word;
+}
+
+.agent-input::placeholder {
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.input-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.attach-button,
+.send-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.attach-button {
+  background: transparent;
+  color: #6b7280;
+}
+
+.attach-button:hover {
+  background: rgba(255, 255, 255, 0.6);
+  color: #374151;
+}
+
+.send-button {
+  background: #6366f1;
+  color: white;
+}
+
+.send-button:hover:not(:disabled) {
+  background: #5b5ce6;
+  transform: scale(1.05);
+}
+
+.send-button:disabled {
+  background: #d1d5db;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.model-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  background: #ffffff;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+  border-radius: 12px;
+  box-shadow: 
+    0 20px 25px -5px rgba(0, 0, 0, 0.12),
+    0 10px 10px -5px rgba(0, 0, 0, 0.06);
+  z-index: 10000;
+  max-height: 240px;
+  overflow-y: auto;
+  min-width: 200px;
+}
+
+.model-list {
+  padding: 8px;
+}
+
+.model-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 8px;
+  margin-bottom: 2px;
+}
+
+.model-item:hover {
+  background: #f8fafc;
+}
+
+.model-item:last-child {
+  margin-bottom: 0;
+}
+
+.model-item-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  overflow: hidden;
+  margin-right: 10px;
+  flex-shrink: 0;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+}
+
+.model-item-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.model-item-name {
+  font-size: 14px;
+  color: #374151;
+  font-weight: 500;
+}
+
+.model-loading,
+.model-empty {
+  padding: 16px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Agent Response Area Styles */
+.agent-response-area {
+  border-bottom: 1px solid rgba(229, 231, 235, 0.5);
+  padding: 24px;
+  background: #fafbfc;
+  overflow: visible; /* 完全移除滚动，让下拉菜单可以正常显示 */
+  position: relative; /* 确保下拉菜单正确定位 */
+}
+
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #e5e7eb;
+  border-top: 2px solid #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.loading-spinner.small {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.response-content {
+  background: #ffffff;
+  border: 1px solid rgba(229, 231, 235, 0.5);
+  border-radius: 12px;
+  padding: 20px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1f2937;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0 0 16px 0;
+  max-height: 320px;
+  overflow-y: auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.typing-indicator {
+  color: #6366f1;
+  font-weight: bold;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+.history-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nav-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, #6366f1 0%, #5b5ce6 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.2);
+}
+
+.nav-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #5b5ce6 0%, #4f46e5 100%);
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
+  transform: translateY(-1px);
+}
+
+.nav-button:disabled {
+  background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
+  color: #9ca3af;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.page-indicator {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 6px;
+}
+
+.response-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  position: relative; /* 确保下拉菜单正确定位 */
+  z-index: 10; /* 提高层级 */
+}
+
+.action-buttons-left,
+.action-buttons-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
+}
+
+.action-button:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  box-shadow: 0 4px 8px rgba(16, 185, 129, 0.3);
+  transform: translateY(-1px);
+}
+
+.action-button.primary {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.action-button.secondary {
+  background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
+  color: #6b7280;
+}
+
+.action-button.secondary:hover {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f3f5 100%);
+}
+
+.action-button-dropdown {
+  position: relative;
+  z-index: 1; /* 确保dropdown容器有合适的层级 */
+}
+
+.dropdown-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
+  color: #6b7280;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.dropdown-trigger:hover {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f3f5 100%);
+}
+
+.dropdown-arrow {
+  margin-left: 4px;
+  color: #6b7280;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.adjust-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  background: #ffffff;
+  border: 1px solid rgba(234, 236, 240, 0.8);
+  border-radius: 16px;
+  box-shadow: 
+    0 20px 25px -5px rgba(0, 0, 0, 0.15),
+    0 10px 10px -5px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+  z-index: 999999; /* 进一步提高z-index */
+  max-height: 240px;
+  overflow-y: auto;
+  backdrop-filter: blur(8px);
+  min-width: 120px;
+  /* 确保下拉菜单不被父容器裁剪 */
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+.adjust-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 12px 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.adjust-option:hover {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f3f5 100%);
+}
+
+/* 滚动条美化 */
+.response-content::-webkit-scrollbar,
+.model-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.response-content::-webkit-scrollbar-track,
+.model-dropdown::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 3px;
+}
+
+.response-content::-webkit-scrollbar-thumb,
+.model-dropdown::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+.response-content::-webkit-scrollbar-thumb:hover,
+.model-dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.bottom-controls {
+  padding: 16px 24px;
+  background: #fafbfc;
+  position: relative;
+  box-sizing: border-box;
+  border-top: 1px solid rgba(229, 231, 235, 0.5);
+}
+
+.model-selector-container {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.model-selector {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+  border-radius: 20px;
+  padding: 6px 14px 6px 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.model-selector:hover {
+  border-color: #6366f1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 }
 
 .model-avatar {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   overflow: hidden;
-  margin-right: 8px;
+  margin-right: 10px;
   flex-shrink: 0;
+  border: 2px solid rgba(229, 231, 235, 0.6);
 }
 
 .model-avatar img {
@@ -218,51 +741,57 @@
 
 .model-name {
   font-size: 14px;
-  font-weight: 500;
-  color: #333;
-  padding-right: 4px;
+  color: #374151;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 130px;
+  flex: 1;
+  font-weight: 500;
 }
 
 .dropdown-icon {
-  opacity: 0.5;
+  margin-left: 8px;
+  color: #6b7280;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
 }
 
 .model-dropdown {
   position: absolute;
-  top: 100%;
-  left: 20px;
-  min-width: 200px;
-  max-width: 300px;
-  background-color: white;
-  border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: #ffffff;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+  border-radius: 12px;
+  box-shadow: 
+    0 20px 25px -5px rgba(0, 0, 0, 0.12),
+    0 10px 10px -5px rgba(0, 0, 0, 0.06);
   z-index: 10000;
-  overflow: hidden;
-  margin-top: 5px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  animation: fadeIn 0.2s ease;
-}
-
-.model-list {
-  max-height: 280px;
+  max-height: 240px;
   overflow-y: auto;
 }
 
+.model-list {
+  padding: 8px;
+}
+
 .model-item {
-  padding: 10px 16px;
-  font-size: 14px;
-  cursor: pointer;
-  transition: background-color 0.15s;
   display: flex;
   align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 8px;
+  margin-bottom: 2px;
 }
 
 .model-item:hover {
-  background-color: #f5f8ff;
+  background: #f8fafc;
+}
+
+.model-item:last-child {
+  margin-bottom: 0;
 }
 
 .model-item-avatar {
@@ -272,6 +801,7 @@
   overflow: hidden;
   margin-right: 10px;
   flex-shrink: 0;
+  border: 1px solid rgba(229, 231, 235, 0.6);
 }
 
 .model-item-avatar img {
@@ -281,155 +811,25 @@
 }
 
 .model-item-name {
-  color: #333;
-  font-weight: 400;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 14px;
+  color: #374151;
+  font-weight: 500;
 }
 
 .model-loading,
 .model-empty {
-  padding: 12px 16px;
-  font-size: 13px;
-  color: #888;
+  padding: 16px;
   text-align: center;
-}
-
-.right-buttons {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  box-sizing: border-box;
-  max-width: 100%;
-}
-
-.attach-button, 
-.send-button {
+  color: #6b7280;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  background: none;
-  cursor: pointer;
-  transition: all 0.2s;
-  outline: none;
-  padding: 0;
+  gap: 8px;
 }
 
-.attach-button {
-  width: 24px;
-  height: 24px;
-  color: rgba(0, 0, 0, 0.55);
-}
-
-.attach-button:hover {
-  color: rgba(0, 0, 0, 0.8);
-}
-
-.send-button {
-  width: 36px;
-  height: 36px;
-  background-color: #d6e5ff;
-  border-radius: 50%;
-  color: #0066ff;
-}
-
-.send-button:hover:not(:disabled) {
-  background-color: #c5dcff;
-  transform: scale(1.05);
-}
-
-.send-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.agent-response-area {
-  padding: 12px 20px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  max-height: 300px; /* Or as needed */
-  overflow-y: auto;
-  background-color: #f8f8f8; /* Slightly different background for distinction */
-}
-
-.loading-indicator {
-  text-align: center;
-  color: #666;
-  padding: 20px;
-}
-
-.response-content-wrapper {
-  display: flex;
-  flex-direction: column;
-}
-
-.response-content {
-  white-space: pre-wrap; /* Allows text to wrap */
-  word-wrap: break-word;
-  font-family: inherit; /* Inherit from modal */
-  font-size: 15px;     /* Slightly smaller than input potentially */
-  color: #333;
-  background-color: #fff;
-  padding: 10px;
-  border-radius: 6px;
-  border: 1px solid #e0e0e0;
-  margin-bottom: 10px;
-  min-height: 50px; /* Ensure it has some height even with short content */
-}
-
-.response-actions {
-  display: flex;
-  justify-content: flex-end; /* Aligns button to the right */
-  /* padding-top: 5px; Optional: space above the button if content is short */
-}
-
-.insert-button {
-  align-self: flex-end; /* This is fine, or can be removed if parent handles alignment */
-  padding: 6px 12px;
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.insert-button:hover {
-  background-color: #0056b3;
-}
-
-.history-navigation {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
-}
-
-.history-nav-button {
-  background-color: #f0f0f0;
-  border: 1px solid #ddd;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.history-nav-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.history-indicator {
-  font-size: 12px;
-  color: #555;
+.model-dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
 }
 </style>
 
@@ -472,7 +872,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history']);
+const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone']);
 
 // 状态变量
 const modalRef = ref(null);
@@ -482,6 +882,7 @@ const showAgentSelector = ref(false);
 const agents = ref([]);
 const loading = ref(false);
 const selectedAgent = ref(null);
+const showAdjustMenu = ref(false);
 
 watch(() => props.agentResponse, (newValue) => {
   console.log('[AgentInputModal] prop agentResponse updated:', newValue);
@@ -625,77 +1026,84 @@ const close = () => {
   emit('close');
 };
 
-// 添加自动调整输入框高度的方法
+// 自动调整输入框高度
 const autoResize = () => {
-  if (!inputRef.value) return;
-  
-  // 首先重置高度，以便正确计算新高度
-  inputRef.value.style.height = 'auto';
-  
-  // 计算新高度，但不超过最大高度
-  const scrollHeight = inputRef.value.scrollHeight;
-  const maxHeight = 220; // 最大高度220px，与CSS中定义一致
-  
-  if (scrollHeight <= maxHeight) {
-    // 如果内容高度未超过最大高度，设置为实际高度并隐藏滚动条
-    inputRef.value.style.height = `${scrollHeight}px`;
-    inputRef.value.style.overflowY = 'hidden';
-  } else {
-    // 如果内容高度超过最大高度，设置为最大高度并显示滚动条
-    inputRef.value.style.height = `${maxHeight}px`;
-    inputRef.value.style.overflowY = 'auto';
-  }
-  
-  console.log(`输入框高度: ${inputRef.value.style.height}, 内容高度: ${scrollHeight}px, 是否显示滚动条: ${scrollHeight > maxHeight}`);
-};
-
-// 当弹窗显示时，加载Agent列表并聚焦输入框，同时调整输入框高度
-watch(() => props.visible, async (newValue) => {
-  if (newValue) {
-    // 加载Agent列表
-    if (agents.value.length === 0) {
-      await fetchAgents();
-    } else if (agents.value.length > 0 && !selectedAgent.value) {
-      // 如果已有Agent列表但尚未选择，默认选择第一个
-      selectAgent(agents.value[0]);
+  const textarea = inputRef.value;
+  if (textarea) {
+    // 重置高度以获取正确的 scrollHeight
+    textarea.style.height = 'auto';
+    
+    // 计算新高度，在新设计中使用更小的最大高度
+    const newHeight = Math.min(textarea.scrollHeight, 120); // 最大高度120px
+    textarea.style.height = `${newHeight}px`;
+    
+    // 显示滚动条如果内容超出最大高度
+    if (textarea.scrollHeight > 120) {
+      textarea.style.overflowY = 'auto';
+    } else {
+      textarea.style.overflowY = 'hidden';
     }
     
-    // 重置并聚焦到输入框
-    nextTick(() => {
-      if (inputRef.value) {
-        // 重置文本框高度
-        inputRef.value.style.height = 'auto';
-        inputRef.value.style.overflowY = 'hidden'; // 初始状态隐藏滚动条
-        
-        // 应用自动调整高度
-        autoResize();
-        
-        // 聚焦到输入框
-        inputRef.value.focus();
-      }
-    });
-  } else {
-    // 重置一些状态
-    showAgentSelector.value = false;
+    console.log('[AgentInputModal] Textarea auto-resized to:', newHeight);
   }
-}, { immediate: true });
+};
 
-// 监听inputValue变化，自动调整输入框高度
-watch(() => inputValue.value, () => {
+// 组件挂载时初始化
+onMounted(() => {
+  fetchAgents();
+  
+  // 获得焦点
   nextTick(() => {
-    autoResize();
+    inputRef.value?.focus();
+  });
+  
+  // 只处理点击外部关闭调整菜单
+  const handleClickOutside = (event) => {
+    // 点击外部关闭调整菜单
+    if (showAdjustMenu.value && !event.target.closest('.action-button-dropdown')) {
+      showAdjustMenu.value = false;
+    }
+  };
+  
+  document.addEventListener('mousedown', handleClickOutside);
+  
+  onUnmounted(() => {
+    document.removeEventListener('mousedown', handleClickOutside);
   });
 });
 
-// 组件挂载时添加键盘事件监听
-onMounted(() => {
-  // document.addEventListener('keydown', handleKeyDown); // The one in setup for keydown on textarea is different
-  // document.addEventListener('click', handleClickOutside, true); // REMOVING
+// Watch 弹窗显示状态，自动聚焦
+watch(() => props.visible, (visible) => {
+  if (visible) {
+    nextTick(() => {
+      inputRef.value?.focus();
+    });
+  }
 });
 
-// 组件卸载时移除事件监听
-onUnmounted(() => {
-  // document.removeEventListener('keydown', handleKeyDown); // REMOVING
-  // document.removeEventListener('click', handleClickOutside, true); // REMOVING
-});
+// 新增：处理调整语气
+const adjustTone = (tone) => {
+  console.log(`调整语气为: ${tone}`);
+  showAdjustMenu.value = false;
+  // 可以发送事件给父组件处理
+  emit('adjust-tone', { tone, originalResponse: props.agentResponse });
+};
+
+// 新增：处理复制响应
+const copyResponse = async () => {
+  if (props.agentResponse) {
+    try {
+      await navigator.clipboard.writeText(props.agentResponse);
+      console.log('响应已复制到剪贴板');
+      // 可以显示一个简短的成功提示
+    } catch (err) {
+      console.error('复制失败:', err);
+    }
+  }
+};
+
+// 新增：处理调整菜单显示
+const toggleAdjustMenu = () => {
+  showAdjustMenu.value = !showAdjustMenu.value;
+};
 </script> 

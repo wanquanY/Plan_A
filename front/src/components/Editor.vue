@@ -76,6 +76,7 @@ import MentionHandler from './MentionHandler.vue';
 import AgentResponseHandler from './AgentResponseHandler.vue';
 import DocumentOutline from './DocumentOutline.vue';
 import AgentInputModal from './AgentInputModal.vue';
+import chatService from '../services/chat';
 
 // Props声明
 const props = defineProps({
@@ -114,6 +115,7 @@ const isAgentResponding = ref(false);
 const currentSentMessageData = ref(null);
 const conversationHistory = ref([]); // { user: string, agent: string }[]
 const historyDisplayIndex = ref(-1);
+const lastLoadedSessionId = ref(null); // 跟踪最后加载的会话ID，避免重复加载
 
 // 组件引用
 const editorContentRef = ref(null);
@@ -126,6 +128,50 @@ const toggleOutline = () => {
   showOutline.value = !showOutline.value;
 };
 
+// 加载会话历史记录
+const loadConversationHistory = async (sessionId: number | string | null) => {
+  // 如果会话ID与上次加载的相同，跳过重复加载
+  if (sessionId && sessionId === lastLoadedSessionId.value) {
+    console.log(`会话ID ${sessionId} 已经加载过，跳过重复加载`);
+    return;
+  }
+  
+  if (!sessionId) {
+    // 没有会话ID，清空历史记录
+    conversationHistory.value = [];
+    historyDisplayIndex.value = -1;
+    currentAgentResponse.value = '';
+    lastLoadedSessionId.value = null;
+    console.log('没有会话ID，清空历史记录');
+    return;
+  }
+
+  try {
+    console.log(`开始加载会话 ${sessionId} 的历史记录`);
+    const history = await chatService.getSessionAgentHistory(Number(sessionId));
+    
+    if (history && history.length > 0) {
+      conversationHistory.value = history;
+      historyDisplayIndex.value = history.length - 1; // 默认显示最新的记录
+      currentAgentResponse.value = history[history.length - 1].agent; // 显示最新的AI回复
+      lastLoadedSessionId.value = sessionId; // 记录已加载的会话ID
+      console.log(`加载了 ${history.length} 条历史记录，当前显示索引: ${historyDisplayIndex.value}`);
+    } else {
+      conversationHistory.value = [];
+      historyDisplayIndex.value = -1;
+      currentAgentResponse.value = '';
+      lastLoadedSessionId.value = sessionId; // 即使没有历史记录，也记录会话ID避免重复请求
+      console.log('没有找到历史记录');
+    }
+  } catch (error) {
+    console.error('加载历史记录失败:', error);
+    conversationHistory.value = [];
+    historyDisplayIndex.value = -1;
+    currentAgentResponse.value = '';
+    lastLoadedSessionId.value = sessionId; // 即使失败，也记录会话ID避免重复请求
+  }
+};
+
 // 监听会话ID变化
 watch(() => props.conversationId, (newId) => {
   if (agentResponseHandlerRef.value) {
@@ -133,6 +179,9 @@ watch(() => props.conversationId, (newId) => {
     // 无论newId是否为null都要设置，确保新建会话时能正确清空
     agentResponseHandlerRef.value.setConversationId(newId ? String(newId) : null);
   }
+  
+  // 加载会话的历史记录
+  loadConversationHistory(newId);
 }, { immediate: true });
 
 // 监听笔记ID变化
@@ -169,6 +218,22 @@ watch(() => props.modelValue, (newValue, oldValue) => {
     }
   }
 }, { immediate: true });
+
+// 监听conversationId变化，同步到AgentResponseHandler
+watch(() => props.conversationId, (newConversationId) => {
+  if (agentResponseHandlerRef.value && typeof agentResponseHandlerRef.value.setConversationId === 'function') {
+    agentResponseHandlerRef.value.setConversationId(newConversationId);
+    console.log('[Editor.vue] conversationId changed, updated AgentResponseHandler:', newConversationId);
+  }
+});
+
+// 监听noteId变化，同步到AgentResponseHandler
+watch(() => props.noteId, (newNoteId) => {
+  if (agentResponseHandlerRef.value && typeof agentResponseHandlerRef.value.setCurrentNoteId === 'function') {
+    agentResponseHandlerRef.value.setCurrentNoteId(newNoteId);
+    console.log('[Editor.vue] noteId changed, updated AgentResponseHandler:', newNoteId);
+  }
+});
 
 // 格式化操作
 const applyFormat = ({ command, value }) => {
@@ -510,12 +575,26 @@ const showAgentModalAt = (data) => {
 // 处理Agent消息发送
 const handleAgentMessage = (data) => {
   console.log('[Editor.vue] handleAgentMessage, data:', data);
+  console.log('[Editor.vue] Current conversationId:', props.conversationId);
   currentSentMessageData.value = data; // Store sent message data
   isAgentResponding.value = true;
   currentAgentResponse.value = ''; // Clear previous response
 
   if (agentResponseHandlerRef.value) {
     console.log('[Editor.vue] agentResponseHandlerRef.value is:', agentResponseHandlerRef.value);
+    
+    // 设置当前会话ID到AgentResponseHandler
+    if (typeof agentResponseHandlerRef.value.setConversationId === 'function') {
+      agentResponseHandlerRef.value.setConversationId(props.conversationId);
+      console.log('[Editor.vue] Set conversationId to AgentResponseHandler:', props.conversationId);
+    }
+    
+    // 设置当前笔记ID到AgentResponseHandler  
+    if (typeof agentResponseHandlerRef.value.setCurrentNoteId === 'function' && props.noteId) {
+      agentResponseHandlerRef.value.setCurrentNoteId(props.noteId);
+      console.log('[Editor.vue] Set noteId to AgentResponseHandler:', props.noteId);
+    }
+    
     if (typeof agentResponseHandlerRef.value.triggerChatRequest === 'function') {
       console.log('[Editor.vue] Calling agentResponseHandlerRef.value.triggerChatRequest');
       agentResponseHandlerRef.value.triggerChatRequest(
@@ -553,6 +632,8 @@ const onAgentResponseComplete = (data: { responseText: string, conversationId?: 
       agent: data.responseText
     });
     historyDisplayIndex.value = conversationHistory.value.length - 1;
+    // 重置加载标记，确保下次能够重新加载更新后的历史记录
+    lastLoadedSessionId.value = null;
     console.log('[Editor.vue] Added to conversation history. New length:', conversationHistory.value.length, 'Current index:', historyDisplayIndex.value);
   } else {
     console.warn('[Editor.vue] No currentSentMessageData found, cannot save to history reliably.');
@@ -594,9 +675,6 @@ const handleHistoryNavigation = (payload: { direction: 'prev' | 'next' }) => {
     currentAgentResponse.value = historicResponse;
     console.log('[Editor.vue] Displaying historic response:', historicResponse);
     console.log('[Editor.vue] Full history for debugging:', JSON.parse(JSON.stringify(conversationHistory.value)));
-    // We might also want to show the corresponding user input, 
-    // but AgentInputModal currently doesn't have a prop for that. 
-    // For now, only agent response changes.
     console.log(`[Editor.vue] Navigated history to index: ${newIndex}. Displaying new agent response.`);
   }
 };
@@ -604,55 +682,139 @@ const handleHistoryNavigation = (payload: { direction: 'prev' | 'next' }) => {
 // Handler for inserting content from modal into editor
 const handleInsertResponse = (responseText: string) => {
   console.log('[Editor.vue] Request to insert:', responseText);
-  // Use editorContentRef.value.editor for the TipTap instance
-  if (editorContentRef.value && editorContentRef.value.editor && responseText) { 
-    const tiptapEditor = editorContentRef.value.editor; // Correct way to get TipTap instance
-
-    // Ensure tiptapEditor and its state are valid
-    if (!tiptapEditor.state || !tiptapEditor.state.selection) {
-      console.error('[Editor.vue] TipTap editor state or selection is not available for insert.');
-      return;
-    }
-
-    // state.selection.to might not be reliable if editor lost focus.
-    // currentCursorRange.value was stored when modal was opened.
-    const rangeToInsert = currentCursorRange.value; 
-
-    if (!rangeToInsert) {
-        console.warn('[Editor.vue] currentCursorRange.value is not set. Attempting to insert at current selection or end.');
-        // Fallback: Try to get current selection if possible, or insert at the end.
-        // This situation should ideally be avoided by ensuring currentCursorRange is always set.
-        const currentSelection = tiptapEditor.state.selection;
-        const endPos = tiptapEditor.state.doc.content.size;
-        const insertPos = (currentSelection && currentSelection.to <= endPos) ? currentSelection : { from: endPos, to: endPos };
-        tiptapEditor.chain().focus().insertContentAt(insertPos, responseText).run();
-    } else {
-        // Check if rangeToInsert is valid within the document
-        if (rangeToInsert.from > tiptapEditor.state.doc.content.size || rangeToInsert.to > tiptapEditor.state.doc.content.size) {
-            console.error('[Editor.vue] Saved rangeToInsert is out of bounds. Inserting at the end instead.', rangeToInsert, 'Doc size:', tiptapEditor.state.doc.content.size);
-            const endPos = tiptapEditor.state.doc.content.size;
-            tiptapEditor.chain().focus().insertContentAt(endPos, responseText).run();
-        } else {
-            tiptapEditor.chain().focus().insertContentAt(rangeToInsert, responseText).run();
-        }
-    }
-    
-    emit('update:modelValue', tiptapEditor.getHTML()); 
-  } else {
+  
+  if (!editorContentRef.value || !responseText) {
     console.warn('[Editor.vue] Editor instance or responseText not available for insert.');
     if (!responseText) console.warn('[Editor.vue] responseText for insert is empty');
     if (!editorContentRef.value) console.warn('[Editor.vue] editorContentRef.value is null');
-    else if (!editorContentRef.value.editor) console.warn('[Editor.vue] editorContentRef.value.editor (TipTap instance) is null');
+    return;
   }
-  currentAgentResponse.value = ''; // Clear response from modal display
+
+  // 获取原生contenteditable元素
+  const editorElement = editorContentRef.value.editorRef;
+  if (!editorElement) {
+    console.warn('[Editor.vue] Editor element not found');
+    return;
+  }
+
+  try {
+    // 聚焦编辑器
+    editorElement.focus();
+
+    // 获取当前选择
+    const selection = window.getSelection();
+    let range = null;
+
+    // 尝试使用保存的光标位置
+    if (currentCursorRange.value) {
+      try {
+        range = currentCursorRange.value;
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } catch (e) {
+        console.warn('[Editor.vue] Saved cursor range is invalid, using current selection');
+        range = null;
+      }
+    }
+
+    // 如果没有保存的范围或保存的范围无效，使用当前选择或创建新的
+    if (!range) {
+      if (selection.rangeCount > 0) {
+        range = selection.getRangeAt(0);
+      } else {
+        // 创建一个在编辑器末尾的范围
+        range = document.createRange();
+        const editableContent = editorElement.querySelector('.editable-content') || editorElement;
+        
+        // 找到最后一个可插入的位置
+        if (editableContent.childNodes.length > 0) {
+          const lastNode = editableContent.childNodes[editableContent.childNodes.length - 1];
+          if (lastNode.nodeType === Node.TEXT_NODE) {
+            range.setStart(lastNode, lastNode.textContent.length);
+            range.setEnd(lastNode, lastNode.textContent.length);
+          } else if (lastNode.nodeType === Node.ELEMENT_NODE) {
+            range.setStartAfter(lastNode);
+            range.setEndAfter(lastNode);
+          }
+        } else {
+          range.selectNodeContents(editableContent);
+          range.collapse(false);
+        }
+        
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+
+    // 确保range在可编辑区域内
+    const editableContent = editorElement.querySelector('.editable-content') || editorElement;
+    if (!editableContent.contains(range.startContainer)) {
+      // 如果range不在可编辑区域内，创建新的range在可编辑区域末尾
+      range = document.createRange();
+      range.selectNodeContents(editableContent);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    // 插入内容
+    // 将纯文本转换为HTML段落
+    const paragraphs = responseText.split('\n\n').filter(p => p.trim());
+    const htmlContent = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
+
+    // 删除选择的内容（如果有）
+    if (!range.collapsed) {
+      range.deleteContents();
+    }
+
+    // 创建文档片段并插入HTML内容
+    const fragment = document.createDocumentFragment();
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = htmlContent;
+    
+    while (tempDiv.firstChild) {
+      fragment.appendChild(tempDiv.firstChild);
+    }
+
+    // 插入内容
+    range.insertNode(fragment);
+
+    // 将光标移动到插入内容的末尾
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    // 触发输入事件以更新modelValue
+    const inputEvent = new Event('input', { bubbles: true });
+    editorElement.dispatchEvent(inputEvent);
+
+    console.log('[Editor.vue] Content inserted successfully');
+
+  } catch (error) {
+    console.error('[Editor.vue] Error inserting content:', error);
+  }
+
+  // currentAgentResponse.value = ''; // Clear response from modal display - 注释掉，让内容插入后仍然保留
   // showAgentModal.value = false; // Optionally close modal after insert
-  // TODO: Clear input in AgentInputModal
 };
 
 // 组件挂载后聚焦编辑器
 onMounted(() => {
   nextTick(() => {
     editorContentRef.value?.focus();
+    
+    // 初始化AgentResponseHandler的会话ID和笔记ID
+    if (agentResponseHandlerRef.value) {
+      if (typeof agentResponseHandlerRef.value.setConversationId === 'function') {
+        agentResponseHandlerRef.value.setConversationId(props.conversationId);
+        console.log('[Editor.vue] onMounted: Set conversationId to AgentResponseHandler:', props.conversationId);
+      }
+      
+      if (typeof agentResponseHandlerRef.value.setCurrentNoteId === 'function' && props.noteId) {
+        agentResponseHandlerRef.value.setCurrentNoteId(props.noteId);
+        console.log('[Editor.vue] onMounted: Set noteId to AgentResponseHandler:', props.noteId);
+      }
+    }
     
     // 处理已有的代码块和图表，但延迟执行避免初始化时触发递归更新
     if (agentResponseHandlerRef.value) {
