@@ -213,6 +213,27 @@
     <button class="toolbar-button" @click="redoAction">
       <redo-outlined />
     </button>
+    
+    <div class="toolbar-divider"></div>
+    
+    <button 
+      class="toolbar-button mode-toggle-button" 
+      :class="{ 'clicking': isToggling }"
+      @click="handleToggleModeClick" 
+      :title="interactionMode === 'sidebar' ? '切换到弹窗模式' : '切换到侧边栏模式'"
+    >
+      <Transition name="icon-fade" mode="out-in">
+        <message-outlined v-if="interactionMode === 'modal'" key="modal" />
+        <windows-outlined v-else key="sidebar" />
+      </Transition>
+      
+      <!-- 状态提示 -->
+      <Transition name="mode-tip">
+        <div v-if="showModeTip" class="mode-tip">
+          {{ interactionMode === 'sidebar' ? '侧边栏模式' : '弹窗模式' }}
+        </div>
+      </Transition>
+    </button>
   </div>
 </template>
 
@@ -239,6 +260,8 @@ import {
   FormatPainterOutlined,
   ColumnHeightOutlined,
   PictureOutlined,
+  MessageOutlined,
+  WindowsOutlined,
 } from '@ant-design/icons-vue';
 import { ref } from 'vue';
 import uploadService from '../services/uploadService';
@@ -248,6 +271,10 @@ defineProps({
   editorRef: {
     type: Object,
     required: false
+  },
+  interactionMode: {
+    type: String,
+    default: 'sidebar'
   }
 });
 
@@ -260,7 +287,8 @@ const emit = defineEmits([
   'set-font-size',
   'undo',
   'redo',
-  'toggle-outline'
+  'toggle-outline',
+  'toggle-sidebar-mode'
 ]);
 
 // 字体颜色列表
@@ -523,6 +551,32 @@ const handleImageUpload = async (event: Event) => {
 const toggleOutline = () => {
   emit('toggle-outline');
 };
+
+const isToggling = ref(false);
+const showModeTip = ref(false);
+
+const handleToggleModeClick = () => {
+  // 立即开始点击动画
+  isToggling.value = true;
+  
+  // 延迟一点显示模式提示，让图标切换动画先完成
+  setTimeout(() => {
+    showModeTip.value = true;
+  }, 200);
+  
+  // 发射切换事件
+  emit('toggle-sidebar-mode');
+  
+  // 停止点击动画
+  setTimeout(() => {
+    isToggling.value = false;
+  }, 300);
+  
+  // 隐藏模式提示
+  setTimeout(() => {
+    showModeTip.value = false;
+  }, 1500);
+};
 </script>
 
 <style scoped>
@@ -725,5 +779,100 @@ const toggleOutline = () => {
 .large-a {
   font-size: 20px;
   font-weight: bold;
+}
+
+/* 模式切换按钮样式 */
+.mode-toggle-button {
+  position: relative;
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: #555;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-toggle-button:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: #333;
+}
+
+.mode-toggle-button.clicking {
+  background-color: rgba(0, 0, 0, 0.05);
+  transform: scale(0.95);
+  animation: click-pulse 0.3s ease-out;
+}
+
+@keyframes click-pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.5);
+  }
+  50% {
+    transform: scale(0.98);
+    box-shadow: 0 0 0 4px rgba(0, 123, 255, 0.2);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+  }
+}
+
+/* 图标切换动画 */
+.icon-fade-enter-active,
+.icon-fade-leave-active {
+  transition: all 0.3s ease;
+}
+
+.icon-fade-enter-from {
+  opacity: 0;
+  transform: rotate(180deg) scale(0.8);
+}
+
+.icon-fade-leave-to {
+  opacity: 0;
+  transform: rotate(-180deg) scale(0.8);
+}
+
+/* 模式提示动画 */
+.mode-tip-enter-active {
+  transition: all 0.3s ease;
+}
+
+.mode-tip-leave-active {
+  transition: all 0.5s ease;
+}
+
+.mode-tip-enter-from {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px) scale(0.8);
+}
+
+.mode-tip-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(10px) scale(0.8);
+}
+
+/* 模式状态提示样式 */
+.mode-tip {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 1001;
+  margin-top: 4px;
+  pointer-events: none;
 }
 </style> 

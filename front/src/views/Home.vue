@@ -15,6 +15,7 @@ import { isMindMapContent as isMindMapContentFromService,
          formatMessagesToHtml as formatMessagesToHtmlFromService } from '../services/markdownService';
 import { renderCodeBlocks } from '../services/renderService';
 import { debounce } from 'lodash';
+import AgentSidebar from '../components/AgentSidebar.vue';
 
 // 初始化mermaid配置
 mermaid.initialize({
@@ -706,6 +707,297 @@ const renderContentComponents = (forceRender = true) => {
     }
   }, 800);
 };
+
+// 新增的侧边栏相关逻辑
+const showSidebar = ref(false);
+const sidebarAgentResponse = ref('');
+const sidebarIsAgentResponding = ref(false);
+const sidebarHistoryIndex = ref(-1);
+const sidebarHistoryLength = ref(0);
+const sidebarConversationHistory = ref([]); // 独立的会话历史记录
+
+// 初始化编辑器交互模式
+const initializeEditorMode = () => {
+  // 默认使用弹窗模式
+  if (editorRef.value && editorRef.value.setInteractionMode) {
+    editorRef.value.setInteractionMode('modal');
+    console.log('编辑器初始化为弹窗模式');
+  }
+};
+
+const handleToggleSidebarMode = (data) => {
+  console.log('Home接收到切换侧边栏模式事件:', data);
+  
+  // 如果是直接切换界面显示（按钮点击）
+  if (data.showInterface) {
+    // 设置编辑器的交互模式
+    if (editorRef.value && editorRef.value.setInteractionMode) {
+      editorRef.value.setInteractionMode(data.newMode);
+    }
+    
+    if (data.newMode === 'sidebar') {
+      // 切换到侧边栏模式 - 获取当前Editor中的数据并关闭弹窗
+      let currentData = null;
+      if (editorRef.value && editorRef.value.getCurrentAgentData) {
+        currentData = editorRef.value.getCurrentAgentData();
+        console.log('获取当前弹窗数据:', currentData);
+      }
+      
+      // 关闭弹窗（通过设置Editor的状态）
+      if (editorRef.value && editorRef.value.closeModal) {
+        editorRef.value.closeModal();
+      }
+      
+      // 显示侧边栏
+      showSidebar.value = true;
+      
+      // 如果有当前的响应数据，显示在侧边栏中
+      if (currentData && (currentData.agentResponse || data.agentResponse !== undefined)) {
+        sidebarAgentResponse.value = currentData.agentResponse || data.agentResponse || '';
+        sidebarIsAgentResponding.value = currentData.isAgentResponding || data.isAgentResponding || false;
+        sidebarHistoryIndex.value = currentData.historyIndex !== undefined ? currentData.historyIndex : (data.historyIndex || -1);
+        sidebarHistoryLength.value = currentData.historyLength || data.historyLength || 0;
+        
+        // 同步会话历史记录
+        if (currentData.conversationHistory && currentData.conversationHistory.length > 0) {
+          sidebarConversationHistory.value = [...currentData.conversationHistory];
+          console.log('同步会话历史记录到侧边栏，条数:', sidebarConversationHistory.value.length);
+        }
+      } else if (data.agentResponse !== undefined) {
+        sidebarAgentResponse.value = data.agentResponse;
+        sidebarIsAgentResponding.value = data.isAgentResponding;
+        sidebarHistoryIndex.value = data.historyIndex;
+        sidebarHistoryLength.value = data.historyLength;
+      }
+      
+      console.log('切换到侧边栏模式并显示侧边栏');
+    } else {
+      // 切换到弹窗模式 - 隐藏侧边栏
+      showSidebar.value = false;
+      
+      // 保存当前侧边栏的内容，用于在弹窗中显示
+      const hasExistingContent = sidebarAgentResponse.value && sidebarAgentResponse.value.trim() !== '';
+      const savedResponse = sidebarAgentResponse.value;
+      const savedIsResponding = sidebarIsAgentResponding.value;
+      const savedHistoryIndex = sidebarHistoryIndex.value;
+      const savedHistoryLength = sidebarHistoryLength.value;
+      
+      // 清理侧边栏状态（界面相关）
+      sidebarAgentResponse.value = '';
+      sidebarIsAgentResponding.value = false;
+      sidebarHistoryIndex.value = -1;
+      sidebarHistoryLength.value = 0;
+      
+      // 等待侧边栏隐藏动画完成后显示弹窗
+      setTimeout(() => {
+        if (editorRef.value) {
+          if (hasExistingContent) {
+            // 如果有现有内容，在弹窗中显示
+            if (editorRef.value.showModalWithContent) {
+              editorRef.value.showModalWithContent({
+                response: savedResponse,
+                isResponding: savedIsResponding,
+                historyIndex: savedHistoryIndex,
+                historyLength: savedHistoryLength,
+                conversationHistory: sidebarConversationHistory.value
+              });
+            }
+          } else if (editorRef.value.showDemoModal) {
+            // 没有内容时显示演示弹窗
+            editorRef.value.showDemoModal();
+          }
+        }
+      }, 350); // 等待侧边栏动画完成
+      
+      console.log('切换到弹窗模式并隐藏侧边栏');
+    }
+    
+    return;
+  }
+  
+  // 如果是纯粹的模式切换（不包含showSidebar和showInterface标记）
+  if (!data.showSidebar && !data.showInterface) {
+    // 设置编辑器的交互模式
+    if (editorRef.value && editorRef.value.setInteractionMode) {
+      editorRef.value.setInteractionMode(data.newMode);
+    }
+    
+    console.log(`交互模式已切换为: ${data.newMode}`);
+    
+    // 如果切换到弹窗模式，关闭侧边栏
+    if (data.newMode === 'modal') {
+      showSidebar.value = false;
+    }
+    
+    return;
+  }
+  
+  // 如果包含showSidebar标记，表示要显示侧边栏（用户触发了@交互）
+  if (data.showSidebar) {
+    showSidebar.value = true;
+    
+    // 确保编辑器模式为侧边栏模式
+    if (editorRef.value && editorRef.value.setInteractionMode) {
+      editorRef.value.setInteractionMode('sidebar');
+    }
+    
+    // 如果有当前的响应数据，显示在侧边栏中
+    if (data.agentResponse !== undefined) {
+      sidebarAgentResponse.value = data.agentResponse;
+      sidebarIsAgentResponding.value = data.isAgentResponding;
+      sidebarHistoryIndex.value = data.historyIndex;
+      sidebarHistoryLength.value = data.historyLength;
+    }
+    
+    console.log('侧边栏模式：显示侧边栏');
+  }
+};
+
+const handleSidebarSend = async (data) => {
+  console.log('Home接收到侧边栏发送消息事件:', data);
+  
+  try {
+    sidebarIsAgentResponding.value = true;
+    sidebarAgentResponse.value = ''; // 清空之前的响应
+    let finalConversationId = currentSessionId.value;
+    
+    // 使用chatService的streamChat方法
+    const abortController = await chatService.streamChat({
+      agent_id: data.agent?.id || 1, // 使用agent ID，如果没有则使用默认值1
+      content: data.content,
+      conversation_id: currentSessionId.value,
+      note_id: currentNoteId.value
+    }, (response, isComplete, conversationId) => {
+      // 流式响应回调
+      console.log('收到流式响应:', { response, isComplete, conversationId });
+      
+      let content = '';
+      
+      // 正确解析响应数据格式
+      if (response && response.data && response.data.data) {
+        // 优先使用full_content，如果没有则使用message.content
+        content = response.data.data.full_content || 
+                  (response.data.data.message && response.data.data.message.content) || '';
+      } else if (typeof response === 'string') {
+        // 兼容处理：如果直接是字符串
+        content = response;
+      }
+      
+      if (content) {
+        sidebarAgentResponse.value = content;
+        console.log('更新侧边栏响应内容，长度:', content.length);
+      }
+      
+      // 更新会话ID
+      if (conversationId && conversationId !== finalConversationId) {
+        finalConversationId = conversationId;
+        console.log('更新会话ID:', finalConversationId);
+      }
+      
+      if (isComplete) {
+        console.log('流式响应完成');
+        sidebarIsAgentResponding.value = false;
+        
+        // 延迟一小段时间后将当前对话添加到历史记录中，确保响应状态完全更新
+        setTimeout(() => {
+          if (sidebarAgentResponse.value) {
+            sidebarConversationHistory.value.push({
+              user: data.content,
+              agent: sidebarAgentResponse.value
+            });
+            sidebarHistoryIndex.value = sidebarConversationHistory.value.length - 1;
+            sidebarHistoryLength.value = sidebarConversationHistory.value.length;
+            console.log('添加到会话历史记录，总条数:', sidebarConversationHistory.value.length);
+          }
+        }, 100); // 延迟100ms
+        
+        // 如果返回了新的会话ID，更新当前会话ID
+        if (finalConversationId && finalConversationId !== currentSessionId.value) {
+          currentSessionId.value = finalConversationId;
+          // 更新URL
+          router.push({
+            query: {
+              ...route.query,
+              id: finalConversationId
+            }
+          });
+          console.log('更新URL会话ID:', finalConversationId);
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('发送消息失败:', error);
+    sidebarAgentResponse.value = `抱歉，AI助手出错了: ${error.message || '未知错误'}`;
+    sidebarIsAgentResponding.value = false;
+  }
+};
+
+const handleSidebarInsert = (text) => {
+  console.log('Home接收到侧边栏插入文本事件:', text);
+  
+  // 直接在当前编辑器内容末尾插入文本
+  if (text && text.trim()) {
+    // 将文本转换为HTML段落格式
+    const paragraphs = text.split('\n\n').filter(p => p.trim());
+    const htmlContent = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
+    
+    // 如果当前内容只是一个空段落，替换它
+    if (editorContent.value === '<p></p>' || editorContent.value === '<p>开始写作...</p>') {
+      editorContent.value = htmlContent;
+    } else {
+      // 否则在末尾添加
+      editorContent.value += htmlContent;
+    }
+    
+    console.log('文本已插入到编辑器');
+  }
+};
+
+const handleSidebarNavigateHistory = (payload) => {
+  console.log('Home接收到侧边栏导航历史事件:', payload);
+  
+  if (!sidebarConversationHistory.value || sidebarConversationHistory.value.length === 0) return;
+
+  const { direction } = payload;
+  let newIndex = sidebarHistoryIndex.value;
+
+  if (direction === 'prev' && sidebarHistoryIndex.value > 0) {
+    newIndex--;
+  } else if (direction === 'next' && sidebarHistoryIndex.value < sidebarConversationHistory.value.length - 1) {
+    newIndex++;
+  }
+
+  if (newIndex !== sidebarHistoryIndex.value) {
+    sidebarHistoryIndex.value = newIndex;
+    const historicResponse = sidebarConversationHistory.value[newIndex].agent;
+    sidebarAgentResponse.value = historicResponse;
+    console.log(`导航到历史记录索引: ${newIndex}`);
+  }
+};
+
+const closeSidebar = () => {
+  console.log('关闭侧边栏');
+  showSidebar.value = false;
+  
+  // 清理侧边栏状态
+  sidebarAgentResponse.value = '';
+  sidebarIsAgentResponding.value = false;
+  sidebarHistoryIndex.value = -1;
+  sidebarHistoryLength.value = 0;
+  
+  // 设置编辑器为弹窗模式
+  if (editorRef.value && editorRef.value.setInteractionMode) {
+    editorRef.value.setInteractionMode('modal');
+  }
+};
+
+// 组件挂载后初始化
+onMounted(() => {
+  nextTick(() => {
+    initializeEditorMode();
+  });
+});
 </script>
 
 <template>
@@ -713,13 +1005,17 @@ const renderContentComponents = (forceRender = true) => {
     <MermaidRenderer>
       <div class="notebook-layout">
         <!-- 主内容区 -->
-        <div class="main-content">
+        <div class="main-content" :class="{ 'has-sidebar': showSidebar }">
           <!-- 编辑器内容 -->
           <div class="editor-content-wrapper">
             <Editor 
               v-model="editorContent"
               @update:model-value="updateContent"
               @word-count="updateWordCount"
+              @toggle-sidebar-mode="handleToggleSidebarMode"
+              @sidebar-send="handleSidebarSend"
+              @sidebar-insert="handleSidebarInsert"
+              @sidebar-navigate-history="handleSidebarNavigateHistory"
               ref="editorRef"
               :conversation-id="currentSessionId"
               :note-id="currentNoteId"
@@ -731,6 +1027,24 @@ const renderContentComponents = (forceRender = true) => {
             </div>
           </div>
         </div>
+        
+        <!-- 侧边栏 -->
+        <Transition name="sidebar" mode="out-in">
+          <div v-if="showSidebar" class="sidebar-wrapper">
+            <AgentSidebar
+              :visible="showSidebar"
+              :agentResponse="sidebarAgentResponse" 
+              :isAgentResponding="sidebarIsAgentResponding"
+              :historyIndex="sidebarHistoryIndex"
+              :historyLength="sidebarHistoryLength"
+              :conversationHistory="sidebarConversationHistory"
+              @close="closeSidebar"
+              @send="handleSidebarSend"
+              @request-insert="handleSidebarInsert" 
+              @navigate-history="handleSidebarNavigateHistory"
+            />
+          </div>
+        </Transition>
       </div>
     </MermaidRenderer>
   </div>
@@ -750,11 +1064,12 @@ const renderContentComponents = (forceRender = true) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow-y: auto; /* 允许主内容区域滚动 */
+  overflow: hidden; /* 改为hidden，确保不产生额外滚动条 */
   background-color: white;
   position: relative;
-  transition: margin-left 0.3s ease;
+  transition: all 0.3s ease;
   margin-left: 0;
+  height: 100vh; /* 明确设置高度 */
 }
 
 /* 编辑器内容区样式 */
@@ -762,11 +1077,12 @@ const renderContentComponents = (forceRender = true) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: visible; /* 允许内容溢出 */
+  overflow-y: auto; /* 改为auto，让编辑器区域可以独立滚动 */
   padding: 16px 32px 0;
   width: 90%;  /* 将宽度减少为原来的90% */
   margin: 0 auto;  /* 居中显示 */
   position: relative;
+  max-height: 100vh; /* 限制最大高度 */
 }
 
 /* 确保编辑器工具栏固定 */
@@ -789,9 +1105,9 @@ const renderContentComponents = (forceRender = true) => {
   font-size: 13px;
   border-top: 1px solid rgba(0, 0, 0, 0.05);
   margin-top: auto; /* 使用auto margin将其推至容器底部 */
-  position: sticky; /* 使底部状态栏固定 */
-  bottom: 0; /* 固定在底部 */
   background-color: white; /* 确保背景色遮挡滚动内容 */
+  flex-shrink: 0; /* 确保底部状态栏不会收缩 */
+  position: relative; /* 改为相对定位，不再固定在底部 */
   z-index: 90; /* 确保在内容上方，但低于顶部工具栏 */
 }
 
@@ -1309,12 +1625,12 @@ body {
 .editor-content pre,
 .markdown-content pre {
   scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
 }
 
 .editor-content pre::-webkit-scrollbar,
 .markdown-content pre::-webkit-scrollbar {
-  height: 6px;
+  height: 4px;
 }
 
 .editor-content pre::-webkit-scrollbar-track,
@@ -1324,8 +1640,14 @@ body {
 
 .editor-content pre::-webkit-scrollbar-thumb,
 .markdown-content pre::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.2);
-  border-radius: 3px;
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  transition: background-color 0.2s ease;
+}
+
+.editor-content pre::-webkit-scrollbar-thumb:hover,
+.markdown-content pre::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.25);
 }
 
 /* 限制代码块之间的距离 */
@@ -1389,5 +1711,154 @@ body {
   background-color: #dcffe4;
   color: #28a745;
   opacity: 1;
+}
+</style>
+
+<style>
+/* 侧边栏相关样式 */
+.sidebar-wrapper {
+  flex-shrink: 0;
+  width: 400px;
+  height: 100vh;
+  overflow: hidden; /* 确保侧边栏容器不溢出 */
+  display: flex; /* 添加flex布局 */
+  flex-direction: column; /* 垂直布局 */
+}
+
+/* 侧边栏进入和离开的过渡动画 */
+.sidebar-enter-active,
+.sidebar-leave-active {
+  transition: all 0.3s ease-in-out;
+}
+
+.sidebar-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.sidebar-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+/* 美化滚动条样式 */
+/* 主编辑器区域滚动条 */
+.editor-content-wrapper {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.editor-content-wrapper::-webkit-scrollbar {
+  width: 6px;
+}
+
+.editor-content-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.editor-content-wrapper::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+  transition: background-color 0.2s ease;
+}
+
+.editor-content-wrapper::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+/* 侧边栏滚动条 */
+:deep(.sidebar-content) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+:deep(.sidebar-content::-webkit-scrollbar) {
+  width: 6px;
+}
+
+:deep(.sidebar-content::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:deep(.sidebar-content::-webkit-scrollbar-thumb) {
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+  transition: background-color 0.2s ease;
+}
+
+:deep(.sidebar-content::-webkit-scrollbar-thumb:hover) {
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+/* 响应内容区域滚动条 */
+:deep(.response-content) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+:deep(.response-content::-webkit-scrollbar) {
+  width: 4px;
+}
+
+:deep(.response-content::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:deep(.response-content::-webkit-scrollbar-thumb) {
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  transition: background-color 0.2s ease;
+}
+
+:deep(.response-content::-webkit-scrollbar-thumb:hover) {
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+/* 文档大纲滚动条 */
+:deep(.document-outline) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+:deep(.document-outline::-webkit-scrollbar) {
+  width: 4px;
+}
+
+:deep(.document-outline::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:deep(.document-outline::-webkit-scrollbar-thumb) {
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  transition: background-color 0.2s ease;
+}
+
+:deep(.document-outline::-webkit-scrollbar-thumb:hover) {
+  background-color: rgba(0, 0, 0, 0.25);
+}
+
+/* 全局滚动条样式（针对body和html） */
+:deep(html) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+:deep(html::-webkit-scrollbar) {
+  width: 8px;
+}
+
+:deep(html::-webkit-scrollbar-track) {
+  background: #f1f1f1;
+}
+
+:deep(html::-webkit-scrollbar-thumb) {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+:deep(html::-webkit-scrollbar-thumb:hover) {
+  background-color: rgba(0, 0, 0, 0.3);
 }
 </style> 

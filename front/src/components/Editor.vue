@@ -4,6 +4,7 @@
       class="editor-toolbar-fixed"
       :editor-ref="editorContentRef?.editorRef"
       :selected-heading="selectedHeading"
+      :interaction-mode="interactionMode"
       @apply-formatting="applyFormat"
       @set-heading="setHeading"
       @set-letter-spacing="setLetterSpacing"
@@ -12,6 +13,7 @@
       @undo="undoAction"
       @redo="redoAction"
       @toggle-outline="toggleOutline"
+      @toggle-sidebar-mode="toggleSidebarMode"
     />
     
     <div class="editor-content-wrapper">
@@ -46,6 +48,7 @@
         />
       </div>
     </div>
+    
     <AgentResponseHandler 
       ref="agentResponseHandlerRef" 
       @agent-response-chunk="onAgentResponseChunk"
@@ -95,7 +98,7 @@ const props = defineProps({
 });
 
 // 事件声明
-const emit = defineEmits(['update:modelValue', 'word-count', 'update:conversationId']);
+const emit = defineEmits(['update:modelValue', 'word-count', 'update:conversationId', 'toggle-sidebar-mode', 'sidebar-send', 'sidebar-insert', 'sidebar-navigate-history']);
 
 // 状态变量
 const wordCount = ref(0);
@@ -105,6 +108,7 @@ const currentRange = ref(null);
 const selectedHeading = ref('p');
 const showOutline = ref(true); // 默认显示大纲
 const showAgentModal = ref(false);
+const interactionMode = ref('modal'); // 'modal' | 'sidebar'
 const currentCursorRange = ref(null);
 const modalPosition = ref({ y: 0, x: 0 });
 const editorInfo = ref({ left: 0, right: 0, width: 0, editorOffsetLeft: 0 });
@@ -126,6 +130,22 @@ const mentionHandlerRef = ref(null);
 // 确保 toggleOutline 方法存在且正确
 const toggleOutline = () => {
   showOutline.value = !showOutline.value;
+};
+
+// 切换侧边栏模式 - 现在只发射事件给父组件
+const toggleSidebarMode = () => {
+  const newMode = interactionMode.value === 'modal' ? 'sidebar' : 'modal';
+  console.log(`切换交互模式: ${interactionMode.value} -> ${newMode}`);
+  
+  emit('toggle-sidebar-mode', {
+    currentMode: interactionMode.value,
+    newMode: newMode,
+    showInterface: true, // 表示要直接显示对应的界面
+    agentResponse: currentAgentResponse.value,
+    isAgentResponding: isAgentResponding.value,
+    historyIndex: historyDisplayIndex.value,
+    historyLength: conversationHistory.value.length
+  });
 };
 
 // 加载会话历史记录
@@ -541,41 +561,71 @@ const handleSendToAgent = (data) => {
 
 // 显示Agent输入弹窗
 const showAgentModalAt = (data) => {
-  console.log('显示Agent输入弹窗，接收到的定位数据:', data);
+  console.log('显示Agent输入界面，接收到的定位数据:', data);
+  console.log('当前交互模式:', interactionMode.value);
   
   // 保存当前范围，用于后续插入响应
   currentCursorRange.value = data.range;
   
-  // 设置弹窗位置（使用视口位置）
-  if (data.cursorPosition && data.cursorPosition.viewport) {
-    modalPosition.value = {
-      y: data.cursorPosition.viewport.y,
-      x: data.cursorPosition.viewport.x
-    };
-  }
-  
-  // 保存编辑器信息，用于计算输入框位置
-  if (data.editorInfo) {
-    editorInfo.value = {
-      ...data.editorInfo,
-      // 确保传递所有必要的编辑器信息
-      left: data.editorInfo.left,
-      right: data.editorInfo.right,
-      width: data.editorInfo.width,
-      editorOffsetLeft: data.editorInfo.editorOffsetLeft
-    };
+  // 根据当前模式显示对应界面
+  if (interactionMode.value === 'sidebar') {
+    // 侧边栏模式：发射事件给父组件显示侧边栏
+    emit('toggle-sidebar-mode', {
+      currentMode: interactionMode.value,
+      showSidebar: true, // 明确表示要显示侧边栏
+      agentResponse: currentAgentResponse.value,
+      isAgentResponding: isAgentResponding.value,
+      historyIndex: historyDisplayIndex.value,
+      historyLength: conversationHistory.value.length
+    });
+    showAgentModal.value = false;
+    console.log('侧边栏模式：发射事件显示侧边栏');
+  } else {
+    // 弹窗模式：显示弹窗
+    // 设置弹窗位置（使用视口位置）
+    if (data.cursorPosition && data.cursorPosition.viewport) {
+      modalPosition.value = {
+        y: data.cursorPosition.viewport.y,
+        x: data.cursorPosition.viewport.x
+      };
+    }
     
-    console.log('已更新编辑器信息:', editorInfo.value);
+    // 保存编辑器信息，用于计算输入框位置
+    if (data.editorInfo) {
+      editorInfo.value = {
+        ...data.editorInfo,
+        // 确保传递所有必要的编辑器信息
+        left: data.editorInfo.left,
+        right: data.editorInfo.right,
+        width: data.editorInfo.width,
+        editorOffsetLeft: data.editorInfo.editorOffsetLeft
+      };
+      
+      console.log('已更新编辑器信息:', editorInfo.value);
+    }
+    
+    // 显示弹窗
+    showAgentModal.value = true;
+    console.log('弹窗模式：显示弹窗');
   }
-  
-  // 显示弹窗
-  showAgentModal.value = true;
 };
 
 // 处理Agent消息发送
 const handleAgentMessage = (data) => {
   console.log('[Editor.vue] handleAgentMessage, data:', data);
   console.log('[Editor.vue] Current conversationId:', props.conversationId);
+  
+  // 如果当前是侧边栏模式，发射事件给父组件
+  if (interactionMode.value === 'sidebar') {
+    emit('sidebar-send', {
+      ...data,
+      conversationId: props.conversationId,
+      noteId: props.noteId
+    });
+    return;
+  }
+  
+  // 弹窗模式下的原有逻辑
   currentSentMessageData.value = data; // Store sent message data
   isAgentResponding.value = true;
   currentAgentResponse.value = ''; // Clear previous response
@@ -658,6 +708,13 @@ const onAgentResponseError = (error) => {
 
 // New method for handling history navigation
 const handleHistoryNavigation = (payload: { direction: 'prev' | 'next' }) => {
+  // 如果当前是侧边栏模式，发射事件给父组件
+  if (interactionMode.value === 'sidebar') {
+    emit('sidebar-navigate-history', payload);
+    return;
+  }
+  
+  // 弹窗模式下的原有逻辑
   if (!conversationHistory.value || conversationHistory.value.length === 0) return;
 
   const { direction } = payload;
@@ -681,6 +738,13 @@ const handleHistoryNavigation = (payload: { direction: 'prev' | 'next' }) => {
 
 // Handler for inserting content from modal into editor
 const handleInsertResponse = (responseText: string) => {
+  // 如果当前是侧边栏模式，发射事件给父组件
+  if (interactionMode.value === 'sidebar') {
+    emit('sidebar-insert', responseText);
+    return;
+  }
+  
+  // 弹窗模式下的原有逻辑
   console.log('[Editor.vue] Request to insert:', responseText);
   
   if (!editorContentRef.value || !responseText) {
@@ -891,7 +955,101 @@ defineExpose({
   setContent: (newContent: string) => {
     emit('update:modelValue', newContent);
   },
-  getWordCount: () => wordCount.value
+  getWordCount: () => wordCount.value,
+  setInteractionMode: (mode: 'modal' | 'sidebar') => {
+    interactionMode.value = mode;
+    console.log(`编辑器交互模式设置为: ${mode}`);
+  },
+  getCurrentAgentData: () => ({
+    agentResponse: currentAgentResponse.value,
+    isAgentResponding: isAgentResponding.value,
+    historyIndex: historyDisplayIndex.value,
+    historyLength: conversationHistory.value.length,
+    conversationHistory: conversationHistory.value // 添加完整的会话历史记录
+  }),
+  closeModal: () => {
+    // 关闭弹窗
+    showAgentModal.value = false;
+    console.log('弹窗已关闭');
+  },
+  showDemoModal: (position = { x: 0, y: 0 }) => {
+    // 确保之前的弹窗状态被清理
+    showAgentModal.value = false;
+    currentAgentResponse.value = '';
+    isAgentResponding.value = false;
+    
+    // 计算弹窗位置 - 使用正确的弹窗宽度650px
+    const MODAL_WIDTH = 650;
+    const calculatedPosition = position.x === 0 && position.y === 0 ? {
+      y: Math.max(200, window.innerHeight * 0.3), // 距离顶部30%的位置，但至少200px
+      x: Math.max(50, (window.innerWidth - MODAL_WIDTH) / 2) // 水平居中，使用实际弹窗宽度
+    } : position;
+    
+    // 设置编辑器信息，确保弹窗能正确定位
+    if (editorContentRef.value && editorContentRef.value.editorRef) {
+      const editorElement = editorContentRef.value.editorRef;
+      const rect = editorElement.getBoundingClientRect();
+      editorInfo.value = {
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        editorOffsetLeft: rect.left
+      };
+    }
+    
+    // 显示演示弹窗
+    modalPosition.value = calculatedPosition;
+    currentAgentResponse.value = '这是弹窗模式的演示界面。您可以在这里与AI助手交互。\n\n尝试在编辑器中输入 @ 来唤起AI助手，或者直接在这里发送消息。';
+    showAgentModal.value = true;
+    console.log('显示演示弹窗，位置:', calculatedPosition);
+    
+    // 5秒后自动关闭演示弹窗
+    setTimeout(() => {
+      if (showAgentModal.value && currentAgentResponse.value.includes('演示界面')) {
+        showAgentModal.value = false;
+        currentAgentResponse.value = '';
+      }
+    }, 5000);
+  },
+  showModalWithContent: (contentData) => {
+    // 确保之前的弹窗状态被清理
+    showAgentModal.value = false;
+    
+    // 计算弹窗位置 - 使用正确的弹窗宽度650px
+    const MODAL_WIDTH = 650;
+    const calculatedPosition = {
+      y: Math.max(200, window.innerHeight * 0.3),
+      x: Math.max(50, (window.innerWidth - MODAL_WIDTH) / 2)
+    };
+    
+    // 设置编辑器信息，确保弹窗能正确定位
+    if (editorContentRef.value && editorContentRef.value.editorRef) {
+      const editorElement = editorContentRef.value.editorRef;
+      const rect = editorElement.getBoundingClientRect();
+      editorInfo.value = {
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        editorOffsetLeft: rect.left
+      };
+    }
+    
+    // 设置弹窗位置和内容
+    modalPosition.value = calculatedPosition;
+    currentAgentResponse.value = contentData.response;
+    isAgentResponding.value = contentData.isResponding;
+    historyDisplayIndex.value = contentData.historyIndex;
+    
+    // 如果有会话历史记录，也更新到编辑器中
+    if (contentData.conversationHistory && contentData.conversationHistory.length > 0) {
+      conversationHistory.value = [...contentData.conversationHistory];
+      console.log('更新会话历史记录，条数:', conversationHistory.value.length);
+    }
+    
+    // 显示弹窗
+    showAgentModal.value = true;
+    console.log('显示内容弹窗，位置:', calculatedPosition, '内容长度:', contentData.response.length);
+  }
 });
 </script>
 
@@ -900,8 +1058,9 @@ defineExpose({
   display: flex;
   flex-direction: column;
   width: 100%;
+  height: 100%; /* 改为100%，适应父容器高度 */
   position: relative;
-  overflow: visible; /* 允许内容溢出 */
+  overflow: hidden; /* 改为hidden，避免冲突 */
 }
 
 .editor-toolbar-fixed {
@@ -911,13 +1070,16 @@ defineExpose({
   background-color: #f9f9f9;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   width: 100%;
+  flex-shrink: 0; /* 确保工具栏不会收缩 */
 }
 
 .editor-content-wrapper {
   display: flex;
   flex: 1;
   position: relative;
-  overflow: visible; /* 允许内容溢出 */
+  overflow: hidden; /* 改为hidden，让父容器控制滚动 */
+  min-width: 0; /* 允许flex子元素收缩 */
+  min-height: 0; /* 允许flex子元素收缩 */
 }
 
 .document-outline {
@@ -925,16 +1087,17 @@ defineExpose({
   position: sticky;
   top: 60px; /* 工具栏高度 */
   align-self: flex-start;
-  height: calc(100vh - 60px); /* 减去工具栏高度 */
+  max-height: calc(100vh - 60px); /* 使用max-height而不是固定height */
+  overflow-y: auto; /* 大纲内容如果过长，允许滚动 */
 }
 
 .editor-main {
   flex: 1;
   position: relative;
-  overflow: visible; /* 允许内容溢出 */
+  overflow: hidden; /* 改为hidden，让父容器控制滚动 */
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 60px); /* 确保最小高度足够 */
+  min-height: 0; /* 允许收缩 */
 }
 
 .editor-footer {
@@ -949,5 +1112,6 @@ defineExpose({
   color: #888;
   font-size: 14px;
   margin-top: auto;
+  flex-shrink: 0; /* 确保底部栏不会收缩 */
 }
 </style> 

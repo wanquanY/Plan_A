@@ -1335,8 +1335,8 @@ const sendToAgent = () => {
 /* 编辑器内容区域样式 */
 .editor-content {
   flex: 1;
-  overflow: visible; /* 设置为visible完全移除滚动条 */
-  min-height: calc(100vh - 120px); /* 确保有足够的最小高度 */
+  overflow: visible; /* 保持visible，让父容器处理滚动 */
+  min-height: 100%; /* 改为100%，适应父容器 */
   width: 100%;
   outline: none;
   line-height: 1.6;

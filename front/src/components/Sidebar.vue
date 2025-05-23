@@ -593,7 +593,7 @@ const noteItemClick = (noteId, event) => {
   flex-direction: column;
   overflow: auto;
   scrollbar-width: thin; /* Firefox */
-  scrollbar-color: rgba(0, 0, 0, 0.2) transparent; /* Firefox */
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent; /* Firefox */
 }
 
 .sidebar-middle::-webkit-scrollbar {
@@ -607,13 +607,14 @@ const noteItemClick = (noteId, event) => {
 }
 
 .sidebar-middle::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: rgba(0, 0, 0, 0.15);
   border-radius: 3px;
   border: none;
+  transition: background-color 0.2s ease;
 }
 
 .sidebar-middle::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(0, 0, 0, 0.25);
 }
 
 .sidebar-middle::-webkit-scrollbar-corner {
