@@ -36,6 +36,7 @@ const editorTitle = ref('新笔记');
 const wordCount = ref(0);
 const saved = ref(true);
 const editorRef = ref(null);
+const agentSidebarRef = ref(null); // 添加AgentSidebar的引用
 
 // 从全局布局获取会话ID和会话列表
 const currentSessionId = inject('currentSessionId');
@@ -92,6 +93,12 @@ const debouncedSave = debounce(async (content: string) => {
 
 // 监听路由参数变化
 onBeforeMount(() => {
+  // 只有当前路由是Home页面时才执行初始化逻辑
+  if (route.name !== 'Home') {
+    console.log('当前路由不是Home页面，跳过初始化逻辑');
+    return;
+  }
+  
   // 首先检查URL中是否有笔记ID参数
   if (route.query.note) {
     // 无论是否有会话ID，只要有笔记ID就加载笔记内容
@@ -166,6 +173,12 @@ onBeforeMount(() => {
 
 // 监听会话ID变化
 watch(() => route.query, (newQuery) => {
+  // 只有当前路由是Home页面时才执行路由监听逻辑
+  if (route.name !== 'Home') {
+    console.log('当前路由不是Home页面，跳过路由监听逻辑');
+    return;
+  }
+  
   // 首先检查URL中是否有笔记ID参数
   if (newQuery.note) {
     // 无论是否有会话ID，只要有笔记ID就加载笔记内容
@@ -780,6 +793,7 @@ const sidebarIsAgentResponding = ref(false);
 const sidebarHistoryIndex = ref(-1);
 const sidebarHistoryLength = ref(0);
 const sidebarConversationHistory = ref([]); // 独立的会话历史记录
+const sidebarToolStatus = ref(null); // 工具调用状态
 
 // 初始化编辑器交互模式
 const initializeEditorMode = () => {
@@ -934,9 +948,9 @@ const handleSidebarSend = async (data) => {
       content: data.content,
       conversation_id: currentSessionId.value,
       note_id: currentNoteId.value
-    }, (response, isComplete, conversationId) => {
+    }, (response, isComplete, conversationId, toolStatus) => {
       // 流式响应回调
-      console.log('收到流式响应:', { response, isComplete, conversationId });
+      console.log('收到流式响应:', { response, isComplete, conversationId, toolStatus });
       
       let content = '';
       
@@ -953,6 +967,25 @@ const handleSidebarSend = async (data) => {
       if (content) {
         sidebarAgentResponse.value = content;
         console.log('更新侧边栏响应内容，长度:', content.length);
+      }
+      
+      // 处理工具状态更新 - 传递给AgentSidebar组件
+      if (toolStatus) {
+        console.log('Home.vue 收到工具状态更新:', toolStatus);
+        console.log('agentSidebarRef.value:', agentSidebarRef.value);
+        console.log('agentSidebarRef.value.handleToolStatus:', agentSidebarRef.value?.handleToolStatus);
+        
+        // 直接调用AgentSidebar的handleToolStatus方法
+        if (agentSidebarRef.value && agentSidebarRef.value.handleToolStatus) {
+          console.log('调用 AgentSidebar.handleToolStatus');
+          agentSidebarRef.value.handleToolStatus(toolStatus);
+        } else {
+          console.warn('AgentSidebar ref 或 handleToolStatus 方法不可用');
+          console.warn('agentSidebarRef.value:', agentSidebarRef.value);
+          console.warn('showSidebar.value:', showSidebar.value);
+        }
+      } else {
+        console.log('Home.vue 没有收到工具状态更新');
       }
       
       // 更新会话ID
@@ -1278,6 +1311,7 @@ const handleConversationHistoryLoaded = (data) => {
               @request-insert="handleSidebarInsert" 
               @navigate-history="handleSidebarNavigateHistory"
               @edit-message="handleSidebarEditMessage"
+              ref="agentSidebarRef"
             />
           </div>
         </Transition>

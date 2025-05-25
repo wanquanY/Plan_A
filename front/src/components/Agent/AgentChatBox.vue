@@ -1,7 +1,6 @@
 <template>
   <div class="agent-chat-box">
     <div class="message-container">
-      <div class="user-message">
         <div 
           class="message-content" 
           contenteditable="true" 
@@ -10,7 +9,6 @@
           @keydown.enter.prevent="sendMessage"
           placeholder="发送消息给Agent..."
         ></div>
-      </div>
       <button 
         v-if="messageText.trim().length > 0" 
         class="send-button" 
@@ -19,6 +17,10 @@
         <span>发送</span>
       </button>
     </div>
+    
+    <!-- 工具调用状态显示 -->
+    <ToolCallsStatus :tool-calls="toolCallsStatus" />
+    
     <div v-if="chatState.loading" class="agent-response loading">
       <div class="avatar">
         <img :src="agent.avatar_url" alt="Agent Avatar" />
@@ -42,6 +44,8 @@
 import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
 import type { Agent } from '../../services/agent';
 import chatService from '../../services/chat';
+import ToolCallsStatus from './ToolCallsStatus.vue';
+import { useToolCallsStatus } from '../../composables/useToolCallsStatus';
 
 const props = defineProps({
   agent: {
@@ -59,6 +63,13 @@ const emit = defineEmits(['chat-complete', 'chat-start']);
 const messageInput = ref<HTMLElement | null>(null);
 const messageText = ref('');
 const chatController = ref<AbortController | null>(null);
+
+// 使用工具调用状态管理
+const {
+  toolCalls: toolCallsStatus,
+  handleToolStatus,
+  clearToolCalls
+} = useToolCallsStatus();
 
 const chatState = reactive({
   loading: false,
@@ -81,6 +92,9 @@ const sendMessage = async () => {
     emit('chat-start');
     chatState.loading = true;
     
+    // 清空之前的工具调用状态
+    clearToolCalls();
+    
     // 保存用户输入的文本并清空输入框
     const userMessage = messageText.value.trim();
     messageText.value = '';
@@ -95,7 +109,12 @@ const sendMessage = async () => {
         agent_id: props.agent.id,
         conversation_id: chatState.conversationId || undefined
       },
-      (content, done, conversationId) => {
+      (content, done, conversationId, toolStatus) => {
+        // 处理工具状态更新
+        if (toolStatus) {
+          handleToolStatus(toolStatus);
+        }
+        
         // 更新聊天状态
         chatState.response = content;
         chatState.conversationId = conversationId;
@@ -113,6 +132,7 @@ const sendMessage = async () => {
   } catch (error) {
     console.error('发送消息失败:', error);
     chatState.loading = false;
+    clearToolCalls();
   }
 };
 
@@ -167,10 +187,6 @@ defineExpose({
   display: flex;
   align-items: flex-end;
   margin-bottom: 8px;
-}
-
-.user-message {
-  flex: 1;
   background-color: #f5f5f7;
   border-radius: 12px;
   padding: 8px 12px;
@@ -178,6 +194,7 @@ defineExpose({
 }
 
 .message-content {
+  flex: 1;
   min-height: 24px;
   outline: none;
   line-height: 1.5;
@@ -198,9 +215,8 @@ defineExpose({
   border: none;
   border-radius: 6px;
   padding: 6px 12px;
-  font-size: 14px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  font-size: 14px;
 }
 
 .send-button:hover {
@@ -209,70 +225,62 @@ defineExpose({
 
 .agent-response {
   display: flex;
-  margin-top: 10px;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .avatar {
   width: 32px;
   height: 32px;
-  margin-right: 8px;
+  border-radius: 50%;
+  overflow: hidden;
   flex-shrink: 0;
 }
 
 .avatar img {
   width: 100%;
   height: 100%;
-  border-radius: 50%;
   object-fit: cover;
 }
 
 .response-text {
-  background-color: #e8f4ff;
-  border-radius: 12px;
-  padding: 10px 14px;
-  color: #333;
-  line-height: 1.5;
   flex: 1;
+  line-height: 1.6;
+  color: #333;
+  font-size: 14px;
 }
 
 .typing-indicator {
   display: flex;
   align-items: center;
-  background-color: #e8f4ff;
-  border-radius: 12px;
-  padding: 16px 14px;
-  min-width: 60px;
+  gap: 4px;
+  padding: 8px 0;
 }
 
 .typing-indicator span {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
+  background-color: #999;
   border-radius: 50%;
-  background-color: #1677ff;
-  margin: 0 2px;
-  opacity: 0.6;
-  animation: typing 1.4s infinite ease-in-out both;
+  animation: typing 1.4s infinite ease-in-out;
 }
 
 .typing-indicator span:nth-child(1) {
-  animation-delay: 0s;
+  animation-delay: -0.32s;
 }
 
 .typing-indicator span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.typing-indicator span:nth-child(3) {
-  animation-delay: 0.4s;
+  animation-delay: -0.16s;
 }
 
 @keyframes typing {
   0%, 80%, 100% { 
-    transform: scale(0.8);
+    transform: scale(0);
+    opacity: 0.5;
   }
   40% { 
-    transform: scale(1.2);
+    transform: scale(1);
     opacity: 1;
   }
 }

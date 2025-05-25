@@ -304,6 +304,7 @@ const goBack = () => {
 
 // 可用模型列表
 const availableModels = ref([
+  'anthropic/claude-sonnet-4',
   'claude-3-7-sonnet-20250219',
   'claude-3-5-sonnet-20240620',
   'claude-3-opus-20240229',
@@ -375,7 +376,7 @@ onMounted(async () => {
                 <Upload
                   v-model:file-list="fileList"
                   :show-upload-list="false"
-                  :action="'http://101.42.168.191:18000/api/upload'"
+                  :action="'http://14.103.155.104:18000/api/upload'"
                   :before-upload="beforeUpload"
                   :headers="{}"
                   @change="handleChange"

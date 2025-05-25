@@ -19,6 +19,12 @@ export interface ChatStreamMessage {
     full_content: string;
     conversation_id: number;
     done: boolean;
+    tool_status?: {
+      type: string;
+      tool_call_id?: string;
+      tool_name?: string;
+      status: string;
+    };
     agent_info?: {
       id: number;
       name: string;
@@ -32,7 +38,7 @@ export interface ChatStreamMessage {
 }
 
 // 流式回调类型
-export type StreamCallback = (response: any, isComplete: boolean, conversationId: number) => void;
+export type StreamCallback = (response: any, isComplete: boolean, conversationId: number, toolStatus?: any) => void;
 
 // 与Agent聊天的请求
 export interface ChatRequest {
@@ -348,13 +354,22 @@ const processTextStream = async (
           console.log('接收到agent信息:', data.data.agent_info);
         }
         
+        // 检查是否有工具状态信息
+        let toolStatus = null;
+        if (data.data.tool_status) {
+          toolStatus = data.data.tool_status;
+          console.log('chat.ts 接收到工具状态:', toolStatus);
+        } else {
+          console.log('chat.ts 没有工具状态信息，data.data:', data.data);
+        }
+        
         console.log(`处理流式数据: 内容长度=${content.length}, 是否完成=${isComplete}, 会话ID=${currentConversationId || 'null'}`);
         
         // 确保有效会话ID
         const idToSend = currentConversationId ?? conversationId ?? 0;
         
-        // 回调UI更新
-        callback(response, isComplete, idToSend);
+        // 回调UI更新，传递工具状态
+        callback(response, isComplete, idToSend, toolStatus);
         
         // 保存上一个内容以防下一次回调为空
         if (content) {

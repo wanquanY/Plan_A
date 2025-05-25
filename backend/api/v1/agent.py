@@ -52,6 +52,7 @@ async def list_models(
         "gpt-4o", 
         "claude-3-5-sonnet-20240620",
         "claude-3-7-sonnet-20250219",
+        'anthropic/claude-sonnet-4',
         # 添加默认模型
         settings.OPENAI_MODEL
     ]

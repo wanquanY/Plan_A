@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'http://101.42.168.191:18000/api/upload';
+const API_URL = 'http://14.103.155.104:18000/api/upload';
 
 interface UploadResponse {
   success: boolean;

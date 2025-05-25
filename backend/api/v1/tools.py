@@ -290,4 +290,4 @@ async def search_tools(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="搜索工具失败"
-        ) 
+    ) 

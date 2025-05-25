@@ -168,7 +168,7 @@ const handleChange = (info: UploadChangeParam) => {
 const uploadProps = {
   name: 'file',
   multiple: false,
-  action: 'http://101.42.168.191:18000/api/upload',
+  action: 'http://14.103.155.104:18000/api/upload',
   data: { folder: 'avatar' },
   headers: {},
   beforeUpload: beforeUpload,
@@ -241,7 +241,7 @@ onMounted(() => {
                 <Upload
                   name="file"
                   :multiple="false"
-                  :action="'http://101.42.168.191:18000/api/upload'"
+                  :action="'http://14.103.155.104:18000/api/upload'"
                   :data="{ folder: 'avatar' }"
                   :showUploadList="false"
                   :beforeUpload="beforeUpload"

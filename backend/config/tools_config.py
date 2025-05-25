@@ -58,7 +58,7 @@ AVAILABLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "serper_search",
-            "description": "通过Serper Google搜索引擎查询信息，获取最新的网络搜索结果",
+            "description": "通过Google搜索引擎查询信息，获取搜索结果列表。返回的结果包含标题、摘要和链接。如需获取某个链接的详细内容，请使用serper_scrape工具进一步解析。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -90,7 +90,7 @@ AVAILABLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "serper_news",
-            "description": "通过Serper搜索最新新闻信息",
+            "description": "搜索最新新闻信息，返回新闻标题、摘要和链接。如需获取新闻的完整内容，请使用serper_scrape工具解析具体的新闻链接。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -122,7 +122,7 @@ AVAILABLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "serper_scrape",
-            "description": "通过Serper解析指定网页的内容，提取文本、标题、链接等信息",
+            "description": "解析网页内容获取详细信息。当搜索结果中有感兴趣的链接时，使用此工具获取网页的完整内容、正文、标题等详细信息。特别适用于需要深入了解某个网页内容的场景。",
             "parameters": {
                 "type": "object",
                 "properties": {

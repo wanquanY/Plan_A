@@ -9,6 +9,8 @@
         v-model="inputValue"
         @keydown="handleKeydown"
         @input="autoResize"
+        @compositionstart="handleCompositionStart"
+        @compositionend="handleCompositionEnd"
         rows="1"
       ></textarea>
     </div>
@@ -130,17 +132,18 @@ const emit = defineEmits(['send', 'select-agent', 'upload-file', 'adjust-tone'])
 // 状态变量
 const inputRef = ref(null);
 const inputValue = ref('');
-const showAgentSelector = ref(false);
-const agents = ref([]);
-const loading = ref(false);
 const selectedAgent = ref(null);
+const agents = ref([]);
+const showAgentSelector = ref(false);
 const showAdjustMenu = ref(false);
+const isComposing = ref(false);
 const adjustOptions = ref([
   { key: 'formal', label: '更正式' },
   { key: 'casual', label: '更随意' },
   { key: 'shorter', label: '更简短' },
   { key: 'longer', label: '更详细' }
 ]);
+const loading = ref(false);
 
 // 加载Agent列表
 const fetchAgents = async () => {
@@ -205,6 +208,11 @@ const handleSendMessage = () => {
 const handleKeydown = (event) => {
   // 处理Enter键
   if (event.key === 'Enter') {
+    // 如果正在使用输入法组合，不处理Enter键
+    if (isComposing.value) {
+      return;
+    }
+    
     // 如果按下Shift+Enter，不阻止默认行为（允许换行）
     if (event.shiftKey) {
       return;
@@ -214,6 +222,16 @@ const handleKeydown = (event) => {
     event.preventDefault();
     handleSendMessage();
   }
+};
+
+// 处理输入法组合开始
+const handleCompositionStart = () => {
+  isComposing.value = true;
+};
+
+// 处理输入法组合结束
+const handleCompositionEnd = () => {
+  isComposing.value = false;
 };
 
 // 自动调整输入框高度

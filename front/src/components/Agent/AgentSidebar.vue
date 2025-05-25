@@ -99,6 +99,12 @@
               {{ formatTime(message.timestamp) }}
             </div>
           </div>
+          
+          <!-- 如果有工具调用状态，在消息内容前显示 -->
+          <div v-if="toolCallsStatus.length > 0 && (message.isTyping || (index === messages.length - 1 && hasActiveTools))" class="tool-status-in-message">
+            <ToolCallsStatus :tool-calls="toolCallsStatus" />
+          </div>
+          
           <div class="message-content">
             <!-- 正在打字时显示简单文本和打字指示器 -->
             <div v-if="message.isTyping" class="typing-content">
@@ -164,6 +170,8 @@ import { markdownToHtml } from '../../services/markdownService';
 import { renderMermaidDynamically, renderCodeBlocks, renderMarkMaps } from '../../services/renderService';
 import chatService from '../../services/chat';
 import { message } from 'ant-design-vue';
+import ToolCallsStatus from './ToolCallsStatus.vue';
+import { useToolCallsStatus } from '../../composables/useToolCallsStatus';
 
 const props = defineProps({
   visible: {
@@ -209,6 +217,25 @@ const markMapRenderer = ref(null);
 const editTextarea = ref(null);
 const isEditingMessage = ref(false);
 const editingController = ref(null);
+
+// 使用工具调用状态管理
+const {
+  toolCalls: toolCallsStatus,
+  handleToolStatus,
+  clearToolCalls
+} = useToolCallsStatus();
+
+// 检查是否有正在输入的AI消息
+const hasTypingAgentMessage = computed(() => {
+  return messages.value.some(msg => msg.type === 'agent' && msg.isTyping);
+});
+
+// 检查是否有活跃的工具调用
+const hasActiveTools = computed(() => {
+  return toolCallsStatus.value.some(tool => 
+    tool.status === 'preparing' || tool.status === 'executing'
+  );
+});
 
 // 渲染markdown内容
 const renderMarkdown = (content) => {
@@ -280,7 +307,7 @@ const initializeFromHistory = (forceUpdate = false) => {
   if (!props.conversationHistory || props.conversationHistory.length === 0) {
     console.log('历史记录为空，强制清空messages');
     // 历史记录为空时，强制清空messages（无论是否有当前消息）
-    messages.value = [];
+      messages.value = [];
     console.log('已强制清空messages');
     return;
   }
@@ -430,6 +457,9 @@ const addTestMessages = () => {
 
 // 发送消息
 const handleSendMessage = (messageData) => {
+  // 清空之前的工具状态
+  clearToolCalls();
+  
   // 添加用户消息到聊天记录
   const userMessage = {
     id: Date.now() + '_user',
@@ -600,9 +630,14 @@ const saveEditMessage = async (messageObj) => {
     editingController.value = await chatService.editMessage(
       props.conversationId,
       editRequest,
-      (response, isComplete, conversationId) => {
+      (response, isComplete, conversationId, toolStatus) => {
         // 只有在编辑重新执行时才处理这里的响应
         if (!isEditingRerun) return;
+        
+        // 处理工具状态更新
+        if (toolStatus) {
+          handleToolStatus(toolStatus);
+        }
         
         // 移除加载消息
         const loadingIndex = messages.value.findIndex(msg => msg.type === 'loading');
@@ -881,16 +916,16 @@ watch(() => props.agentResponse, (newResponse) => {
       );
       
       if (!hasSameContent) {
-        // 添加新的AI消息
-        const agentMessage = {
-          id: Date.now() + '_agent',
-          type: 'agent',
-          content: newResponse,
-          timestamp: new Date(),
-          agent: currentAgent.value,
-          isTyping: props.isAgentResponding
-        };
-        messages.value.push(agentMessage);
+      // 添加新的AI消息
+      const agentMessage = {
+        id: Date.now() + '_agent',
+        type: 'agent',
+        content: newResponse,
+        timestamp: new Date(),
+        agent: currentAgent.value,
+        isTyping: props.isAgentResponding
+      };
+      messages.value.push(agentMessage);
         console.log('添加新的AI消息');
       } else {
         console.log('检测到重复内容，跳过添加');
@@ -1026,7 +1061,7 @@ watch(() => props.conversationHistory, (newHistory, oldHistory) => {
     setTimeout(() => {
       if (!props.isAgentResponding) {
         initializeFromHistory(false);
-      }
+  }
     }, 100);
   }
 }, { deep: true, immediate: false }); // 移除immediate，避免组件初始化时的重复调用
@@ -1045,6 +1080,12 @@ onMounted(() => {
   nextTick(() => {
     unifiedInputRef.value?.focus();
   });
+});
+
+// 暴露方法给父组件
+defineExpose({
+  handleToolStatus,
+  clearToolCalls
 });
 </script>
 
@@ -1676,4 +1717,105 @@ onMounted(() => {
   display: inline;
   margin-left: 0.5em;
 }
-</style> 
+
+/* 工具调用状态显示 */
+.tool-calls-status {
+  margin: 12px 0;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.tool-calls-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tool-icon {
+  font-size: 16px;
+  margin-right: 8px;
+}
+
+.tool-calls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-call-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tool-call-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.tool-status {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.tool-call-progress {
+  width: 100px;
+  height: 8px;
+  background: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 4px;
+}
+
+/* 工具状态容器样式 */
+.tool-status-container {
+  margin: 16px 0;
+  padding: 0;
+}
+
+/* 消息内工具状态样式 */
+.tool-status-in-message {
+  margin-bottom: 12px;
+  padding: 0;
+}
+
+.tool-status-in-message .tool-calls-status {
+  margin: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* 重写消息内工具状态的样式 */
+.tool-status-in-message :deep(.tool-calls-status) {
+  margin: 0;
+  padding: 12px;
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.tool-status-in-message :deep(.tool-call-item) {
+  background: rgba(255, 255, 255, 0.8);
+  margin-bottom: 8px;
+}
+
+.tool-status-in-message :deep(.tool-call-item:last-child) {
+  margin-bottom: 0;
+}
+</style>

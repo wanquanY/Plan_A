@@ -87,14 +87,40 @@ class MemoryService:
             if len(all_memories) > self.max_user_memories:
                 # 获取需要清理的会话ID列表
                 memories_to_remove = all_memories[self.max_user_memories:]
-                api_logger.info(f"用户 {user_id} 记忆会话数超过限制，清理 {len(memories_to_remove)} 个旧会话: {', '.join(memories_to_remove)}")
                 
-                # 删除这些会话的记忆
+                # 过滤和转换有效的会话ID
+                valid_memories_to_remove = []
                 for mem_id in memories_to_remove:
-                    self.clear_memory(int(mem_id))
+                    try:
+                        # 处理字节串和字符串
+                        if isinstance(mem_id, bytes):
+                            mem_id_str = mem_id.decode('utf-8')
+                        else:
+                            mem_id_str = str(mem_id)
+                        
+                        # 跳过无效的ID
+                        if mem_id_str == 'None' or not mem_id_str.strip():
+                            continue
+                            
+                        # 尝试转换为整数
+                        mem_id_int = int(mem_id_str)
+                        valid_memories_to_remove.append(mem_id_int)
+                    except (ValueError, AttributeError) as e:
+                        api_logger.warning(f"跳过无效的会话ID: {mem_id}, 错误: {e}")
+                        continue
+                
+                if valid_memories_to_remove:
+                    api_logger.info(f"用户 {user_id} 记忆会话数超过限制，清理 {len(valid_memories_to_remove)} 个旧会话: {', '.join(map(str, valid_memories_to_remove))}")
                     
-                # 从用户索引中移除
-                self.redis.zremrangebyrank(user_key, 0, len(memories_to_remove) - 1)
+                    # 删除这些会话的记忆
+                    for mem_id in valid_memories_to_remove:
+                        self.clear_memory(mem_id)
+                    
+                    # 从用户索引中移除（移除所有超出限制的项，包括无效的）
+                    self.redis.zremrangebyrank(user_key, 0, len(memories_to_remove) - 1)
+                else:
+                    api_logger.warning(f"用户 {user_id} 没有有效的会话ID需要清理")
+                    
         except Exception as e:
             api_logger.error(f"注册用户记忆会话失败: {str(e)}", exc_info=True)
             # 即使失败也继续，不影响主要功能

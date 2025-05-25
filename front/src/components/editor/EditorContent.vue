@@ -33,8 +33,10 @@
             class="agent-input-field"
             :placeholder="selectedAgent ? `向${selectedAgent.name}提问...` : '请先选择AI助手...'"
             v-model="agentInputText"
-            @keydown.enter="sendToAgent"
+            @keydown="handleAgentInputKeydown"
             @keydown.esc="closeAgentInput"
+            @compositionstart="handleAgentInputCompositionStart"
+            @compositionend="handleAgentInputCompositionEnd"
           />
           <button 
             class="send-button"
@@ -95,6 +97,7 @@ const agents = ref([]);
 const cursorPosition = ref({ x: 0, y: 0 });
 const activeRange = ref(null);
 const agentInputRef = ref(null);
+const isAgentInputComposing = ref(false); // Agent输入框的组合状态
 
 // 计算输入框位置样式
 const agentInputStyle = computed(() => {
@@ -862,6 +865,30 @@ const showAgentInputAt = (position, range) => {
 const closeAgentInput = () => {
   showAgentInput.value = false;
   agentInputText.value = '';
+};
+
+// 处理Agent输入框键盘事件
+const handleAgentInputKeydown = (event) => {
+  if (event.key === 'Enter') {
+    // 如果正在使用输入法组合，不处理Enter键
+    if (isAgentInputComposing.value) {
+      return;
+    }
+    
+    // 阻止默认行为并发送消息
+    event.preventDefault();
+    sendToAgent();
+  }
+};
+
+// 处理Agent输入框组合开始
+const handleAgentInputCompositionStart = () => {
+  isAgentInputComposing.value = true;
+};
+
+// 处理Agent输入框组合结束
+const handleAgentInputCompositionEnd = () => {
+  isAgentInputComposing.value = false;
 };
 
 // 发送消息到Agent

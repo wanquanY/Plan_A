@@ -285,39 +285,70 @@ async def stream_chat(
                 db=db,
                 user_id=current_user.id
             ):
-                # 如果是元组，则包含内容和会话ID
-                if isinstance(chunk_data, tuple) and len(chunk_data) == 2:
-                    content, stream_conversation_id = chunk_data
-                    # 如果流中返回了会话ID，使用它（但通常应该与预创建的ID一致）
-                    if stream_conversation_id and conversation_id is None:
-                        conversation_id = stream_conversation_id
-                        api_logger.info(f"流式响应获取到会话ID: {conversation_id}")
+                # 处理不同格式的响应数据
+                content = ""
+                tool_status = None
+                
+                if isinstance(chunk_data, tuple):
+                    if len(chunk_data) == 3:
+                        # 三元组：(content, conversation_id, tool_status)
+                        content, stream_conversation_id, tool_status = chunk_data
+                        if stream_conversation_id and conversation_id is None:
+                            conversation_id = stream_conversation_id
+                    elif len(chunk_data) == 2:
+                        # 二元组：(content, conversation_id)
+                        content, stream_conversation_id = chunk_data
+                        if stream_conversation_id and conversation_id is None:
+                            conversation_id = stream_conversation_id
                 else:
+                    # 单个内容
                     content = chunk_data
                 
-                full_content += content
-                
-                first_chunk = False
-                
-                # 构造响应数据
-                response_data = {
-                    "code": 200,
-                    "msg": "成功",
-                    "data": {
-                        "message": {
-                            "content": content
+                # 如果有工具状态信息，发送工具状态事件
+                if tool_status:
+                    tool_response_data = {
+                        "code": 200,
+                        "msg": "成功",
+                        "data": {
+                            "message": {
+                                "content": ""
+                            },
+                            "full_content": full_content,
+                            "conversation_id": conversation_id or 0,
+                            "done": False,
+                            "tool_status": tool_status,
+                            "agent_info": agent_info
                         },
-                        "full_content": full_content,
-                        "conversation_id": conversation_id or 0,
-                        "done": False,
-                        "agent_info": agent_info
-                    },
-                    "errors": None,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "request_id": request_id
-                }
+                        "errors": None,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "request_id": request_id
+                    }
+                    
+                    yield f"data: {json.dumps(tool_response_data, ensure_ascii=False)}\n\n"
                 
-                yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
+                # 如果有内容，发送内容事件
+                if content:
+                    full_content += content
+                    
+                    # 构造响应数据
+                    response_data = {
+                        "code": 200,
+                        "msg": "成功",
+                        "data": {
+                            "message": {
+                                "content": content
+                            },
+                            "full_content": full_content,
+                            "conversation_id": conversation_id or 0,
+                            "done": False,
+                            "agent_info": agent_info
+                        },
+                        "errors": None,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "request_id": request_id
+                    }
+                    
+                    yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
             
             # 发送最终响应，标记完成
             final_response_data = {
