@@ -59,6 +59,6 @@ services:
     container_name: freewrite-frontend
     restart: always
     ports:
-      - "8080:80"
+      - "9000:80"
     depends_on:
       - backend
