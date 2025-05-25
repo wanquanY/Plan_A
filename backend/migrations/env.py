@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from alembic import context
 
+# 导入配置
+from backend.core.config import settings
+
 # 导入所有模型
 from backend.db.session import Base
 
@@ -28,9 +31,9 @@ for table in Base.metadata.tables.keys():
 # 从配置文件中获取配置
 config = context.config
 
-# 设置section
+# 使用.env文件中的数据库配置
 config.set_main_option(
-    "sqlalchemy.url", "postgresql+asyncpg://postgres:d01h0dQvMhi63V6HnAaN@101.42.168.191:15432/freewrite"
+    "sqlalchemy.url", settings.SQLALCHEMY_DATABASE_URI
 )
 
 # 加载logging配置（如果存在）

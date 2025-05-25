@@ -545,7 +545,9 @@ async def get_chat_session(
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
             "tokens": msg.tokens,
             "agent_id": msg.agent_id,
-            "agent_info": agent_info
+            "agent_info": agent_info,
+            # 工具调用相关字段 - 新的数据结构
+            "tool_calls_data": msg.tool_calls_data
         })
     
     result = {

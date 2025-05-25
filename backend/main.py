@@ -1,6 +1,11 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import time
+import subprocess
+import sys
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import text
 
 from backend.api.v1 import api_router
 from backend.core.config import settings
@@ -55,6 +60,53 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             raise
 
 
+async def wait_for_database():
+    """等待数据库连接可用"""
+    app_logger.info("等待数据库连接...")
+    engine = create_async_engine(settings.SQLALCHEMY_DATABASE_URI)
+    max_retries = 30
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            app_logger.info("数据库连接成功!")
+            await engine.dispose()
+            return True
+        except Exception as e:
+            retry_count += 1
+            app_logger.warning(f"数据库连接尝试 {retry_count}/{max_retries} 失败: {e}")
+            if retry_count >= max_retries:
+                app_logger.error("达到最大重试次数，数据库连接失败")
+                return False
+            await asyncio.sleep(2)
+    
+    return False
+
+
+def run_database_migrations():
+    """执行数据库迁移"""
+    try:
+        app_logger.info("开始执行数据库迁移...")
+        result = subprocess.run(
+            ["alembic", "upgrade", "head"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        app_logger.info("数据库迁移执行成功")
+        app_logger.debug(f"迁移输出: {result.stdout}")
+        return True
+    except subprocess.CalledProcessError as e:
+        app_logger.error(f"数据库迁移失败: {e}")
+        app_logger.error(f"错误输出: {e.stderr}")
+        return False
+    except Exception as e:
+        app_logger.error(f"执行数据库迁移时发生异常: {e}")
+        return False
+
+
 app = FastAPI(
     title="FreeWrite API",
     description="FreeWrite项目后端API",
@@ -95,8 +147,22 @@ async def root(request: Request):
 @app.on_event("startup")
 async def startup_event():
     app_logger.info("应用程序启动")
+    
+    # 等待数据库连接
+    if not await wait_for_database():
+        app_logger.error("数据库连接失败，应用程序无法启动")
+        sys.exit(1)
+    
+    # 执行数据库迁移
+    if not run_database_migrations():
+        app_logger.error("数据库迁移失败，应用程序无法启动")
+        sys.exit(1)
+    
+    # 初始化数据库（创建表等）
     await init_db()
+    
     app_logger.info(f"随机测试ID: {RandomUtil.generate_request_id()}")
+    app_logger.info("应用程序启动完成")
 
 
 @app.on_event("shutdown")

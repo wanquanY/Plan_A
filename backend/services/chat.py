@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import os
+from datetime import datetime
 
 from backend.core.config import settings
 from backend.schemas.chat import Message, ChatRequest, ChatCompletionResponse
@@ -59,9 +60,10 @@ def get_agent_tools(agent):
 
 
 # 处理工具调用请求
-async def handle_tool_calls(tool_calls, agent):
+async def handle_tool_calls(tool_calls, agent, db: Optional[AsyncSession] = None, conversation_id: Optional[int] = None):
     """处理工具调用请求并返回结果"""
     results = []
+    tool_calls_data = []  # 用于保存到数据库的工具调用信息
     
     for tool_call in tool_calls:
         tool_call_id = tool_call.id
@@ -70,103 +72,118 @@ async def handle_tool_calls(tool_calls, agent):
         
         api_logger.info(f"处理工具调用: {function_name}, 参数: {function_args}")
         
+        # 初始化工具调用数据
+        tool_call_data = {
+            "id": tool_call_id,
+            "name": function_name,
+            "arguments": function_args,
+            "status": "preparing",
+            "result": None,
+            "error": None,
+            "started_at": datetime.now().isoformat()
+        }
+        tool_calls_data.append(tool_call_data)
+        
         # 使用工具管理器获取API密钥
         api_key = None
         if agent and agent.tools_enabled:
             api_key = tools_manager.get_tool_api_key(function_name, agent.tools_enabled)
         
-        # 根据函数名执行相应的工具
-        if function_name == "tavily_search":
-            search_result = tools_service.execute_tool(
-                tool_name="tavily",
-                action="search",
-                params={
-                    "query": function_args.get("query"),
-                    "max_results": function_args.get("max_results", 10)
-                },
-                config={"api_key": api_key} if api_key else None
-            )
+        try:
+            # 更新状态为执行中
+            tool_call_data["status"] = "executing"
+            
+            # 根据函数名执行相应的工具
+            tool_result = None
+            if function_name == "tavily_search":
+                tool_result = tools_service.execute_tool(
+                    tool_name="tavily",
+                    action="search",
+                    params={
+                        "query": function_args.get("query"),
+                        "max_results": function_args.get("max_results", 10)
+                    },
+                    config={"api_key": api_key} if api_key else None
+                )
+                
+            elif function_name == "tavily_extract":
+                tool_result = tools_service.execute_tool(
+                    tool_name="tavily",
+                    action="extract",
+                    params={
+                        "urls": function_args.get("urls"),
+                        "include_images": function_args.get("include_images", False)
+                    },
+                    config={"api_key": api_key} if api_key else None
+                )
+            
+            elif function_name == "serper_search":
+                tool_result = tools_service.execute_tool(
+                    tool_name="serper",
+                    action="search",
+                    params={
+                        "query": function_args.get("query"),
+                        "max_results": function_args.get("max_results", 10),
+                        "gl": function_args.get("gl", "cn"),
+                        "hl": function_args.get("hl", "zh-cn")
+                    },
+                    config={"api_key": api_key} if api_key else None
+                )
+            
+            elif function_name == "serper_news":
+                tool_result = tools_service.execute_tool(
+                    tool_name="serper",
+                    action="news_search",
+                    params={
+                        "query": function_args.get("query"),
+                        "max_results": function_args.get("max_results", 10),
+                        "gl": function_args.get("gl", "cn"),
+                        "hl": function_args.get("hl", "zh-cn")
+                    },
+                    config={"api_key": api_key} if api_key else None
+                )
+            
+            elif function_name == "serper_scrape":
+                tool_result = tools_service.execute_tool(
+                    tool_name="serper",
+                    action="scrape_url",
+                    params={
+                        "url": function_args.get("url"),
+                        "include_markdown": function_args.get("include_markdown", True)
+                    },
+                    config={"api_key": api_key} if api_key else None
+                )
+            
+            # 更新状态为完成
+            tool_call_data["status"] = "completed"
+            tool_call_data["result"] = tool_result
+            tool_call_data["completed_at"] = datetime.now().isoformat()
+            
             results.append({
                 "tool_call_id": tool_call_id,
                 "role": "tool",
                 "name": function_name,
-                "content": json.dumps(search_result, ensure_ascii=False)
+                "content": json.dumps(tool_result, ensure_ascii=False)
             })
             
-        elif function_name == "tavily_extract":
-            extract_result = tools_service.execute_tool(
-                tool_name="tavily",
-                action="extract",
-                params={
-                    "urls": function_args.get("urls"),
-                    "include_images": function_args.get("include_images", False)
-                },
-                config={"api_key": api_key} if api_key else None
-            )
+        except Exception as e:
+            api_logger.error(f"工具调用失败: {function_name}, 错误: {str(e)}")
+            
+            # 更新状态为错误
+            tool_call_data["status"] = "error"
+            tool_call_data["error"] = str(e)
+            tool_call_data["completed_at"] = datetime.now().isoformat()
+            
+            # 返回错误结果
             results.append({
                 "tool_call_id": tool_call_id,
                 "role": "tool",
                 "name": function_name,
-                "content": json.dumps(extract_result, ensure_ascii=False)
-            })
-        
-        elif function_name == "serper_search":
-            search_result = tools_service.execute_tool(
-                tool_name="serper",
-                action="search",
-                params={
-                    "query": function_args.get("query"),
-                    "max_results": function_args.get("max_results", 10),
-                    "gl": function_args.get("gl", "cn"),
-                    "hl": function_args.get("hl", "zh-cn")
-                },
-                config={"api_key": api_key} if api_key else None
-            )
-            results.append({
-                "tool_call_id": tool_call_id,
-                "role": "tool",
-                "name": function_name,
-                "content": json.dumps(search_result, ensure_ascii=False)
-            })
-        
-        elif function_name == "serper_news":
-            news_result = tools_service.execute_tool(
-                tool_name="serper",
-                action="news_search",
-                params={
-                    "query": function_args.get("query"),
-                    "max_results": function_args.get("max_results", 10),
-                    "gl": function_args.get("gl", "cn"),
-                    "hl": function_args.get("hl", "zh-cn")
-                },
-                config={"api_key": api_key} if api_key else None
-            )
-            results.append({
-                "tool_call_id": tool_call_id,
-                "role": "tool",
-                "name": function_name,
-                "content": json.dumps(news_result, ensure_ascii=False)
-            })
-        
-        elif function_name == "serper_scrape":
-            scrape_result = tools_service.execute_tool(
-                tool_name="serper",
-                action="scrape_url",
-                params={
-                    "url": function_args.get("url"),
-                    "include_markdown": function_args.get("include_markdown", True)
-                },
-                config={"api_key": api_key} if api_key else None
-            )
-            results.append({
-                "tool_call_id": tool_call_id,
-                "role": "tool",
-                "name": function_name,
-                "content": json.dumps(scrape_result, ensure_ascii=False)
+                "content": json.dumps({"error": str(e)}, ensure_ascii=False)
             })
     
     api_logger.info(f"完成 {len(results)} 个工具调用")
-    return results
+    return results, tool_calls_data
 
 
 async def generate_chat_response(
@@ -359,7 +376,7 @@ async def generate_chat_response(
                 api_logger.info(f"检测到工具调用请求: {len(tool_calls)} 个工具调用")
                 
                 # 处理工具调用
-                tool_results = await handle_tool_calls(tool_calls, current_agent)
+                tool_results, tool_calls_data = await handle_tool_calls(tool_calls, current_agent, db, conversation_id)
                 
                 # 将工具调用和结果添加到消息列表
                 messages.append({
@@ -400,6 +417,20 @@ async def generate_chat_response(
                 # 将最终的助手消息添加到记忆中
                 memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
                 
+                # 如果提供了数据库会话，保存AI回复（包含工具调用信息）
+                if db and user_id and conversation_id:
+                    await add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=assistant_content,
+                        tokens=token_usage.completion_tokens,
+                        prompt_tokens=token_usage.prompt_tokens,
+                        total_tokens=token_usage.total_tokens,
+                        agent_id=agent_id,
+                        tool_calls_data=tool_calls_data
+                    )
+                
                 api_logger.info(f"工具调用完成，最终响应长度: {len(assistant_content)}")
             else:
                 # 常规响应处理
@@ -409,20 +440,20 @@ async def generate_chat_response(
                 # 将助手消息添加到记忆中
                 memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
                 
+                # 如果提供了数据库会话，保存AI回复
+                if db and user_id and conversation_id:
+                    await add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=assistant_content,
+                        tokens=token_usage.completion_tokens,
+                        prompt_tokens=token_usage.prompt_tokens,
+                        total_tokens=token_usage.total_tokens,
+                        agent_id=agent_id
+                    )
+                
                 api_logger.info(f"OpenAI API调用成功, 生成文本长度: {len(assistant_content)}")
-            
-            # 如果提供了数据库会话，保存AI回复
-            if db and user_id and conversation_id:
-                await add_message(
-                    db=db,
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=assistant_content,
-                    tokens=token_usage.completion_tokens,
-                    prompt_tokens=token_usage.prompt_tokens,
-                    total_tokens=token_usage.total_tokens,
-                    agent_id=agent_id
-                )
             
             return ChatCompletionResponse(
                 message=Message(
@@ -831,6 +862,59 @@ async def generate_chat_stream(
             api_logger.info(f"流式响应完整内容: {collected_content}")
             api_logger.info(f"收集到的工具调用: {len(collected_tool_calls)} 个")
             
+            # 逐个处理工具调用，发送状态更新
+            tool_results = []
+            all_tool_calls_data = []
+            
+            # 构造工具调用对象
+            class ToolCall:
+                def __init__(self, id, type, function):
+                    self.id = id
+                    self.type = type
+                    self.function = function
+            
+            class Function:
+                def __init__(self, name, arguments):
+                    self.name = name
+                    self.arguments = arguments
+            
+            for tc in collected_tool_calls:
+                if tc is None:
+                    continue
+                    
+                # 构造工具调用对象
+                func = Function(tc['function']['name'], tc['function']['arguments'])
+                tool_call_obj = ToolCall(tc['id'], tc['type'], func)
+                
+                # 发送工具调用执行状态
+                tool_status = {
+                    "type": "tool_call_executing",
+                    "tool_call_id": tool_call_obj.id,
+                    "tool_name": tool_call_obj.function.name,
+                    "status": "executing"
+                }
+                yield ("", conversation_id, tool_status)
+                
+                # 执行单个工具调用
+                single_result, single_tool_data = await handle_tool_calls([tool_call_obj], current_agent, db, conversation_id)
+                tool_results.extend(single_result)
+                all_tool_calls_data.extend(single_tool_data)
+                
+                # 发送工具调用完成状态，包含结果内容
+                tool_result_content = single_result[0]["content"] if single_result else ""
+                tool_status = {
+                    "type": "tool_call_completed",
+                    "tool_call_id": tool_call_obj.id,
+                    "tool_name": tool_call_obj.function.name,
+                    "status": "completed",
+                    "result": tool_result_content  # 添加工具调用结果
+                }
+                yield ("", conversation_id, tool_status)
+                
+                # 在工具调用完成后，发送一个特殊的文本标记，表示工具调用已完成
+                tool_completion_text = f"\n\n🔧 {tool_call_obj.function.name} 执行完成\n\n"
+                yield (tool_completion_text, conversation_id)
+            
             # 递归处理工具调用，支持无限次调用
             async for content_chunk in process_tool_calls_recursively_stream(
                 collected_content, 
@@ -843,7 +927,8 @@ async def generate_chat_stream(
                 top_p, 
                 tools, 
                 has_tools, 
-                conversation_id
+                conversation_id,
+                db
             ):
                 if isinstance(content_chunk, tuple):
                     # 工具状态信息
@@ -860,6 +945,25 @@ async def generate_chat_stream(
                 prompt_tokens = len(str(messages)) // 4
                 total_tokens = tokens + prompt_tokens
                 
+                # 如果有工具调用，需要收集工具调用数据
+                final_tool_calls_data = None
+                if collected_tool_calls:
+                    # 这里需要从工具调用处理中获取完整的工具调用数据
+                    # 由于流式处理的复杂性，我们先保存基本信息
+                    final_tool_calls_data = []
+                    for tc in collected_tool_calls:
+                        if tc:  # 跳过None值
+                            final_tool_calls_data.append({
+                                "id": tc.get("id", ""),
+                                "name": tc.get("function", {}).get("name", ""),
+                                "arguments": json.loads(tc.get("function", {}).get("arguments", "{}")),
+                                "status": "completed",  # 流式响应完成时默认为completed
+                                "result": None,  # 在递归处理中会更新
+                                "error": None,
+                                "started_at": datetime.now().isoformat(),
+                                "completed_at": datetime.now().isoformat()
+                            })
+                
                 await add_message(
                     db=db,
                     conversation_id=conversation_id,
@@ -868,7 +972,8 @@ async def generate_chat_stream(
                     tokens=tokens,
                     prompt_tokens=prompt_tokens,
                     total_tokens=total_tokens,
-                    agent_id=agent_id
+                    agent_id=agent_id,
+                    tool_calls_data=final_tool_calls_data
                 )
                 
                 # 保存到记忆
@@ -992,6 +1097,40 @@ async def generate_chat_stream(
                     api_logger.info(f"流式响应完整内容: {collected_content}")
                     api_logger.info(f"收集到的工具调用: {len(collected_tool_calls)} 个")
                     
+                    # 逐个处理工具调用，发送状态更新
+                    tool_results = []
+                    all_tool_calls_data = []
+                    
+                    for tool_call_obj in collected_tool_calls:
+                        # 发送工具调用执行状态
+                        tool_status = {
+                            "type": "tool_call_executing",
+                            "tool_call_id": tool_call_obj.id,
+                            "tool_name": tool_call_obj.function.name,
+                            "status": "executing"
+                        }
+                        yield ("", conversation_id, tool_status)
+                        
+                        # 执行单个工具调用
+                        single_result, single_tool_data = await handle_tool_calls([tool_call_obj], current_agent, db, conversation_id)
+                        tool_results.extend(single_result)
+                        all_tool_calls_data.extend(single_tool_data)
+                        
+                        # 发送工具调用完成状态，包含结果内容
+                        tool_result_content = single_result[0]["content"] if single_result else ""
+                        tool_status = {
+                            "type": "tool_call_completed",
+                            "tool_call_id": tool_call_obj.id,
+                            "tool_name": tool_call_obj.function.name,
+                            "status": "completed",
+                            "result": tool_result_content  # 添加工具调用结果
+                        }
+                        yield ("", conversation_id, tool_status)
+                        
+                        # 在工具调用完成后，发送一个特殊的文本标记，表示工具调用已完成
+                        tool_completion_text = f"\n\n🔧 {tool_call_obj.function.name} 执行完成\n\n"
+                        yield (tool_completion_text, conversation_id)
+                    
                     # 递归处理工具调用，支持无限次调用
                     async for content_chunk in process_tool_calls_recursively_stream(
                         collected_content, 
@@ -1004,7 +1143,8 @@ async def generate_chat_stream(
                         top_p, 
                         tools, 
                         has_tools, 
-                        conversation_id
+                        conversation_id,
+                        db
                     ):
                         if isinstance(content_chunk, tuple):
                             # 工具状态信息
@@ -1029,7 +1169,8 @@ async def generate_chat_stream(
                             tokens=tokens,
                             prompt_tokens=prompt_tokens,
                             total_tokens=total_tokens,
-                            agent_id=agent_id
+                            agent_id=agent_id,
+                            tool_calls_data=all_tool_calls_data
                         )
                         
                         # 保存到记忆
@@ -1214,7 +1355,7 @@ async def process_tool_calls_recursively(
             tool_call_objects.append(tool_call_obj)
         
         # 处理工具调用
-        tool_results = await handle_tool_calls(tool_call_objects, agent)
+        tool_results, tool_calls_data = await handle_tool_calls(tool_call_objects, agent, db, conversation_id)
         
         # 将工具调用和结果添加到消息列表
         messages.append({
@@ -1293,6 +1434,7 @@ async def process_tool_calls_recursively_stream(
     tools: List[Dict[str, Any]], 
     has_tools: bool, 
     conversation_id: int,
+    db: Optional[AsyncSession] = None,
     max_iterations: int = 10  # 防止无限循环
 ):
     """
@@ -1352,36 +1494,8 @@ async def process_tool_calls_recursively_stream(
             tool_call_obj = ToolCall(tc['id'], tc['type'], func)
             tool_call_objects.append(tool_call_obj)
         
-        # 逐个处理工具调用，发送状态更新
-        tool_results = []
-        for tool_call_obj in tool_call_objects:
-            # 发送工具调用执行状态
-            tool_status = {
-                "type": "tool_call_executing",
-                "tool_call_id": tool_call_obj.id,
-                "tool_name": tool_call_obj.function.name,
-                "status": "executing"
-            }
-            yield ("", conversation_id, tool_status)
-            
-            # 执行单个工具调用
-            single_result = await handle_tool_calls([tool_call_obj], agent)
-            tool_results.extend(single_result)
-            
-            # 发送工具调用完成状态，包含结果内容
-            tool_result_content = single_result[0]["content"] if single_result else ""
-            tool_status = {
-                "type": "tool_call_completed",
-                "tool_call_id": tool_call_obj.id,
-                "tool_name": tool_call_obj.function.name,
-                "status": "completed",
-                "result": tool_result_content  # 添加工具调用结果
-            }
-            yield ("", conversation_id, tool_status)
-            
-            # 在工具调用完成后，发送一个特殊的文本标记，表示工具调用已完成
-            tool_completion_text = f"\n\n🔧 {tool_call_obj.function.name} 执行完成\n\n"
-            yield (tool_completion_text, conversation_id)
+        # 处理工具调用
+        tool_results, tool_calls_data = await handle_tool_calls(tool_call_objects, agent, db, conversation_id)
         
         # 将工具调用和结果添加到消息列表
         messages.append({

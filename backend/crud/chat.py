@@ -133,10 +133,11 @@ async def add_message(
     tokens: Optional[int] = None,
     prompt_tokens: Optional[int] = None,
     total_tokens: Optional[int] = None,
-    agent_id: Optional[int] = None
+    agent_id: Optional[int] = None,
+    tool_calls_data: Optional[List[Dict[str, Any]]] = None
 ) -> ChatMessage:
     """添加一条聊天消息"""
-    db_logger.debug(f"添加聊天消息: conversation_id={conversation_id}, role={role}, agent_id={agent_id}")
+    db_logger.debug(f"添加聊天消息: conversation_id={conversation_id}, role={role}, agent_id={agent_id}, has_tools={bool(tool_calls_data)}")
     
     message = ChatMessage(
         conversation_id=conversation_id,
@@ -145,23 +146,15 @@ async def add_message(
         tokens=tokens,
         prompt_tokens=prompt_tokens,
         total_tokens=total_tokens,
-        agent_id=agent_id
+        agent_id=agent_id,
+        tool_calls_data=tool_calls_data
     )
     
     db.add(message)
     await db.commit()
     await db.refresh(message)
     
-    # 更新聊天会话的更新时间
-    chat = await get_chat(db, conversation_id)
-    if chat:
-        # 如果没有标题或使用默认标题，且是用户的消息，则使用AI生成标题
-        if (not chat.title or chat.title == "新对话") and role == "user" and len(content) > 0:
-            # 生成并更新会话标题，不管是否关联笔记
-            db_logger.info(f"生成新会话标题: conversation_id={conversation_id}")
-            title = await generate_title_with_ai(conversation_id, content)
-            await update_chat_title(db, conversation_id, title)
-    
+    db_logger.debug(f"聊天消息已保存: id={message.id}")
     return message
 
 
@@ -234,17 +227,38 @@ async def soft_delete_messages_after(db: AsyncSession, conversation_id: int, mes
 
 
 async def get_latest_chat(db: AsyncSession, user_id: int) -> Optional[Chat]:
-    """获取用户最新创建的聊天会话"""
-    db_logger.debug(f"获取用户最新聊天会话: user_id={user_id}")
-    
+    """获取用户最新的聊天会话"""
     query = select(Chat).where(
         and_(
             Chat.user_id == user_id,
             Chat.is_deleted == False
         )
-    ).order_by(Chat.created_at.desc())
+    ).order_by(Chat.updated_at.desc()).limit(1)
     
     result = await db.execute(query)
     chat = result.scalars().first()
     
     return chat 
+
+
+async def update_message_tool_calls(
+    db: AsyncSession,
+    message_id: int,
+    tool_calls_data: List[Dict[str, Any]]
+) -> Optional[ChatMessage]:
+    """更新消息的工具调用数据"""
+    db_logger.debug(f"更新消息工具调用数据: message_id={message_id}")
+    
+    stmt = select(ChatMessage).where(ChatMessage.id == message_id)
+    result = await db.execute(stmt)
+    message = result.scalar_one_or_none()
+    
+    if message:
+        message.tool_calls_data = tool_calls_data
+        await db.commit()
+        await db.refresh(message)
+        db_logger.debug(f"工具调用数据已更新: message_id={message_id}")
+        return message
+    
+    db_logger.warning(f"消息不存在: message_id={message_id}")
+    return None 
