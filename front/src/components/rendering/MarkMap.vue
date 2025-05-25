@@ -133,7 +133,7 @@ const renderMarkmap = async () => {
             isFinite(svgRect.width) && isFinite(svgRect.height)) {
           
           console.log('执行首次fit，SVG尺寸:', svgRect);
-          mm.fit();
+      mm.fit();
           console.log('首次fit执行成功');
         } else {
           console.warn('SVG尺寸包含无效值，跳过首次fit:', svgRect);
@@ -157,7 +157,7 @@ const renderMarkmap = async () => {
               isFinite(svgRect.width) && isFinite(svgRect.height)) {
             
             console.log('执行延迟fit，SVG尺寸:', svgRect);
-            mm.fit();
+          mm.fit();
             console.log('延迟fit执行成功');
           } else {
             console.warn('延迟fit时SVG尺寸包含无效值:', svgRect);
@@ -206,7 +206,7 @@ const fitMap = () => {
           isFinite(svgRect.width) && isFinite(svgRect.height)) {
         
         console.log('手动fit，SVG尺寸:', svgRect);
-        markmap.value.fit();
+    markmap.value.fit();
         console.log('手动fit执行成功');
       } else {
         console.warn('手动fit时SVG尺寸包含无效值:', svgRect);

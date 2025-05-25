@@ -13,6 +13,8 @@ from backend.crud.chat import create_chat, get_chat, add_message, get_chat_messa
 from backend.crud.agent import agent as agent_crud
 from backend.services.memory import memory_service
 from backend.services.tools import tools_service
+from backend.config.tools_config import AVAILABLE_TOOLS, get_tools_by_provider, get_tool_by_name
+from backend.config.tools_manager import tools_manager
 
 # 获取配置并进行调整
 api_key = settings.OPENAI_API_KEY
@@ -43,72 +45,14 @@ async_client = AsyncOpenAI(
 api_logger.info(f"OpenAI客户端初始化完成 - 同步客户端: {client.base_url}, 异步客户端: {async_client.base_url}")
 
 
-# 定义支持的工具配置
-AVAILABLE_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "tavily_search",
-            "description": "通过Tavily搜索引擎查询信息",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "搜索查询关键词"
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "返回的最大结果数量",
-                        "default": 10
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "tavily_extract",
-            "description": "从指定URL提取网页内容",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "urls": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "需要提取内容的URL列表"
-                    },
-                    "include_images": {
-                        "type": "boolean",
-                        "description": "是否包含图片",
-                        "default": False
-                    }
-                },
-                "required": ["urls"]
-            }
-        }
-    }
-]
-
-
 # 获取Agent配置的工具列表
 def get_agent_tools(agent):
     """根据Agent的配置返回可用工具列表"""
     if not agent or not agent.tools_enabled:
         return []
     
-    tools = []
-    
-    # 检查并添加Tavily搜索工具
-    if "tavily" in agent.tools_enabled and agent.tools_enabled["tavily"].get("enabled", False):
-        tavily_config = agent.tools_enabled["tavily"]
-        for tool in AVAILABLE_TOOLS:
-            if tool["function"]["name"].startswith("tavily_"):
-                tools.append(tool)
+    # 使用工具管理器获取工具列表
+    tools = tools_manager.get_agent_tools(agent.tools_enabled)
     
     api_logger.info(f"为Agent {agent.name} 配置了 {len(tools)} 个工具")
     return tools
@@ -126,10 +70,10 @@ async def handle_tool_calls(tool_calls, agent):
         
         api_logger.info(f"处理工具调用: {function_name}, 参数: {function_args}")
         
-        # 获取API密钥
+        # 使用工具管理器获取API密钥
         api_key = None
-        if agent and agent.tools_enabled and "tavily" in agent.tools_enabled:
-            api_key = agent.tools_enabled["tavily"].get("api_key")
+        if agent and agent.tools_enabled:
+            api_key = tools_manager.get_tool_api_key(function_name, agent.tools_enabled)
         
         # 根据函数名执行相应的工具
         if function_name == "tavily_search":
@@ -164,6 +108,61 @@ async def handle_tool_calls(tool_calls, agent):
                 "role": "tool",
                 "name": function_name,
                 "content": json.dumps(extract_result, ensure_ascii=False)
+            })
+        
+        elif function_name == "serper_search":
+            search_result = tools_service.execute_tool(
+                tool_name="serper",
+                action="search",
+                params={
+                    "query": function_args.get("query"),
+                    "max_results": function_args.get("max_results", 10),
+                    "gl": function_args.get("gl", "cn"),
+                    "hl": function_args.get("hl", "zh-cn")
+                },
+                config={"api_key": api_key} if api_key else None
+            )
+            results.append({
+                "tool_call_id": tool_call_id,
+                "role": "tool",
+                "name": function_name,
+                "content": json.dumps(search_result, ensure_ascii=False)
+            })
+        
+        elif function_name == "serper_news":
+            news_result = tools_service.execute_tool(
+                tool_name="serper",
+                action="news_search",
+                params={
+                    "query": function_args.get("query"),
+                    "max_results": function_args.get("max_results", 10),
+                    "gl": function_args.get("gl", "cn"),
+                    "hl": function_args.get("hl", "zh-cn")
+                },
+                config={"api_key": api_key} if api_key else None
+            )
+            results.append({
+                "tool_call_id": tool_call_id,
+                "role": "tool",
+                "name": function_name,
+                "content": json.dumps(news_result, ensure_ascii=False)
+            })
+        
+        elif function_name == "serper_scrape":
+            scrape_result = tools_service.execute_tool(
+                tool_name="serper",
+                action="scrape_url",
+                params={
+                    "url": function_args.get("url"),
+                    "include_markdown": function_args.get("include_markdown", True)
+                },
+                config={"api_key": api_key} if api_key else None
+            )
+            results.append({
+                "tool_call_id": tool_call_id,
+                "role": "tool",
+                "name": function_name,
+                "content": json.dumps(scrape_result, ensure_ascii=False)
             })
     
     api_logger.info(f"完成 {len(results)} 个工具调用")
@@ -704,34 +703,104 @@ async def generate_chat_stream(
             
             api_logger.info(f"使用Agent模型设置: model={use_model}, temperature={temperature}, top_p={top_p}, max_tokens={max_tokens}")
         
+        # 获取工具配置
+        tools = get_agent_tools(current_agent) if current_agent else []
+        has_tools = len(tools) > 0
+        api_logger.info(f"流式聊天启用工具: {has_tools}, 工具数量: {len(tools)}")
+        
         # 调用流式API
         try:
             api_logger.info(f"尝试同步调用流式API - URL: {client.base_url}")
             
+            # 准备API调用参数
+            api_params = {
+                "model": use_model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "stream": True  # 开启流式响应
+            }
+            
+            # 如果有工具，添加工具配置
+            if has_tools:
+                api_params["tools"] = tools
+                api_logger.info(f"流式响应中添加工具配置: {len(tools)} 个工具")
+            
             # 直接使用同步客户端，但开启流式响应
-            response = client.chat.completions.create(
-                model=use_model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                stream=True  # 开启流式响应
-            )
+            response = client.chat.completions.create(**api_params)
             
             api_logger.debug(f"获取到流式响应: {type(response)}")
             
             # 这里response是一个迭代器，需要遍历每个部分
             collected_content = ""
+            collected_tool_calls = []
             is_first_chunk = True
             chunk_count = 0
             
             for chunk in response:
                 # 记录流式响应的每个块的原始内容
                 chunk_count += 1
-                api_logger.info(f"流式响应块 #{chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
+                api_logger.debug(f"流式响应块 #{chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
                 
                 if hasattr(chunk, 'choices') and chunk.choices:
                     delta = chunk.choices[0].delta
+                    
+                    # 检查是否有工具调用
+                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                        api_logger.debug(f"流式响应中检测到工具调用: {len(delta.tool_calls)} 个")
+                        
+                        # 收集工具调用信息
+                        for tool_call in delta.tool_calls:
+                            # 获取工具调用的索引（如果有）
+                            tool_index = getattr(tool_call, 'index', None)
+                            
+                            # 查找是否已存在相同索引的工具调用
+                            existing_call = None
+                            if tool_index is not None:
+                                # 使用索引查找
+                                if tool_index < len(collected_tool_calls):
+                                    existing_call = collected_tool_calls[tool_index]
+                            else:
+                                # 使用ID查找
+                                for existing in collected_tool_calls:
+                                    if existing.get('id') == tool_call.id:
+                                        existing_call = existing
+                                        break
+                            
+                            if existing_call:
+                                # 更新现有的工具调用
+                                if tool_call.function and tool_call.function.arguments:
+                                    existing_call['function']['arguments'] += tool_call.function.arguments
+                                    api_logger.debug(f"累积工具调用参数: {existing_call['id']}, 当前参数: {existing_call['function']['arguments']}")
+                                
+                                # 更新函数名（如果提供）
+                                if tool_call.function and tool_call.function.name:
+                                    existing_call['function']['name'] = tool_call.function.name
+                                
+                                # 更新ID（如果提供）
+                                if tool_call.id:
+                                    existing_call['id'] = tool_call.id
+                            else:
+                                # 添加新的工具调用
+                                new_call = {
+                                    'id': tool_call.id if tool_call.id else f"call_{len(collected_tool_calls)}",
+                                    'type': tool_call.type if tool_call.type else 'function',
+                                    'function': {
+                                        'name': tool_call.function.name if tool_call.function and tool_call.function.name else '',
+                                        'arguments': tool_call.function.arguments if tool_call.function and tool_call.function.arguments else ''
+                                    }
+                                }
+                                
+                                # 如果有索引，确保列表足够大
+                                if tool_index is not None:
+                                    while len(collected_tool_calls) <= tool_index:
+                                        collected_tool_calls.append(None)
+                                    collected_tool_calls[tool_index] = new_call
+                                else:
+                                    collected_tool_calls.append(new_call)
+                                
+                                api_logger.debug(f"新增工具调用: {new_call['id']}, 名称: {new_call['function']['name']}, 初始参数: {new_call['function']['arguments']}")
                     
                     # 提取当前块的内容
                     content = delta.content or ""
@@ -744,14 +813,120 @@ async def generate_chat_stream(
                         is_first_chunk = False
                         # 对第一个块，我们总是返回会话ID，不管是否是新会话
                         yield (content, conversation_id)
-                    else:
+                    elif content:
                         # 后续块只返回内容
                         yield content
             
-            # 流式响应结束，保存AI回复到数据库
+            # 流式响应结束，检查是否有工具调用需要处理
             api_logger.info(f"流式响应完成，共接收 {chunk_count} 个块")
             api_logger.info(f"流式响应完整内容: {collected_content}")
+            api_logger.info(f"收集到的工具调用: {len(collected_tool_calls)} 个")
             
+            # 如果有工具调用，处理工具调用
+            if collected_tool_calls:
+                api_logger.info(f"开始处理 {len(collected_tool_calls)} 个工具调用")
+                
+                # 验证工具调用参数的完整性
+                valid_tool_calls = []
+                for tc in collected_tool_calls:
+                    # 跳过None值（可能由索引填充产生）
+                    if tc is None:
+                        continue
+                        
+                    # 检查函数名是否有效
+                    if not tc['function']['name']:
+                        api_logger.warning(f"工具调用 {tc['id']} 函数名为空，跳过")
+                        continue
+                    
+                    # 检查参数是否有效
+                    if tc['function']['arguments'].strip():
+                        try:
+                            # 验证JSON格式
+                            json.loads(tc['function']['arguments'])
+                            valid_tool_calls.append(tc)
+                            api_logger.info(f"工具调用 {tc['function']['name']} 参数完整: {tc['function']['arguments']}")
+                        except json.JSONDecodeError as e:
+                            api_logger.error(f"工具调用 {tc['function']['name']} 参数JSON格式错误: {tc['function']['arguments']}, 错误: {e}")
+                    else:
+                        api_logger.warning(f"工具调用 {tc['function']['name']} 参数为空，跳过")
+                
+                if not valid_tool_calls:
+                    api_logger.warning("没有有效的工具调用，跳过工具处理")
+                else:
+                    # 构造工具调用对象
+                    class ToolCall:
+                        def __init__(self, id, type, function):
+                            self.id = id
+                            self.type = type
+                            self.function = function
+                    
+                    class Function:
+                        def __init__(self, name, arguments):
+                            self.name = name
+                            self.arguments = arguments
+                    
+                    tool_call_objects = []
+                    for tc in valid_tool_calls:
+                        func = Function(tc['function']['name'], tc['function']['arguments'])
+                        tool_call_obj = ToolCall(tc['id'], tc['type'], func)
+                        tool_call_objects.append(tool_call_obj)
+                    
+                    # 处理工具调用
+                    tool_results = await handle_tool_calls(tool_call_objects, current_agent)
+                    
+                    # 将工具调用和结果添加到消息列表
+                    messages.append({
+                        "role": "assistant",
+                        "content": collected_content,
+                        "tool_calls": [
+                            {
+                                "id": tc['id'],
+                                "type": "function",
+                                "function": {
+                                    "name": tc['function']['name'],
+                                    "arguments": tc['function']['arguments']
+                                }
+                            } for tc in valid_tool_calls
+                        ]
+                    })
+                    
+                    # 添加工具结果
+                    for tool_result in tool_results:
+                        messages.append(tool_result)
+                    
+                    api_logger.info(f"使用工具结果调用第二次流式API")
+                    
+                    # 第二次调用API，包含工具结果（流式）
+                    second_response = client.chat.completions.create(
+                        model=use_model,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        stream=True
+                    )
+                    
+                    # 处理第二次流式响应
+                    second_collected_content = ""
+                    second_chunk_count = 0
+                    
+                    for chunk in second_response:
+                        second_chunk_count += 1
+                        api_logger.debug(f"第二次流式响应块 #{second_chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
+                        
+                        if hasattr(chunk, 'choices') and chunk.choices:
+                            delta = chunk.choices[0].delta
+                            content = delta.content or ""
+                            second_collected_content += content
+                            
+                            if content:
+                                yield content
+                    
+                    # 更新收集的内容为最终内容
+                    collected_content = second_collected_content
+                    api_logger.info(f"工具调用完成，第二次流式响应内容长度: {len(collected_content)}")
+            
+            # 保存最终内容到数据库
             if db and user_id and conversation_id and collected_content:
                 # 估算token数量（简单实现）
                 tokens = len(collected_content) // 4
@@ -781,30 +956,94 @@ async def generate_chat_stream(
             if "无可用渠道" in str(api_error) and current_agent and use_model != model:
                 api_logger.info(f"流式接口尝试使用默认模型 {model} 重新请求")
                 try:
+                    # 准备默认模型的API调用参数
+                    fallback_api_params = {
+                        "model": model,
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "top_p": top_p,
+                        "stream": True  # 仍然保持流式响应
+                    }
+                    
+                    # 如果有工具，添加工具配置
+                    if has_tools:
+                        fallback_api_params["tools"] = tools
+                    
                     # 使用默认模型重试
-                    response = client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        stream=True  # 仍然保持流式响应
-                    )
+                    response = client.chat.completions.create(**fallback_api_params)
                     
                     api_logger.debug(f"使用默认模型获取到流式响应: {type(response)}")
                     
                     # 这里response是一个迭代器，需要遍历每个部分
                     collected_content = ""
+                    collected_tool_calls = []
                     is_first_chunk = True
                     chunk_count = 0
                     
                     for chunk in response:
                         # 记录流式响应的每个块的原始内容
                         chunk_count += 1
-                        api_logger.info(f"流式响应块 #{chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
+                        api_logger.debug(f"流式响应块 #{chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
                         
                         if hasattr(chunk, 'choices') and chunk.choices:
                             delta = chunk.choices[0].delta
+                            
+                            # 检查是否有工具调用
+                            if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                                api_logger.info(f"流式响应中检测到工具调用: {len(delta.tool_calls)} 个")
+                                
+                                # 收集工具调用信息
+                                for tool_call in delta.tool_calls:
+                                    # 获取工具调用的索引（如果有）
+                                    tool_index = getattr(tool_call, 'index', None)
+                                    
+                                    # 查找是否已存在相同索引的工具调用
+                                    existing_call = None
+                                    if tool_index is not None:
+                                        # 使用索引查找
+                                        if tool_index < len(collected_tool_calls):
+                                            existing_call = collected_tool_calls[tool_index]
+                                    else:
+                                        # 使用ID查找
+                                        for existing in collected_tool_calls:
+                                            if existing.get('id') == tool_call.id:
+                                                existing_call = existing
+                                                break
+                                    
+                                    if existing_call:
+                                        # 更新现有的工具调用
+                                        if tool_call.function and tool_call.function.arguments:
+                                            existing_call['function']['arguments'] += tool_call.function.arguments
+                                            api_logger.debug(f"累积工具调用参数: {existing_call['id']}, 当前参数: {existing_call['function']['arguments']}")
+                                        
+                                        # 更新函数名（如果提供）
+                                        if tool_call.function and tool_call.function.name:
+                                            existing_call['function']['name'] = tool_call.function.name
+                                        
+                                        # 更新ID（如果提供）
+                                        if tool_call.id:
+                                            existing_call['id'] = tool_call.id
+                                    else:
+                                        # 添加新的工具调用
+                                        new_call = {
+                                            'id': tool_call.id if tool_call.id else f"call_{len(collected_tool_calls)}",
+                                            'type': tool_call.type if tool_call.type else 'function',
+                                            'function': {
+                                                'name': tool_call.function.name if tool_call.function and tool_call.function.name else '',
+                                                'arguments': tool_call.function.arguments if tool_call.function and tool_call.function.arguments else ''
+                                            }
+                                        }
+                                        
+                                        # 如果有索引，确保列表足够大
+                                        if tool_index is not None:
+                                            while len(collected_tool_calls) <= tool_index:
+                                                collected_tool_calls.append(None)
+                                            collected_tool_calls[tool_index] = new_call
+                                        else:
+                                            collected_tool_calls.append(new_call)
+                                        
+                                        api_logger.debug(f"新增工具调用: {new_call['id']}, 名称: {new_call['function']['name']}, 初始参数: {new_call['function']['arguments']}")
                             
                             # 提取当前块的内容
                             content = delta.content or ""
@@ -817,14 +1056,120 @@ async def generate_chat_stream(
                                 is_first_chunk = False
                                 # 对第一个块，我们总是返回会话ID，不管是否是新会话
                                 yield (content, conversation_id)
-                            else:
+                            elif content:
                                 # 后续块只返回内容
                                 yield content
                     
-                    # 流式响应结束，保存AI回复到数据库
-                    api_logger.info(f"使用默认模型流式响应完成，共接收 {chunk_count} 个块")
-                    api_logger.info(f"使用默认模型流式响应完整内容: {collected_content}")
+                    # 流式响应结束，检查是否有工具调用需要处理
+                    api_logger.info(f"流式响应完成，共接收 {chunk_count} 个块")
+                    api_logger.info(f"流式响应完整内容: {collected_content}")
+                    api_logger.info(f"收集到的工具调用: {len(collected_tool_calls)} 个")
                     
+                    # 如果有工具调用，处理工具调用
+                    if collected_tool_calls:
+                        api_logger.info(f"开始处理 {len(collected_tool_calls)} 个工具调用")
+                        
+                        # 验证工具调用参数的完整性
+                        valid_tool_calls = []
+                        for tc in collected_tool_calls:
+                            # 跳过None值（可能由索引填充产生）
+                            if tc is None:
+                                continue
+                            
+                            # 检查函数名是否有效
+                            if not tc['function']['name']:
+                                api_logger.warning(f"工具调用 {tc['id']} 函数名为空，跳过")
+                                continue
+                            
+                            # 检查参数是否有效
+                            if tc['function']['arguments'].strip():
+                                try:
+                                    # 验证JSON格式
+                                    json.loads(tc['function']['arguments'])
+                                    valid_tool_calls.append(tc)
+                                    api_logger.info(f"工具调用 {tc['function']['name']} 参数完整: {tc['function']['arguments']}")
+                                except json.JSONDecodeError as e:
+                                    api_logger.error(f"工具调用 {tc['function']['name']} 参数JSON格式错误: {tc['function']['arguments']}, 错误: {e}")
+                            else:
+                                api_logger.warning(f"工具调用 {tc['function']['name']} 参数为空，跳过")
+                        
+                        if not valid_tool_calls:
+                            api_logger.warning("没有有效的工具调用，跳过工具处理")
+                        else:
+                            # 构造工具调用对象
+                            class ToolCall:
+                                def __init__(self, id, type, function):
+                                    self.id = id
+                                    self.type = type
+                                    self.function = function
+                            
+                            class Function:
+                                def __init__(self, name, arguments):
+                                    self.name = name
+                                    self.arguments = arguments
+                            
+                            tool_call_objects = []
+                            for tc in valid_tool_calls:
+                                func = Function(tc['function']['name'], tc['function']['arguments'])
+                                tool_call_obj = ToolCall(tc['id'], tc['type'], func)
+                                tool_call_objects.append(tool_call_obj)
+                            
+                            # 处理工具调用
+                            tool_results = await handle_tool_calls(tool_call_objects, current_agent)
+                            
+                            # 将工具调用和结果添加到消息列表
+                            messages.append({
+                                "role": "assistant",
+                                "content": collected_content,
+                                "tool_calls": [
+                                    {
+                                        "id": tc['id'],
+                                        "type": "function",
+                                        "function": {
+                                            "name": tc['function']['name'],
+                                            "arguments": tc['function']['arguments']
+                                        }
+                                    } for tc in valid_tool_calls
+                                ]
+                            })
+                            
+                            # 添加工具结果
+                            for tool_result in tool_results:
+                                messages.append(tool_result)
+                            
+                            api_logger.info(f"使用工具结果调用第二次流式API")
+                            
+                            # 第二次调用API，包含工具结果（流式）
+                            second_response = client.chat.completions.create(
+                                model=use_model,
+                                messages=messages,
+                                max_tokens=max_tokens,
+                                temperature=temperature,
+                                top_p=top_p,
+                                stream=True
+                            )
+                            
+                            # 处理第二次流式响应
+                            second_collected_content = ""
+                            second_chunk_count = 0
+                            
+                            for chunk in second_response:
+                                second_chunk_count += 1
+                                api_logger.debug(f"第二次流式响应块 #{second_chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
+                                
+                                if hasattr(chunk, 'choices') and chunk.choices:
+                                    delta = chunk.choices[0].delta
+                                    content = delta.content or ""
+                                    second_collected_content += content
+                                    
+                                    if content:
+                                        yield content
+                            
+                            # 更新收集的内容为最终内容
+                            collected_content = second_collected_content
+                            api_logger.info(f"工具调用完成，第二次流式响应内容长度: {len(collected_content)}")
+                        
+                    # 保存最终内容到数据库
                     if db and user_id and conversation_id and collected_content:
                         # 估算token数量（简单实现）
                         tokens = len(collected_content) // 4
@@ -845,10 +1190,7 @@ async def generate_chat_stream(
                         # 保存到记忆
                         memory_service.add_assistant_message(conversation_id, collected_content, user_id)
                         
-                        api_logger.info(f"使用默认模型流式聊天完成，内容长度: {len(collected_content)}")
-                        
-                        # 由于已经生成了内容并返回，这里直接退出函数
-                        return
+                        api_logger.info(f"流式聊天完成，内容长度: {len(collected_content)}")
                     
                 except Exception as fallback_error:
                     api_logger.error(f"使用默认模型 {model} 流式响应仍然失败: {str(fallback_error)}", exc_info=True)

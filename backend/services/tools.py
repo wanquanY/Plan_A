@@ -2,6 +2,7 @@ from typing import Dict, List, Any, Optional
 import os
 import json
 import requests
+import http.client
 from backend.utils.logging import api_logger
 
 class TavilyTool:
@@ -109,6 +110,178 @@ class TavilyTool:
             return {"error": str(e)}
 
 
+class SerperTool:
+    """Serper Google搜索工具"""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """初始化Serper工具"""
+        self.api_key = api_key
+        if not self.api_key:
+            # 尝试从环境变量中获取API密钥
+            self.api_key = os.environ.get("SERPER_API_KEY")
+        
+        self.base_host = "google.serper.dev"
+        
+        api_logger.info(f"Serper工具初始化，API密钥: {self.api_key[:5]}*** (如果有)")
+    
+    def search(
+        self, 
+        query: str, 
+        max_results: int = 10,
+        gl: str = "cn",
+        hl: str = "zh-cn",
+        search_type: str = "search"
+    ) -> Dict[str, Any]:
+        """执行Serper搜索查询"""
+        if not self.api_key:
+            api_logger.error("未提供Serper API密钥，无法执行搜索")
+            return {"error": "未提供API密钥"}
+        
+        try:
+            # 使用http.client进行连接
+            conn = http.client.HTTPSConnection(self.base_host)
+            
+            payload = json.dumps({
+                "q": query,
+                "gl": gl,
+                "hl": hl,
+                "num": max_results
+            })
+            
+            headers = {
+                'X-API-KEY': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            
+            api_logger.info(f"执行Serper搜索: {query}, 最大结果数: {max_results}")
+            
+            # 根据搜索类型选择端点
+            endpoint = f"/{search_type}"
+            conn.request("POST", endpoint, payload, headers)
+            
+            res = conn.getresponse()
+            data = res.read()
+            
+            if res.status == 200:
+                result = json.loads(data.decode("utf-8"))
+                
+                # 统计结果数量
+                organic_count = len(result.get('organic', []))
+                news_count = len(result.get('topStories', []))
+                total_count = organic_count + news_count
+                
+                api_logger.info(f"Serper搜索成功，获取到 {total_count} 条结果 (有机结果: {organic_count}, 新闻: {news_count})")
+                
+                # 格式化结果以便AI理解
+                formatted_result = {
+                    "query": query,
+                    "total_results": total_count,
+                    "organic_results": result.get('organic', []),
+                    "news_results": result.get('topStories', []),
+                    "search_parameters": result.get('searchParameters', {}),
+                    "raw_response": result
+                }
+                
+                return formatted_result
+            else:
+                error_text = data.decode("utf-8")
+                api_logger.error(f"Serper搜索API错误: {res.status}, {error_text}")
+                return {"error": f"API错误: {res.status}", "details": error_text}
+                
+        except Exception as e:
+            api_logger.error(f"Serper搜索异常: {str(e)}", exc_info=True)
+            return {"error": str(e)}
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
+    
+    def news_search(
+        self, 
+        query: str, 
+        max_results: int = 10,
+        gl: str = "cn",
+        hl: str = "zh-cn"
+    ) -> Dict[str, Any]:
+        """执行Serper新闻搜索"""
+        return self.search(query, max_results, gl, hl, "news")
+    
+    def image_search(
+        self, 
+        query: str, 
+        max_results: int = 10,
+        gl: str = "cn",
+        hl: str = "zh-cn"
+    ) -> Dict[str, Any]:
+        """执行Serper图片搜索"""
+        return self.search(query, max_results, gl, hl, "images")
+
+    def scrape_url(
+        self, 
+        url: str,
+        include_markdown: bool = True
+    ) -> Dict[str, Any]:
+        """执行Serper网页解析"""
+        if not self.api_key:
+            api_logger.error("未提供Serper API密钥，无法执行网页解析")
+            return {"error": "未提供API密钥"}
+        
+        try:
+            # 使用http.client进行连接到scrape.serper.dev
+            conn = http.client.HTTPSConnection("scrape.serper.dev")
+            
+            payload = json.dumps({
+                "url": url,
+                "includeMarkdown": include_markdown
+            })
+            
+            headers = {
+                'X-API-KEY': self.api_key,
+                'Content-Type': 'application/json'
+            }
+            
+            api_logger.info(f"执行Serper网页解析: {url}, 包含Markdown: {include_markdown}")
+            
+            conn.request("POST", "/", payload, headers)
+            
+            res = conn.getresponse()
+            data = res.read()
+            
+            if res.status == 200:
+                result = json.loads(data.decode("utf-8"))
+                
+                api_logger.info(f"Serper网页解析成功，URL: {url}")
+                
+                # 格式化结果以便AI理解
+                formatted_result = {
+                    "url": url,
+                    "success": True,
+                    "content": result.get("text", ""),
+                    "markdown": result.get("markdown", "") if include_markdown else None,
+                    "title": result.get("title", ""),
+                    "meta_description": result.get("description", ""),
+                    "links": result.get("links", []),
+                    "images": result.get("images", []),
+                    "raw_response": result
+                }
+                
+                return formatted_result
+            else:
+                error_text = data.decode("utf-8")
+                api_logger.error(f"Serper网页解析API错误: {res.status}, {error_text}")
+                return {"error": f"API错误: {res.status}", "details": error_text}
+                
+        except Exception as e:
+            api_logger.error(f"Serper网页解析异常: {str(e)}", exc_info=True)
+            return {"error": str(e)}
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
+
+
 # 工具服务类，管理所有可用工具
 class ToolsService:
     """工具服务，管理所有可用的工具"""
@@ -117,7 +290,8 @@ class ToolsService:
         """初始化工具服务"""
         self.tools = {}
         self.available_tools = {
-            "tavily": TavilyTool
+            "tavily": TavilyTool,
+            "serper": SerperTool
         }
         api_logger.info(f"工具服务初始化，可用工具: {list(self.available_tools.keys())}")
     
