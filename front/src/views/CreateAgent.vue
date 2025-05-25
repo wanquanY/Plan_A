@@ -139,6 +139,7 @@ const initializeToolsConfig = () => {
   availableTools.value.forEach(tool => {
     toolConfig[tool.name] = {
       enabled: false,
+      name: tool.name,
       api_key: '',
       provider: tool.provider
     };

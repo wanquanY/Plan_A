@@ -20,6 +20,7 @@ export interface ToolDetail {
 // 工具配置接口
 export interface ToolConfig {
   enabled: boolean;
+  name: string;
   api_key: string;
   provider?: string;
 }

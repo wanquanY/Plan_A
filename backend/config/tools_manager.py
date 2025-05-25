@@ -408,6 +408,7 @@ class ToolsManager:
                 for tool_name in provider_info["tools"]:
                     tool_config[tool_name] = {
                         "enabled": enabled,
+                        "name": tool_name,
                         "api_key": api_key,
                         "provider": provider_name
                     }
@@ -479,6 +480,7 @@ class ToolsManager:
         for tool_name in tool_names:
             tool_config[tool_name] = {
                 "enabled": tool_name in enabled_tools,
+                "name": tool_name,
                 "api_key": "",
                 "provider": self._get_tool_provider(tool_name)
             }
