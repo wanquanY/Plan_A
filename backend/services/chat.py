@@ -644,6 +644,14 @@ async def generate_chat_stream(
                     current_agent = await agent_crud.get_agent_by_id(db, agent_id=agent_id)
                     if current_agent:
                         api_logger.info(f"从会话加载Agent: {current_agent.name}, ID={current_agent.id}")
+                        
+                api_logger.info(f"使用现有会话: conversation_id={conversation_id}")
+        else:
+            # 如果conversation_id已经存在，直接使用（API层预创建的情况）
+            if conversation_id:
+                api_logger.info(f"使用API层预创建的会话: conversation_id={conversation_id}")
+            else:
+                api_logger.warning("没有数据库连接或用户ID，无法创建或验证会话")
         
         # 获取用户发送的内容
         user_content = chat_request.content

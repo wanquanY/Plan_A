@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 from typing import Optional
+from datetime import datetime
 
 from backend.schemas.chat import ChatRequest, ChatCompletionResponse, ChatCreate, ChatUpdate, ChatResponse as ChatResponseModel, ChatListResponse, AskAgainRequest
 from backend.api.deps import get_db, get_current_active_user
@@ -246,6 +247,39 @@ async def stream_chat(
             request_id = getattr(request.state, "request_id", None)
             first_chunk = True  # 标记是否是第一个数据块
             
+            # 如果是创建新会话，先预创建会话以获取ID
+            if create_new_session:
+                from backend.crud.chat import create_chat
+                from backend.schemas.chat import ChatCreate
+                
+                # 预创建会话
+                chat_data = ChatCreate(title="新对话")
+                new_chat = await create_chat(db, current_user.id, chat_data=chat_data, agent_id=agent_id)
+                conversation_id = new_chat.id
+                
+                # 更新请求中的会话ID
+                chat_request.conversation_id = conversation_id
+                
+                api_logger.info(f"预创建新会话: conversation_id={conversation_id}")
+                
+                # 如果有笔记ID，立即关联到会话
+                if note_id:
+                    from backend.models.note import Note
+                    from sqlalchemy import select
+                    
+                    note_stmt = select(Note).where(
+                        Note.id == note_id,
+                        Note.user_id == current_user.id,
+                        Note.is_deleted == False
+                    )
+                    note_result = await db.execute(note_stmt)
+                    note = note_result.scalar_one_or_none()
+                    
+                    if note:
+                        note.session_id = conversation_id
+                        await db.commit()
+                        api_logger.info(f"笔记ID {note_id} 已关联到预创建会话ID {conversation_id}")
+            
             async for chunk_data in generate_chat_stream(
                 chat_request=chat_request,
                 db=db,
@@ -253,120 +287,82 @@ async def stream_chat(
             ):
                 # 如果是元组，则包含内容和会话ID
                 if isinstance(chunk_data, tuple) and len(chunk_data) == 2:
-                    content, new_conversation_id = chunk_data
-                    # 如果会话ID不存在，则设置
-                    if conversation_id is None and new_conversation_id:
-                        conversation_id = new_conversation_id
+                    content, stream_conversation_id = chunk_data
+                    # 如果流中返回了会话ID，使用它（但通常应该与预创建的ID一致）
+                    if stream_conversation_id and conversation_id is None:
+                        conversation_id = stream_conversation_id
                         api_logger.info(f"流式响应获取到会话ID: {conversation_id}")
-                        
-                        # 如果有笔记ID和会话ID，将笔记关联到会话
-                        if note_id and conversation_id:
-                            from backend.models.note import Note
-                            
-                            # 更新笔记，关联到新创建的会话
-                            note_stmt = select(Note).where(
-                                Note.id == note_id,
-                                Note.user_id == current_user.id,
-                                Note.is_deleted == False
-                            )
-                            note_result = await db.execute(note_stmt)
-                            note = note_result.scalar_one_or_none()
-                            
-                            if note:
-                                note.session_id = conversation_id
-                                await db.commit()
-                                api_logger.info(f"笔记ID {note_id} 已关联到流式会话ID {conversation_id}")
                 else:
                     content = chunk_data
                 
                 full_content += content
                 
-                # 如果是第一个数据块，并且创建了新会话，但还没有会话ID
-                # 我们需要从数据库中查询最新创建的会话
-                if first_chunk and create_new_session and conversation_id is None:
-                    # 尝试从服务中获取会话ID
-                    latest_chat = await get_latest_chat(db, current_user.id)
-                    if latest_chat:
-                        conversation_id = latest_chat.id
-                        api_logger.info(f"流式响应从数据库获取新会话ID: {conversation_id}")
-                        
-                        # 如果有笔记ID和会话ID，将笔记关联到会话
-                        if note_id and conversation_id:
-                            from backend.models.note import Note
-                            
-                            # 更新笔记，关联到新创建的会话
-                            note_stmt = select(Note).where(
-                                Note.id == note_id,
-                                Note.user_id == current_user.id,
-                                Note.is_deleted == False
-                            )
-                            note_result = await db.execute(note_stmt)
-                            note = note_result.scalar_one_or_none()
-                            
-                            if note:
-                                note.session_id = conversation_id
-                                await db.commit()
-                                api_logger.info(f"笔记ID {note_id} 已关联到流式会话ID {conversation_id}")
-                
                 first_chunk = False
                 
-                # 构建统一的响应格式，使用ResponseUtil.success
-                chunk_response = {
-                    "message": {"content": content},
-                    "full_content": full_content,
-                    "conversation_id": conversation_id,
-                    "agent_id": agent_id,
-                    "agent_info": agent_info,
-                    "done": False
+                # 构造响应数据
+                response_data = {
+                    "code": 200,
+                    "msg": "成功",
+                    "data": {
+                        "message": {
+                            "content": content
+                        },
+                        "full_content": full_content,
+                        "conversation_id": conversation_id or 0,
+                        "done": False,
+                        "agent_info": agent_info
+                    },
+                    "errors": None,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "request_id": request_id
                 }
                 
-                # 使用Server-Sent Events (SSE)格式返回JSON数据
-                from backend.core.response import ResponseUtil
-                response_data = ResponseUtil.success(
-                    data=chunk_response,
-                    msg="聊天流式响应成功",
-                    request_id=request_id
-                )
                 yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
             
-            # 发送结束信号，包含完整内容
-            final_data = {
-                "message": {"content": ""},
-                "full_content": full_content,
-                "conversation_id": conversation_id,
-                "agent_id": agent_id,
-                "agent_info": agent_info,
-                "done": True
+            # 发送最终响应，标记完成
+            final_response_data = {
+                "code": 200,
+                "msg": "成功",
+                "data": {
+                    "message": {
+                        "content": ""
+                    },
+                    "full_content": full_content,
+                    "conversation_id": conversation_id or 0,
+                    "done": True,
+                    "agent_info": agent_info
+                },
+                "errors": None,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "request_id": request_id
             }
             
-            final_response = ResponseUtil.success(
-                data=final_data,
-                msg="聊天流式响应完成",
-                request_id=request_id
-            )
-            yield f"data: {json.dumps(final_response, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(final_response_data, ensure_ascii=False)}\n\n"
+            
+            api_logger.info(f"流式聊天完成: conversation_id={conversation_id}, content_length={len(full_content)}")
+            
         except Exception as e:
-            api_logger.error(f"流式聊天出错: {str(e)}", exc_info=True)
+            api_logger.error(f"流式响应生成失败: {str(e)}", exc_info=True)
             
-            from backend.core.response import ResponseUtil, ResponseCode
-            error_data = {
-                "message": {"content": f"ERROR: {str(e)}"},
-                "full_content": f"ERROR: {str(e)}",
-                "conversation_id": conversation_id,
-                "agent_id": agent_id,
-                "agent_info": agent_info,
-                "done": True,
-                "error": True
+            # 发送错误响应
+            error_response_data = {
+                "code": 500,
+                "msg": f"流式响应失败: {str(e)}",
+                "data": {
+                    "message": {
+                        "content": f"抱歉，AI助手出错了: {str(e)}"
+                    },
+                    "full_content": f"抱歉，AI助手出错了: {str(e)}",
+                    "conversation_id": conversation_id or 0,
+                    "done": True,
+                    "agent_info": agent_info
+                },
+                "errors": None,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "request_id": request_id
             }
             
-            error_response = ResponseUtil.error(
-                code=ResponseCode.INTERNAL_SERVER_ERROR.value,
-                msg=f"流式聊天出错: {str(e)}",
-                request_id=request_id
-            )
-            error_response["data"] = error_data  # 添加错误数据到响应中
-            
-            yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(error_response_data, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         event_generator(),

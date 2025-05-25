@@ -97,6 +97,35 @@ interface SessionDetailResponse {
   request_id: string;
 }
 
+// 编辑消息请求接口
+export interface EditMessageRequest {
+  message_index: number;
+  content?: string;
+  stream?: boolean;
+  agent_id?: number;
+  is_user_message: boolean;
+  rerun: boolean;
+}
+
+// 编辑消息响应接口
+export interface EditMessageResponse {
+  success: boolean;
+  messages_removed?: number;
+  db_messages_deleted?: number;
+  edited: boolean;
+  rerun: boolean;
+  message?: {
+    content: string;
+  };
+  conversation_id?: number;
+  agent_info?: {
+    id: number;
+    name: string;
+    avatar_url?: string;
+    model?: string;
+  };
+}
+
 // 与Agent聊天
 const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): Promise<AbortController> => {
   // 创建一个AbortController，用于取消请求
@@ -394,7 +423,7 @@ const getSessionDetail = async (sessionId: number): Promise<ChatSessionDetail | 
 };
 
 // 根据会话ID获取历史Agent记录（用于笔记关联的对话历史）
-const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: string, agent: string}> | null> => {
+const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: string, agent: string, userMessageId?: number, agentMessageId?: number}> | null> => {
   try {
     if (!sessionId) {
       console.log('没有会话ID，返回空历史记录');
@@ -410,13 +439,15 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
     }
 
     // 将消息按照用户-AI的配对方式组织
-    const agentHistory: Array<{user: string, agent: string}> = [];
+    const agentHistory: Array<{user: string, agent: string, userMessageId?: number, agentMessageId?: number}> = [];
     const messages = sessionDetail.messages.sort((a, b) => 
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     
     let currentUserMessage = '';
+    let currentUserMessageId: number | undefined;
     let currentAgentMessage = '';
+    let currentAgentMessageId: number | undefined;
     
     for (const message of messages) {
       if (message.role === 'user') {
@@ -424,23 +455,33 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
         if (currentUserMessage && currentAgentMessage) {
           agentHistory.push({
             user: currentUserMessage,
-            agent: currentAgentMessage
+            agent: currentAgentMessage,
+            userMessageId: currentUserMessageId,
+            agentMessageId: currentAgentMessageId
           });
           currentUserMessage = '';
+          currentUserMessageId = undefined;
           currentAgentMessage = '';
+          currentAgentMessageId = undefined;
         }
         currentUserMessage = message.content;
+        currentUserMessageId = message.id;
       } else if (message.role === 'assistant') {
         currentAgentMessage = message.content;
+        currentAgentMessageId = message.id;
         
         // 如果有用户消息，立即配对
         if (currentUserMessage) {
           agentHistory.push({
             user: currentUserMessage,
-            agent: currentAgentMessage
+            agent: currentAgentMessage,
+            userMessageId: currentUserMessageId,
+            agentMessageId: currentAgentMessageId
           });
           currentUserMessage = '';
+          currentUserMessageId = undefined;
           currentAgentMessage = '';
+          currentAgentMessageId = undefined;
         }
       }
     }
@@ -449,7 +490,9 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
     if (currentUserMessage && currentAgentMessage) {
       agentHistory.push({
         user: currentUserMessage,
-        agent: currentAgentMessage
+        agent: currentAgentMessage,
+        userMessageId: currentUserMessageId,
+        agentMessageId: currentAgentMessageId
       });
     }
 
@@ -528,6 +571,84 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// 编辑消息并可选择重新执行
+const editMessage = async (
+  conversationId: number, 
+  request: EditMessageRequest, 
+  onProgress?: StreamCallback
+): Promise<EditMessageResponse | AbortController> => {
+  try {
+    console.log('编辑消息请求:', {
+      conversationId,
+      message_index: request.message_index,
+      is_user_message: request.is_user_message,
+      rerun: request.rerun,
+      content_length: request.content?.length || 0
+    });
+
+    // 如果是流式请求且需要重新执行，返回AbortController
+    if (request.stream && request.is_user_message && request.rerun) {
+      const controller = new AbortController();
+      
+      (async () => {
+        try {
+          const token = localStorage.getItem('access_token');
+          if (!token) {
+            throw new Error('需要登录');
+          }
+
+          const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/chat/ask-again/${conversationId}`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify(request),
+            signal: controller.signal
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            onProgress?.(`编辑消息失败: ${response.status} - ${errorText}`, true, conversationId);
+            return;
+          }
+
+          if (!response.body) {
+            throw new Error('响应体为空');
+          }
+
+          // 处理流式响应
+          await processTextStream(response.body.getReader(), onProgress!, conversationId);
+        } catch (error: any) {
+          if (error.name === 'AbortError') {
+            console.log('用户取消了编辑请求');
+            onProgress?.('用户取消了编辑请求', true, conversationId);
+          } else {
+            console.error('编辑消息时出错:', error);
+            onProgress?.(`编辑消息失败: ${error.message}`, true, conversationId);
+          }
+        }
+      })();
+
+      return controller;
+    }
+
+    // 非流式请求
+    const response = await apiClient.post(`/chat/ask-again/${conversationId}`, request);
+    
+    if (response.data.code === 200) {
+      console.log('编辑消息成功:', response.data.data);
+      return response.data.data as EditMessageResponse;
+    } else {
+      throw new Error(response.data.msg || '编辑消息失败');
+    }
+  } catch (error: any) {
+    console.error('编辑消息失败:', error);
+    throw error;
+  }
+};
+
 const chatService = {
   streamChat: chatWithAgent,
   getSessions,
@@ -535,7 +656,8 @@ const chatService = {
   getSessionAgentHistory,
   createSession,
   updateSession,
-  deleteSession
+  deleteSession,
+  editMessage
 };
 
 export default chatService; 

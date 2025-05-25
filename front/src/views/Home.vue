@@ -315,18 +315,18 @@ const fetchNoteDetail = async (noteId: number) => {
       
       // 加载关联会话的历史记录到侧边栏
       try {
-        const sessionData = await chatService.getSessionDetail(note.session_id);
-        console.log('获取到的会话数据:', sessionData);
+        const agentHistory = await chatService.getSessionAgentHistory(note.session_id);
+        console.log('获取到的会话历史记录:', agentHistory);
         
-        if (sessionData && sessionData.conversationHistory && sessionData.conversationHistory.length > 0) {
-          console.log('会话历史记录详情:', sessionData.conversationHistory);
-          sidebarConversationHistory.value = [...sessionData.conversationHistory];
-          sidebarHistoryLength.value = sessionData.conversationHistory.length;
-          sidebarHistoryIndex.value = sessionData.conversationHistory.length - 1; // 显示最新的回复
-          console.log(`加载关联会话历史记录，条数: ${sessionData.conversationHistory.length}`);
+        if (agentHistory && agentHistory.length > 0) {
+          console.log('会话历史记录详情:', agentHistory);
+          sidebarConversationHistory.value = [...agentHistory];
+          sidebarHistoryLength.value = agentHistory.length;
+          sidebarHistoryIndex.value = agentHistory.length - 1; // 显示最新的回复
+          console.log(`加载关联会话历史记录，条数: ${agentHistory.length}`);
           console.log('设置后的sidebarConversationHistory:', sidebarConversationHistory.value);
         } else {
-          console.log('会话数据为空或没有conversationHistory字段');
+          console.log('会话历史记录为空');
           sidebarConversationHistory.value = [];
         }
       } catch (error) {
@@ -966,17 +966,22 @@ const handleSidebarSend = async (data) => {
         sidebarIsAgentResponding.value = false;
         
         // 延迟一小段时间后将当前对话添加到历史记录中，确保响应状态完全更新
+        // 注意：延长延迟时间，让AgentSidebar先完成当前消息的显示
         setTimeout(() => {
           if (sidebarAgentResponse.value) {
+            // 注意：这里我们暂时没有消息ID，因为这是新创建的对话
+            // 在实际应用中，应该从响应中获取消息ID
             sidebarConversationHistory.value.push({
               user: data.content,
-              agent: sidebarAgentResponse.value
+              agent: sidebarAgentResponse.value,
+              userMessageId: undefined, // 新消息暂时没有ID
+              agentMessageId: undefined // 新消息暂时没有ID
             });
             sidebarHistoryIndex.value = sidebarConversationHistory.value.length - 1;
             sidebarHistoryLength.value = sidebarConversationHistory.value.length;
             console.log('添加到会话历史记录，总条数:', sidebarConversationHistory.value.length);
           }
-        }, 100); // 延迟100ms
+        }, 500); // 延迟500ms，让AgentSidebar先完成消息显示
         
         // 如果返回了新的会话ID，更新当前会话ID
         if (finalConversationId && finalConversationId !== currentSessionId.value) {
@@ -1069,6 +1074,62 @@ const handleSidebarNavigateHistory = (payload) => {
   }
 };
 
+// 处理侧边栏编辑消息事件
+const handleSidebarEditMessage = async (payload) => {
+  console.log('Home接收到侧边栏编辑消息事件:', payload);
+  
+  const { messageIndex, newContent, rerun, refreshHistory } = payload;
+  
+  // 如果是刷新历史记录的请求
+  if (refreshHistory && currentSessionId.value) {
+    console.log('收到刷新历史记录请求，重新获取会话历史');
+    try {
+      const agentHistory = await chatService.getSessionAgentHistory(currentSessionId.value);
+      console.log('重新获取到的会话历史记录:', agentHistory);
+      
+      if (agentHistory && agentHistory.length > 0) {
+        sidebarConversationHistory.value = [...agentHistory];
+        sidebarHistoryLength.value = agentHistory.length;
+        sidebarHistoryIndex.value = agentHistory.length - 1;
+        console.log(`刷新会话历史记录完成，条数: ${agentHistory.length}`);
+      }
+    } catch (error) {
+      console.error('刷新会话历史记录失败:', error);
+    }
+    return; // 仅刷新历史记录，不执行其他逻辑
+  }
+  
+  // 更新本地会话历史记录
+  if (sidebarConversationHistory.value && sidebarConversationHistory.value.length > 0) {
+    const historyIndex = Math.floor(messageIndex / 2); // 将消息索引转换为历史记录索引
+    
+    if (historyIndex >= 0 && historyIndex < sidebarConversationHistory.value.length) {
+      // 更新历史记录中的用户消息
+      sidebarConversationHistory.value[historyIndex].user = newContent;
+      
+      if (rerun) {
+        // 如果重新执行，移除该条目之后的所有历史记录
+        sidebarConversationHistory.value = sidebarConversationHistory.value.slice(0, historyIndex + 1);
+        sidebarHistoryLength.value = sidebarConversationHistory.value.length;
+        sidebarHistoryIndex.value = sidebarConversationHistory.value.length - 1;
+        
+        // 清除当前显示的AI响应，准备重新开始流式输出
+        sidebarAgentResponse.value = '';
+        sidebarIsAgentResponding.value = true; // 设置为响应中状态
+        
+        console.log(`编辑消息并重新执行，保留前 ${historyIndex + 1} 条历史记录，清除当前AI响应`);
+      } else {
+        console.log(`仅编辑消息内容，历史记录索引 ${historyIndex} 已更新`);
+      }
+    }
+  }
+  
+  // 如果需要重新执行，会话历史会在新的AI响应完成后自动更新
+  if (rerun) {
+    console.log('消息编辑并重新执行，等待新的AI响应...');
+  }
+};
+
 const closeSidebar = () => {
   console.log('关闭侧边栏');
   showSidebar.value = false;
@@ -1082,31 +1143,6 @@ const closeSidebar = () => {
   // 设置编辑器为弹窗模式
   if (editorRef.value && editorRef.value.setInteractionMode) {
     editorRef.value.setInteractionMode('modal');
-  }
-};
-
-// 组件挂载后初始化
-onMounted(() => {
-  nextTick(() => {
-    initializeEditorMode();
-  });
-});
-
-const handleConversationHistoryLoaded = (data) => {
-  console.log('Home接收到会话历史记录加载事件:', data);
-  
-  // 更新侧边栏的会话历史记录
-  if (data.history && data.history.length > 0) {
-    console.log(`设置侧边栏历史记录，条数: ${data.history.length}`);
-    sidebarConversationHistory.value = [...data.history];
-    sidebarHistoryLength.value = data.history.length;
-    sidebarHistoryIndex.value = data.history.length - 1; // 显示最新的回复
-    console.log('侧边栏历史记录已更新:', sidebarConversationHistory.value);
-  } else {
-    console.log('清空侧边栏历史记录');
-    sidebarConversationHistory.value = [];
-    sidebarHistoryLength.value = 0;
-    sidebarHistoryIndex.value = -1;
   }
 };
 
@@ -1170,6 +1206,31 @@ const updateEditorFirstLineTitle = (newTitle) => {
   }
 };
 
+// 组件挂载后初始化
+onMounted(() => {
+  nextTick(() => {
+    initializeEditorMode();
+  });
+});
+
+const handleConversationHistoryLoaded = (data) => {
+  console.log('Home接收到会话历史记录加载事件:', data);
+  
+  // 更新侧边栏的会话历史记录
+  if (data.history && data.history.length > 0) {
+    console.log(`设置侧边栏历史记录，条数: ${data.history.length}`);
+    sidebarConversationHistory.value = [...data.history];
+    sidebarHistoryLength.value = data.history.length;
+    sidebarHistoryIndex.value = data.history.length - 1; // 显示最新的回复
+    console.log('侧边栏历史记录已更新:', sidebarConversationHistory.value);
+  } else {
+    console.log('清空侧边栏历史记录');
+    sidebarConversationHistory.value = [];
+    sidebarHistoryLength.value = 0;
+    sidebarHistoryIndex.value = -1;
+  }
+};
+
 </script>
 
 <template>
@@ -1211,10 +1272,12 @@ const updateEditorFirstLineTitle = (newTitle) => {
               :historyIndex="sidebarHistoryIndex"
               :historyLength="sidebarHistoryLength"
               :conversationHistory="sidebarConversationHistory"
+              :conversationId="currentSessionId"
               @close="closeSidebar"
               @send="handleSidebarSend"
               @request-insert="handleSidebarInsert" 
               @navigate-history="handleSidebarNavigateHistory"
+              @edit-message="handleSidebarEditMessage"
             />
           </div>
         </Transition>
