@@ -37,6 +37,9 @@ Base = declarative_base()
 
 
 async def init_db():
+    # 导入所有模型，确保它们被注册到Base.metadata中
+    from backend.models import User, Chat, ChatMessage, Agent, Note
+    
     async with engine.begin() as conn:
         # await conn.run_sync(Base.metadata.drop_all)  # 如果需要，可以取消注释以在每次启动时删除所有表
         await conn.run_sync(Base.metadata.create_all)

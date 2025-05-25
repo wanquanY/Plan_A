@@ -89,6 +89,16 @@ def run_database_migrations():
     """执行数据库迁移"""
     try:
         app_logger.info("开始执行数据库迁移...")
+        
+        # 首先检查当前迁移状态
+        current_result = subprocess.run(
+            ["alembic", "current"],
+            capture_output=True,
+            text=True
+        )
+        app_logger.info(f"当前迁移状态: {current_result.stdout.strip()}")
+        
+        # 执行迁移
         result = subprocess.run(
             ["alembic", "upgrade", "head"],
             capture_output=True,
@@ -97,6 +107,15 @@ def run_database_migrations():
         )
         app_logger.info("数据库迁移执行成功")
         app_logger.debug(f"迁移输出: {result.stdout}")
+        
+        # 再次检查迁移状态
+        final_result = subprocess.run(
+            ["alembic", "current"],
+            capture_output=True,
+            text=True
+        )
+        app_logger.info(f"迁移后状态: {final_result.stdout.strip()}")
+        
         return True
     except subprocess.CalledProcessError as e:
         app_logger.error(f"数据库迁移失败: {e}")
@@ -173,40 +192,6 @@ def force_fix_migration_state():
         return False
 
 
-async def ensure_required_columns():
-    """确保必要的列存在"""
-    try:
-        app_logger.info("检查并确保必要的数据库列存在...")
-        
-        engine = create_async_engine(settings.SQLALCHEMY_DATABASE_URI)
-        async with engine.connect() as conn:
-            # 检查 chat_messages 表是否有 tool_calls_data 列
-            result = await conn.execute(text("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'chat_messages' 
-                AND column_name = 'tool_calls_data'
-            """))
-            
-            if not result.fetchone():
-                app_logger.info("添加 tool_calls_data 列...")
-                await conn.execute(text("""
-                    ALTER TABLE chat_messages 
-                    ADD COLUMN tool_calls_data JSON
-                """))
-                await conn.commit()
-                app_logger.info("成功添加 tool_calls_data 列")
-            else:
-                app_logger.info("tool_calls_data 列已存在")
-        
-        await engine.dispose()
-        return True
-        
-    except Exception as e:
-        app_logger.error(f"确保必要列存在时发生异常: {e}")
-        return False
-
-
 app = FastAPI(
     title="FreeWrite API",
     description="FreeWrite项目后端API",
@@ -258,13 +243,13 @@ async def startup_event():
         app_logger.error("数据库迁移失败，应用程序无法启动")
         sys.exit(1)
     
-    # 确保必要的列存在
-    if not await ensure_required_columns():
-        app_logger.error("确保必要数据库列失败，应用程序无法启动")
+    # 初始化数据库（创建表等）- 这会处理所有表的创建
+    try:
+        await init_db()
+        app_logger.info("数据库初始化完成")
+    except Exception as e:
+        app_logger.error(f"数据库初始化失败: {e}")
         sys.exit(1)
-    
-    # 初始化数据库（创建表等）
-    await init_db()
     
     app_logger.info(f"随机测试ID: {RandomUtil.generate_request_id()}")
     app_logger.info("应用程序启动完成")
