@@ -91,12 +91,12 @@ class ResponseUtil:
         """验证错误响应"""
         error_details = []
         for error in errors:
-            error_details.append(
-                ErrorDetail(
-                    field=".".join(error["loc"]),
-                    message=error["msg"]
-                )
+            error_detail = ErrorDetail(
+                field=".".join(str(loc) for loc in error["loc"]),
+                message=error["msg"]
             )
+            # 转换为字典以支持JSON序列化
+            error_details.append(error_detail.dict())
         
         return ResponseUtil.error(
             code=ResponseCode.UNPROCESSABLE_ENTITY.value,
