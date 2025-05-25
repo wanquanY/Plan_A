@@ -1368,14 +1368,20 @@ async def process_tool_calls_recursively_stream(
             single_result = await handle_tool_calls([tool_call_obj], agent)
             tool_results.extend(single_result)
             
-            # 发送工具调用完成状态
+            # 发送工具调用完成状态，包含结果内容
+            tool_result_content = single_result[0]["content"] if single_result else ""
             tool_status = {
                 "type": "tool_call_completed",
                 "tool_call_id": tool_call_obj.id,
                 "tool_name": tool_call_obj.function.name,
-                "status": "completed"
+                "status": "completed",
+                "result": tool_result_content  # 添加工具调用结果
             }
             yield ("", conversation_id, tool_status)
+            
+            # 在工具调用完成后，发送一个特殊的文本标记，表示工具调用已完成
+            tool_completion_text = f"\n\n🔧 {tool_call_obj.function.name} 执行完成\n\n"
+            yield (tool_completion_text, conversation_id)
         
         # 将工具调用和结果添加到消息列表
         messages.append({

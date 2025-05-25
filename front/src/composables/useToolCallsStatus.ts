@@ -5,6 +5,7 @@ export interface ToolCallStatus {
   id: string;
   name: string;
   status: 'preparing' | 'executing' | 'completed' | 'error';
+  result?: string; // 添加工具调用结果字段
 }
 
 export function useToolCallsStatus() {
@@ -66,7 +67,7 @@ export function useToolCallsStatus() {
   // 处理工具状态更新（从流式响应中）
   const handleToolStatus = (toolStatus: any) => {
     console.log('处理工具状态更新:', toolStatus);
-    const { type, tool_call_id, tool_name, status } = toolStatus;
+    const { type, tool_call_id, tool_name, status, result } = toolStatus;
     
     console.log('当前工具调用列表（处理前）:', toolCalls.value.map(t => `${t.name}(${t.status})`));
     
@@ -87,8 +88,15 @@ export function useToolCallsStatus() {
         console.log('添加新的准备中工具:', tool_call_id, tool_name);
       }
     } else if (type === 'tool_call_completed') {
-      // 更新工具调用状态为完成
+      // 更新工具调用状态为完成，并保存结果
       updateToolCallStatus(tool_call_id, 'completed');
+      if (result) {
+        const tool = toolCalls.value.find(tool => tool.id === tool_call_id);
+        if (tool) {
+          tool.result = result;
+          console.log('保存工具调用结果:', tool_call_id, result.substring(0, 100) + '...');
+        }
+      }
       console.log('更新工具状态为完成:', tool_call_id);
     } else if (type === 'tool_call_error') {
       // 更新工具调用状态为错误

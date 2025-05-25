@@ -100,15 +100,11 @@
             </div>
           </div>
           
-          <!-- 如果有工具调用状态，在消息内容前显示 -->
-          <div v-if="toolCallsStatus.length > 0 && (message.isTyping || (index === messages.length - 1 && hasActiveTools))" class="tool-status-in-message">
-            <ToolCallsStatus :tool-calls="toolCallsStatus" />
-          </div>
-          
           <div class="message-content">
             <!-- 正在打字时显示简单文本和打字指示器 -->
             <div v-if="message.isTyping" class="typing-content">
-              <span>{{ message.content }}</span>
+              <!-- 渲染文本内容 -->
+              <span v-html="formatTextWithBreaks(message.content)"></span>
               <span class="typing-indicator">|</span>
             </div>
             <!-- 打字完成后显示渲染的markdown内容 -->
@@ -1087,6 +1083,18 @@ defineExpose({
   handleToolStatus,
   clearToolCalls
 });
+
+// 添加调试信息
+console.log('AgentSidebar defineExpose:', {
+  handleToolStatus: typeof handleToolStatus,
+  clearToolCalls: typeof clearToolCalls
+});
+
+// 格式化文本，保持换行
+const formatTextWithBreaks = (text) => {
+  if (!text) return '';
+  return text.replace(/\n/g, '<br>');
+};
 </script>
 
 <style scoped>
@@ -1718,104 +1726,38 @@ defineExpose({
   margin-left: 0.5em;
 }
 
-/* 工具调用状态显示 */
-.tool-calls-status {
-  margin: 12px 0;
-  padding: 16px;
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
+/* 内联工具状态样式 */
+.inline-tool-status {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: rgba(22, 119, 255, 0.05);
+  border: 1px solid rgba(22, 119, 255, 0.15);
   border-radius: 8px;
+  font-size: 13px;
 }
 
-.tool-calls-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
+.inline-tool-status .tool-calls-inline {
+  gap: 6px;
 }
 
-.tool-icon {
-  font-size: 16px;
-  margin-right: 8px;
+.inline-tool-status .tool-call-inline-item {
+  padding: 4px 0;
 }
 
-.tool-calls-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.inline-tool-status .tool-call-inline-item.executing .tool-inline-icon {
+  animation: rotate 2s linear infinite;
 }
 
-.tool-call-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
-.tool-call-info {
-  display: flex;
-  flex-direction: column;
+.inline-tool-status .tool-call-inline-item.completed .tool-inline-text {
+  color: #52c41a;
 }
 
-.tool-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1f2937;
+.inline-tool-status .tool-call-inline-item.error .tool-inline-text {
+  color: #ff4d4f;
 }
-
-.tool-status {
-  font-size: 12px;
-  color: #9ca3af;
-}
-
-.tool-call-progress {
-  width: 100px;
-  height: 8px;
-  background: #e5e7eb;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.progress-bar {
-  height: 100%;
-  background: #3b82f6;
-  border-radius: 4px;
-}
-
-/* 工具状态容器样式 */
-.tool-status-container {
-  margin: 16px 0;
-  padding: 0;
-}
-
-/* 消息内工具状态样式 */
-.tool-status-in-message {
-  margin-bottom: 12px;
-  padding: 0;
-}
-
-.tool-status-in-message .tool-calls-status {
-  margin: 0;
-  background: transparent;
-  border: none;
-  padding: 0;
-}
-
-/* 重写消息内工具状态的样式 */
-.tool-status-in-message :deep(.tool-calls-status) {
-  margin: 0;
-  padding: 12px;
-  background: rgba(59, 130, 246, 0.05);
-  border: 1px solid rgba(59, 130, 246, 0.15);
-  border-radius: 8px;
-  box-shadow: none;
-}
-
-.tool-status-in-message :deep(.tool-call-item) {
-  background: rgba(255, 255, 255, 0.8);
-  margin-bottom: 8px;
-}
-
-.tool-status-in-message :deep(.tool-call-item:last-child) {
-  margin-bottom: 0;
-}
-</style>
+</style> 

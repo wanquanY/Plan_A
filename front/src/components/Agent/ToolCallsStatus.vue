@@ -1,27 +1,28 @@
 <template>
-  <div v-if="toolCalls.length > 0" class="tool-calls-status">
-    <div class="tool-calls-header">
-      <span class="tool-icon">🔧</span>
-      <span class="tool-title">正在使用工具...</span>
-      <span class="tool-count">({{ completedCount }}/{{ toolCalls.length }})</span>
-    </div>
-    <div class="tool-calls-list">
+  <div v-if="toolCalls.length > 0" class="tool-calls-inline">
       <div 
         v-for="toolCall in toolCalls" 
         :key="toolCall.id"
-        class="tool-call-item"
+      class="tool-call-inline-item"
         :class="toolCall.status"
       >
-        <div class="tool-call-info">
-          <span class="tool-name">{{ getToolDisplayName(toolCall.name) }}</span>
-          <span class="tool-status">{{ getToolStatusText(toolCall.status) }}</span>
-        </div>
-        <div class="tool-call-progress">
-          <div 
-            class="progress-bar" 
-            :class="toolCall.status"
-            :style="{ width: getProgressWidth(toolCall.status) }"
-          ></div>
+      <span class="tool-inline-icon">🔧</span>
+      <span class="tool-inline-text">{{ getInlineStatusText(toolCall) }}</span>
+      
+      <!-- 工具调用结果（如果有且已完成） -->
+      <div v-if="toolCall.result && toolCall.status === 'completed'" class="tool-inline-result">
+        <button 
+          class="result-toggle-btn" 
+          @click="toggleResult(toolCall.id)"
+          :class="{ expanded: isResultExpanded(toolCall.id) }"
+        >
+          查看结果
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6,9 12,15 18,9"></polyline>
+          </svg>
+        </button>
+        <div v-if="isResultExpanded(toolCall.id)" class="tool-inline-result-content">
+          {{ formatToolResult(toolCall.result) }}
         </div>
       </div>
     </div>
@@ -34,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { ToolCallStatus } from '../../composables/useToolCallsStatus';
 
 // Props
@@ -42,10 +43,27 @@ const props = defineProps<{
   toolCalls: ToolCallStatus[];
 }>();
 
+// 展开状态管理
+const expandedResults = ref<Set<string>>(new Set());
+
 // 计算已完成的工具数量
 const completedCount = computed(() => {
   return props.toolCalls.filter(tool => tool.status === 'completed').length;
 });
+
+// 切换结果展开状态
+const toggleResult = (id: string) => {
+  if (expandedResults.value.has(id)) {
+    expandedResults.value.delete(id);
+  } else {
+    expandedResults.value.add(id);
+  }
+};
+
+// 检查结果是否展开
+const isResultExpanded = (id: string): boolean => {
+  return expandedResults.value.has(id);
+};
 
 // 获取工具显示名称
 const getToolDisplayName = (toolName: string): string => {
@@ -85,173 +103,162 @@ const getProgressWidth = (status: string): string => {
   };
   return widthMap[status] || '0%';
 };
+
+// 格式化工具结果
+const formatToolResult = (result: string): string => {
+  try {
+    // 尝试解析JSON
+    const parsed = JSON.parse(result);
+    
+    // 如果是搜索结果，显示详细信息
+    if (parsed.results && Array.isArray(parsed.results)) {
+      const count = parsed.results.length;
+      let summary = `找到 ${count} 条相关结果\n\n`;
+      
+      // 显示前3个结果的标题和链接
+      parsed.results.slice(0, 3).forEach((item: any, index: number) => {
+        summary += `${index + 1}. ${item.title || item.name || '无标题'}\n`;
+        if (item.url) {
+          summary += `   链接: ${item.url}\n`;
+        }
+        if (item.snippet || item.description) {
+          summary += `   摘要: ${(item.snippet || item.description).substring(0, 100)}...\n`;
+        }
+        summary += '\n';
+      });
+      
+      if (count > 3) {
+        summary += `... 还有 ${count - 3} 条结果`;
+      }
+      
+      return summary;
+}
+
+    // 如果是网页抓取结果，显示内容摘要
+    if (parsed.content) {
+      const contentLength = parsed.content.length;
+      let summary = `成功抓取网页内容\n`;
+      summary += `内容长度: ${contentLength} 字符\n\n`;
+      
+      // 显示内容前200个字符作为预览
+      const preview = parsed.content.substring(0, 200).replace(/\s+/g, ' ').trim();
+      summary += `内容预览:\n${preview}${contentLength > 200 ? '...' : ''}`;
+      
+      return summary;
+}
+
+    // 如果是新闻搜索结果
+    if (parsed.news && Array.isArray(parsed.news)) {
+      const count = parsed.news.length;
+      let summary = `找到 ${count} 条新闻\n\n`;
+      
+      parsed.news.slice(0, 3).forEach((item: any, index: number) => {
+        summary += `${index + 1}. ${item.title || '无标题'}\n`;
+        if (item.source) {
+          summary += `   来源: ${item.source}\n`;
+}
+        if (item.date) {
+          summary += `   时间: ${item.date}\n`;
+}
+        if (item.snippet) {
+          summary += `   摘要: ${item.snippet.substring(0, 100)}...\n`;
+        }
+        summary += '\n';
+      });
+      
+      return summary;
+    }
+    
+    // 如果有错误信息
+    if (parsed.error) {
+      return `执行失败: ${parsed.error}`;
+}
+
+    // 如果有成功状态和消息
+    if (parsed.success && parsed.message) {
+      return `执行成功: ${parsed.message}`;
+    }
+    
+    // 其他情况，返回格式化的JSON
+    return JSON.stringify(parsed, null, 2);
+  } catch (e) {
+    // 如果不是JSON，直接返回原始内容
+    return result;
+  }
+};
+
+// 获取内联状态文本
+const getInlineStatusText = (toolCall: ToolCallStatus): string => {
+  return `${getToolDisplayName(toolCall.name)} - ${getToolStatusText(toolCall.status)}`;
+};
 </script>
 
 <style scoped>
-.tool-calls-status {
-  margin: 12px 0;
-  padding: 16px;
-  background: linear-gradient(135deg, #f6f8ff 0%, #e8f4fd 100%);
-  border: 1px solid #d1e7ff;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s ease;
+.tool-calls-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.tool-calls-header {
+.tool-call-inline-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
-  font-weight: 500;
-  color: #1677ff;
-  font-size: 14px;
 }
 
-.tool-icon {
+.tool-inline-icon {
   font-size: 18px;
-  animation: rotate 2s linear infinite;
 }
 
-@keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.tool-title {
-  flex: 1;
-}
-
-.tool-count {
-  font-size: 12px;
-  color: #666;
-  background: rgba(22, 119, 255, 0.1);
-  padding: 2px 8px;
-  border-radius: 12px;
-}
-
-.tool-calls-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.tool-call-item {
-  background: white;
-  border-radius: 8px;
-  padding: 12px 16px;
-  border-left: 4px solid #d9d9d9;
-  transition: all 0.3s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-
-.tool-call-item.preparing {
-  border-left-color: #faad14;
-  background: linear-gradient(135deg, #fffbe6 0%, #fff7e6 100%);
-}
-
-.tool-call-item.executing {
-  border-left-color: #1677ff;
-  background: linear-gradient(135deg, #f6f8ff 0%, #e6f7ff 100%);
-  animation: pulse 2s ease-in-out infinite;
-}
-
-.tool-call-item.completed {
-  border-left-color: #52c41a;
-  background: linear-gradient(135deg, #f6ffed 0%, #f0f9e8 100%);
-}
-
-.tool-call-item.error {
-  border-left-color: #ff4d4f;
-  background: linear-gradient(135deg, #fff2f0 0%, #ffece8 100%);
-}
-
-@keyframes pulse {
-  0%, 100% { 
-    transform: scale(1);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  }
-  50% { 
-    transform: scale(1.02);
-    box-shadow: 0 2px 8px rgba(22, 119, 255, 0.15);
-  }
-}
-
-.tool-call-info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.tool-name {
-  font-weight: 500;
-  color: #333;
+.tool-inline-text {
   font-size: 14px;
+  color: #333;
 }
 
-.tool-status {
-  font-size: 12px;
+.tool-inline-result {
+  margin-left: 8px;
+}
+
+.result-toggle-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  outline: inherit;
   color: #666;
-  font-weight: 400;
+  font-size: 12px;
+  transition: color 0.2s ease;
 }
 
-.tool-call-progress {
-  height: 4px;
-  background: #f0f0f0;
-  border-radius: 2px;
+.result-toggle-btn:hover {
+  color: #1677ff;
+}
+
+.result-toggle-btn.expanded {
+  color: #1677ff;
+}
+
+.tool-inline-result-content {
+  padding: 8px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
   overflow: hidden;
-  position: relative;
-}
-
-.progress-bar {
-  height: 100%;
-  border-radius: 2px;
-  transition: all 0.5s ease;
-  position: relative;
-}
-
-.progress-bar.preparing {
-  background: linear-gradient(90deg, #faad14, #ffc53d);
-  animation: shimmer 1.5s ease-in-out infinite;
-}
-
-.progress-bar.executing {
-  background: linear-gradient(90deg, #1677ff, #40a9ff);
-  animation: shimmer 1s ease-in-out infinite;
-}
-
-.progress-bar.completed {
-  background: linear-gradient(90deg, #52c41a, #73d13d);
-}
-
-.progress-bar.error {
-  background: linear-gradient(90deg, #ff4d4f, #ff7875);
-}
-
-@keyframes shimmer {
-  0% { opacity: 1; }
-  50% { opacity: 0.7; }
-  100% { opacity: 1; }
+  font-size: 12px;
+  color: #333;
+  line-height: 1.5;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
 }
 
 /* 响应式设计 */
 @media (max-width: 480px) {
-  .tool-calls-status {
-    margin: 8px 0;
-    padding: 12px;
-  }
-  
-  .tool-call-item {
-    padding: 10px 12px;
-  }
-  
-  .tool-name {
+  .tool-inline-text {
     font-size: 13px;
-  }
-  
-  .tool-status {
-    font-size: 11px;
   }
 }
 </style> 
