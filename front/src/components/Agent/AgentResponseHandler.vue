@@ -11,7 +11,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import * as agentResponseService from '@/services/agentResponseService';
 import { setupMermaidAutoRender } from '@/services/renderService';
-import LoadingAnimation from './LoadingAnimation.vue';
+import LoadingAnimation from '../rendering/LoadingAnimation.vue';
 
 // 全局注册一个MutationObserver来检测新添加的Mermaid图表并自动渲染
 let mermaidObserver = null;

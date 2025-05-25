@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
-import { Form, Input, Upload, Button, Slider, Switch, message, Collapse, Checkbox, Tooltip } from 'ant-design-vue';
+import { Form, Input, Upload, Button, Slider, Switch, message, Collapse, Checkbox, Tooltip, Select } from 'ant-design-vue';
 import { PlusOutlined, LoadingOutlined, QuestionCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons-vue';
 import { useRouter, useRoute } from 'vue-router';
 import type { UploadChangeParam } from 'ant-design-vue';
@@ -270,8 +270,8 @@ onMounted(async () => {
               <Input.TextArea 
                 v-model:value="formState.system_prompt" 
                 placeholder="请输入系统提示词" 
-                :rows="6"
-                :autoSize="{ minRows: 6, maxRows: 12 }"
+                :rows="8"
+                :autoSize="{ minRows: 8, maxRows: 15 }"
               />
             </Form.Item>
           </div>
@@ -279,17 +279,12 @@ onMounted(async () => {
           <!-- 右侧表单区域 -->
           <div class="form-right">
             <Form.Item label="模型" name="model">
-              <div class="model-selection">
-                <div 
-                  v-for="model in availableModels" 
-                  :key="model"
-                  class="model-option"
-                  :class="{ 'model-selected': formState.model === model }"
-                  @click="formState.model = model"
-                >
-                  {{ model }}
-                </div>
-              </div>
+              <Select
+                v-model:value="formState.model"
+                placeholder="请选择模型"
+                style="width: 100%"
+                :options="availableModels.map(model => ({ label: model, value: model }))"
+              />
             </Form.Item>
             
             <div class="advanced-settings">
@@ -383,8 +378,9 @@ onMounted(async () => {
 <style scoped>
 .create-agent-page {
   padding: 24px;
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
+  width: 100%;
 }
 
 .page-header {
@@ -410,7 +406,7 @@ onMounted(async () => {
 .page-content {
   background: white;
   border-radius: 12px;
-  padding: 24px;
+  padding: 32px 40px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
@@ -420,8 +416,8 @@ onMounted(async () => {
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 32px;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 48px;
 }
 
 .form-left, .form-right {
@@ -510,31 +506,6 @@ onMounted(async () => {
   gap: 8px;
 }
 
-.model-selection {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.model-option {
-  padding: 8px 16px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.model-option:hover {
-  border-color: #1890ff;
-  color: #1890ff;
-}
-
-.model-selected {
-  border-color: #1890ff;
-  color: #1890ff;
-  background-color: rgba(24, 144, 255, 0.05);
-}
-
 .agent-preview {
   margin-top: 40px;
 }
@@ -610,7 +581,7 @@ onMounted(async () => {
   margin-top: 8px;
 }
 
-@media (max-width: 992px) {
+@media (max-width: 768px) {
   .form-grid {
     grid-template-columns: 1fr;
     gap: 24px;
@@ -618,6 +589,14 @@ onMounted(async () => {
   
   .preview-card {
     max-width: 100%;
+  }
+  
+  .create-agent-page {
+    padding: 16px;
+  }
+  
+  .page-content {
+    padding: 24px 20px;
   }
 }
 </style> 

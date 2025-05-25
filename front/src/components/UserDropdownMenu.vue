@@ -19,6 +19,9 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'navigate', 'logout']);
 
+// 菜单引用
+const menuRef = ref<HTMLElement | null>(null);
+
 // 关闭菜单
 const closeMenu = () => {
   emit('close');
@@ -37,9 +40,13 @@ const logout = () => {
 };
 
 // 点击外部区域关闭菜单
-const handleClickOutside = (event) => {
-  if (props.visible) {
-    emit('close');
+const handleClickOutside = (event: Event) => {
+  if (props.visible && menuRef.value) {
+    const target = event.target as HTMLElement;
+    // 检查点击的元素是否在菜单内部
+    if (!menuRef.value.contains(target)) {
+      emit('close');
+    }
   }
 };
 
@@ -54,8 +61,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="dropdown-menu-wrapper" v-if="visible" @click.stop>
-    <div class="dropdown-menu" :style="{ left: `${position.x}px`, top: `${position.y}px` }">
+  <div class="dropdown-menu-wrapper" v-if="visible">
+    <div class="dropdown-menu" ref="menuRef" :style="{ left: `${position.x}px`, top: `${position.y}px` }">
       <div class="menu-item" @click="navigateTo('/user-profile')">
         <UserOutlined />
         <span>用户信息</span>

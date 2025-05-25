@@ -47,9 +47,13 @@
             </div>
           </div>
           <div class="message-content">
-            {{ message.content }}
-            <!-- 打字指示器 -->
-            <span v-if="message.isTyping" class="typing-indicator">|</span>
+            <!-- 正在打字时显示简单文本和打字指示器 -->
+            <div v-if="message.isTyping" class="typing-content">
+              <span>{{ message.content }}</span>
+              <span class="typing-indicator">|</span>
+            </div>
+            <!-- 打字完成后显示渲染的markdown内容 -->
+            <div v-else class="markdown-content" v-html="renderMarkdown(message.content)"></div>
           </div>
           
           <!-- 操作按钮 -->
@@ -87,12 +91,24 @@
         ref="unifiedInputRef"
       />
     </div>
+
+    <!-- 渲染组件（隐藏） -->
+    <div style="display: none;">
+      <MermaidRenderer ref="mermaidRenderer" />
+      <CodeBlock ref="codeBlockRenderer" :code="''" :language="'text'" />
+      <MarkMap ref="markMapRenderer" :content="''" />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue';
-import UnifiedInput from './unified-input/UnifiedInput.vue';
+import UnifiedInput from '../unified-input/UnifiedInput.vue';
+import MermaidRenderer from '../rendering/MermaidRenderer.vue';
+import CodeBlock from '../rendering/CodeBlock.vue';
+import MarkMap from '../rendering/MarkMap.vue';
+import { markdownToHtml } from '../../services/markdownService';
+import { renderMermaidDynamically, renderCodeBlocks, renderMarkMaps } from '../../services/renderService';
 
 const props = defineProps({
   visible: {
@@ -128,66 +144,141 @@ const unifiedInputRef = ref(null);
 const messagesContainer = ref(null);
 const messages = ref([]);
 const currentAgent = ref(null);
+const mermaidRenderer = ref(null);
+const codeBlockRenderer = ref(null);
+const markMapRenderer = ref(null);
+
+// 渲染markdown内容
+const renderMarkdown = (content) => {
+  if (!content) return '';
+  
+  try {
+    // 使用markdownService将markdown转换为HTML
+    const htmlContent = markdownToHtml(content);
+    
+    // 延迟渲染特殊组件（在DOM更新后）
+    nextTick(() => {
+      renderSpecialComponents();
+    });
+    
+    return htmlContent;
+  } catch (error) {
+    console.error('渲染markdown失败:', error);
+    // 如果渲染失败，回退到纯文本显示
+    return content.replace(/\n/g, '<br>');
+  }
+};
+
+// 渲染特殊组件（Mermaid图表、代码块、思维导图）
+const renderSpecialComponents = async () => {
+  try {
+    if (!messagesContainer.value) return;
+    
+    // 渲染代码块
+    await renderCodeBlocks(true);
+    
+    // 渲染Mermaid图表
+    setTimeout(() => {
+      renderMermaidDynamically();
+    }, 100);
+    
+    // 渲染思维导图
+    setTimeout(() => {
+      renderMarkMaps();
+    }, 200);
+    
+    console.log('AgentSidebar: 特殊组件渲染完成');
+  } catch (error) {
+    console.error('渲染特殊组件失败:', error);
+  }
+};
 
 // 从会话历史初始化聊天记录
-const initializeFromHistory = () => {
-  console.log('初始化聊天记录，历史记录数量:', props.conversationHistory?.length || 0);
+const initializeFromHistory = (forceUpdate = false) => {
+  console.log('=== AgentSidebar: 初始化聊天记录 ===');
+  console.log('历史记录数量:', props.conversationHistory?.length || 0);
+  console.log('历史记录内容:', props.conversationHistory);
+  console.log('forceUpdate:', forceUpdate);
+  console.log('当前isAgentResponding:', props.isAgentResponding);
+  console.log('当前messages数量:', messages.value.length);
   
-  // 如果当前正在响应，不要重新初始化，避免覆盖正在进行的对话
-  if (props.isAgentResponding) {
+  // 如果当前正在响应且不是强制更新，不要重新初始化，避免覆盖正在进行的对话
+  if (props.isAgentResponding && !forceUpdate) {
     console.log('当前正在响应中，跳过历史记录初始化');
     return;
   }
   
   if (!props.conversationHistory || props.conversationHistory.length === 0) {
-    // 只有在没有当前消息时才清空
-    if (messages.value.length === 0 || !messages.value.some(msg => msg.type === 'agent' && msg.isTyping)) {
+    console.log('历史记录为空，清空messages');
+    // 只有在没有当前消息时才清空，或者是强制更新
+    if (messages.value.length === 0 || !messages.value.some(msg => msg.type === 'agent' && msg.isTyping) || forceUpdate) {
       messages.value = [];
+      console.log('已清空messages');
     }
     return;
   }
 
+  console.log('开始处理历史记录，条数:', props.conversationHistory.length);
   const newMessages = [];
   
   props.conversationHistory.forEach((conversation, index) => {
+    console.log(`处理第${index}条历史记录:`, conversation);
+    
     // 添加用户消息
     if (conversation.user) {
-      newMessages.push({
+      const userMsg = {
         id: `history_${index}_user`,
         type: 'user',
         content: conversation.user,
         timestamp: new Date(Date.now() - (props.conversationHistory.length - index) * 60000), // 模拟时间间隔
         agent: currentAgent.value
-      });
+      };
+      newMessages.push(userMsg);
+      console.log('添加用户消息:', userMsg);
     }
     
     // 添加AI消息
     if (conversation.agent) {
-      newMessages.push({
+      const agentMsg = {
         id: `history_${index}_agent`,
         type: 'agent',
         content: conversation.agent,
         timestamp: new Date(Date.now() - (props.conversationHistory.length - index - 0.5) * 60000), // 稍后的时间
         agent: currentAgent.value,
         isTyping: false
-      });
+      };
+      newMessages.push(agentMsg);
+      console.log('添加AI消息:', agentMsg);
     }
   });
   
-  // 检查是否有正在进行的消息（正在输入但还没完成的）
-  const activeMessages = messages.value.filter(msg => 
-    msg.type === 'agent' && msg.isTyping && msg.content !== ''
-  );
+  console.log('生成的新消息数组，长度:', newMessages.length);
+  console.log('新消息详情:', newMessages);
   
-  // 如果有正在进行的消息，合并到历史消息后面；否则直接使用历史消息
-  if (activeMessages.length > 0) {
-    messages.value = [...newMessages, ...activeMessages];
-    console.log('保留正在进行的消息，总消息数量:', messages.value.length);
-  } else {
-    // 没有正在进行的消息，直接使用历史消息（避免重复）
+  // 如果是强制更新，直接使用历史消息；否则检查是否有正在进行的消息
+  if (forceUpdate) {
     messages.value = newMessages;
-    console.log('使用历史消息，总消息数量:', messages.value.length);
+    console.log('强制更新使用历史消息，总消息数量:', messages.value.length);
+  } else {
+    // 检查是否有正在进行的消息（正在输入但还没完成的）
+    const activeMessages = messages.value.filter(msg => 
+      msg.type === 'agent' && msg.isTyping && msg.content !== ''
+    );
+    
+    console.log('正在进行的消息数量:', activeMessages.length);
+    
+    // 如果有正在进行的消息，合并到历史消息后面；否则直接使用历史消息
+    if (activeMessages.length > 0) {
+      messages.value = [...newMessages, ...activeMessages];
+      console.log('保留正在进行的消息，总消息数量:', messages.value.length);
+    } else {
+      // 没有正在进行的消息，直接使用历史消息（避免重复）
+      messages.value = newMessages;
+      console.log('使用历史消息，总消息数量:', messages.value.length);
+    }
   }
+  
+  console.log('最终messages状态:', messages.value);
   
   // 滚动到底部
   nextTick(() => {
@@ -362,6 +453,12 @@ watch(() => props.agentResponse, (newResponse) => {
     // 滚动到底部
     nextTick(() => {
       scrollToBottom();
+      // 如果响应完成，触发特殊组件渲染
+      if (!props.isAgentResponding) {
+        setTimeout(() => {
+          renderSpecialComponents();
+        }, 100);
+      }
     });
   }
 });
@@ -376,6 +473,13 @@ watch(() => props.isAgentResponding, (isResponding) => {
     if (typingMsgIndex !== -1) {
       messages.value[typingMsgIndex].isTyping = false;
     }
+    
+    // 响应完成后，延迟触发特殊组件渲染
+    nextTick(() => {
+      setTimeout(() => {
+        renderSpecialComponents();
+      }, 200);
+    });
   }
 });
 
@@ -390,19 +494,47 @@ watch(() => props.visible, (visible) => {
 });
 
 // 监听会话历史变化
-watch(() => props.conversationHistory, (newHistory) => {
-  console.log('会话历史发生变化:', newHistory?.length || 0);
-  initializeFromHistory();
+watch(() => props.conversationHistory, (newHistory, oldHistory) => {
+  console.log('=== AgentSidebar: 会话历史发生变化 ===');
+  console.log('新历史记录数量:', newHistory?.length || 0);
+  console.log('新历史记录内容:', newHistory);
+  console.log('旧历史记录数量:', oldHistory?.length || 0);
+  console.log('旧历史记录内容:', oldHistory);
+  
+  // 检测是否是笔记切换：历史记录完全不同或从有记录变为无记录
+  const isNoteSwitching = (
+    (!oldHistory || oldHistory.length === 0) && newHistory && newHistory.length > 0
+  ) || (
+    oldHistory && oldHistory.length > 0 && (!newHistory || newHistory.length === 0)
+  ) || (
+    oldHistory && newHistory && 
+    oldHistory.length !== newHistory.length &&
+    // 检查内容是否完全不同（至少有一个对话的内容不同）
+    (oldHistory.length === 0 || newHistory.length === 0 || 
+     oldHistory[0]?.user !== newHistory[0]?.user ||
+     oldHistory[0]?.agent !== newHistory[0]?.agent)
+  );
+  
+  console.log('是否检测到笔记切换:', isNoteSwitching);
+  
+  if (isNoteSwitching) {
+    console.log('检测到笔记切换，强制更新历史记录');
+    initializeFromHistory(true); // 强制更新
+  } else {
+    console.log('正常历史记录变化，常规更新');
+    initializeFromHistory(); // 正常更新
+  }
 }, { deep: true, immediate: true });
 
 // 组件挂载时初始化
 onMounted(() => {
-  // 如果没有历史记录，添加一些测试数据（仅用于开发调试）
-  if (!props.conversationHistory || props.conversationHistory.length === 0) {
-    console.log('没有会话历史，添加测试聊天记录');
-    addTestMessages();
-  } else {
+  // 初始化历史记录（如果有的话）
+  if (props.conversationHistory && props.conversationHistory.length > 0) {
+    console.log('组件挂载时初始化历史记录');
     initializeFromHistory();
+  } else {
+    console.log('组件挂载时无历史记录，保持空状态');
+    messages.value = [];
   }
   
   nextTick(() => {
@@ -577,6 +709,8 @@ onMounted(() => {
   border-radius: 8px;
   padding: 16px;
   position: relative;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .agent-message .message-header {
@@ -597,8 +731,22 @@ onMounted(() => {
   line-height: 1.5;
   color: #1f2937;
   word-wrap: break-word;
+  overflow-wrap: break-word;
   white-space: pre-wrap;
   margin-bottom: 8px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* 打字内容样式 */
+.typing-content {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1f2937;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  max-width: 100%;
 }
 
 .agent-message .message-time {
@@ -685,5 +833,245 @@ onMounted(() => {
 
 .chat-messages::-webkit-scrollbar-thumb:hover {
   background-color: rgba(0, 0, 0, 0.25);
+}
+
+/* Markdown内容样式 */
+.markdown-content {
+  /* 基础文本样式 */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  color: #1f2937;
+  white-space: normal;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow: hidden;
+}
+
+/* Markdown标题样式 */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin: 1em 0 0.5em 0;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #111827;
+}
+
+.markdown-content h1 { font-size: 1.5em; }
+.markdown-content h2 { font-size: 1.3em; }
+.markdown-content h3 { font-size: 1.1em; }
+.markdown-content h4 { font-size: 1em; }
+
+/* Markdown段落样式 */
+.markdown-content p {
+  margin: 0.8em 0;
+  line-height: 1.6;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Markdown列表样式 */
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.8em 0;
+  padding-left: 1.5em;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content li {
+  margin: 0.2em 0;
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Markdown链接样式 */
+.markdown-content a {
+  color: #3b82f6;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+.markdown-content a:hover {
+  border-bottom-color: #3b82f6;
+}
+
+/* Markdown强调样式 */
+.markdown-content strong {
+  font-weight: 600;
+  color: #111827;
+}
+
+.markdown-content em {
+  font-style: italic;
+  color: #374151;
+}
+
+/* Markdown引用样式 */
+.markdown-content blockquote {
+  margin: 1em 0;
+  padding: 0 1em;
+  color: #6b7280;
+  border-left: 3px solid #d1d5db;
+  background-color: #f9fafb;
+  border-radius: 0 4px 4px 0;
+}
+
+/* Markdown内联代码样式 */
+.markdown-content code:not(pre code) {
+  background-color: #f3f4f6;
+  color: #e11d48;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.875em;
+  border: 1px solid #e5e7eb;
+}
+
+/* Markdown代码块样式 */
+.markdown-content pre {
+  background-color: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.875em;
+  line-height: 1.45;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: #1f2937;
+  font-size: inherit;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Markdown表格样式 */
+.markdown-content table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 100%;
+  margin: 1em 0;
+  font-size: 0.875em;
+  overflow-x: auto;
+  display: block;
+  white-space: nowrap;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #d1d5db;
+  padding: 0.5em 0.75em;
+  text-align: left;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content tbody,
+.markdown-content thead,
+.markdown-content tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.markdown-content th {
+  background-color: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+}
+
+.markdown-content tr:nth-child(even) {
+  background-color: #f9fafb;
+}
+
+/* Mermaid图表容器样式 */
+.markdown-content :deep(.mermaid-container) {
+  margin: 1em 0;
+  background-color: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px;
+  text-align: center;
+  overflow: auto;
+}
+
+.markdown-content :deep(.mermaid) {
+  max-width: 100%;
+  overflow: visible;
+}
+
+.markdown-content :deep(.mermaid svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+/* 思维导图容器样式 */
+.markdown-content :deep(.markmap-component-wrapper) {
+  margin: 1em 0;
+  background-color: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px;
+  min-height: 300px;
+  overflow: hidden;
+}
+
+.markdown-content :deep(.markmap-svg) {
+  width: 100%;
+  min-height: 300px;
+}
+
+/* 代码块组件样式适配 */
+.markdown-content :deep(.code-block-wrapper) {
+  margin: 1em 0;
+  position: relative;
+}
+
+.markdown-content :deep(.code-copy-button) {
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.markdown-content :deep(.code-block-wrapper:hover .code-copy-button) {
+  opacity: 1;
+}
+
+/* 水平分割线样式 */
+.markdown-content hr {
+  border: none;
+  height: 1px;
+  background-color: #e5e7eb;
+  margin: 1.5em 0;
+}
+
+/* 图片样式 */
+.markdown-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 0.5em 0;
+}
+
+/* 确保在打字时不影响markdown渲染 */
+.markdown-content .typing-indicator {
+  display: inline;
+  margin-left: 0.5em;
 }
 </style> 

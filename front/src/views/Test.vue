@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import CodeBlock from '../components/CodeBlock.vue';
-import MermaidDiagram from '../components/MermaidDiagram.vue';
-import MarkMap from '../components/MarkMap.vue';
+import CodeBlock from '../components/rendering/CodeBlock.vue';
+import MermaidDiagram from '../components/rendering/MermaidDiagram.vue';
+import MarkMap from '../components/rendering/MarkMap.vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import Sidebar from '../components/Sidebar.vue';

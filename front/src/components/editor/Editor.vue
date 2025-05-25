@@ -18,7 +18,7 @@
     
     <div class="editor-content-wrapper">
       <DocumentOutline 
-        v-if="showOutline" 
+        v-if="showOutline && editorContentRef" 
         :editorRef="editorContentRef" 
         class="document-outline"
         ref="documentOutlineRef"
@@ -72,14 +72,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, nextTick, watch } from 'vue';
+import { ref, reactive, onMounted, nextTick, watch, computed } from 'vue';
 import EditorToolbar from './EditorToolbar.vue';
 import EditorContent from './EditorContent.vue';
-import MentionHandler from './MentionHandler.vue';
-import AgentResponseHandler from './AgentResponseHandler.vue';
+import MentionHandler from '../rendering/MentionHandler.vue';
+import AgentResponseHandler from '../Agent/AgentResponseHandler.vue';
 import DocumentOutline from './DocumentOutline.vue';
-import AgentInputModal from './AgentInputModal.vue';
-import chatService from '../services/chat';
+import AgentInputModal from '../Agent/AgentInputModal.vue';
+import chatService from '../../services/chat';
 
 // Props声明
 const props = defineProps({
@@ -98,7 +98,7 @@ const props = defineProps({
 });
 
 // 事件声明
-const emit = defineEmits(['update:modelValue', 'word-count', 'update:conversationId', 'toggle-sidebar-mode', 'sidebar-send', 'sidebar-insert', 'sidebar-navigate-history']);
+const emit = defineEmits(['update:modelValue', 'word-count', 'update:conversationId', 'toggle-sidebar-mode', 'sidebar-send', 'sidebar-insert', 'sidebar-navigate-history', 'conversation-history-loaded']);
 
 // 状态变量
 const wordCount = ref(0);
@@ -106,7 +106,7 @@ const isComposing = ref(false);
 const showAgentSelector = ref(false);
 const currentRange = ref(null);
 const selectedHeading = ref('p');
-const showOutline = ref(true); // 默认显示大纲
+const showOutline = ref(false); // 默认不显示大纲
 const showAgentModal = ref(false);
 const interactionMode = ref('modal'); // 'modal' | 'sidebar'
 const currentCursorRange = ref(null);
@@ -163,6 +163,13 @@ const loadConversationHistory = async (sessionId: number | string | null) => {
     currentAgentResponse.value = '';
     lastLoadedSessionId.value = null;
     console.log('没有会话ID，清空历史记录');
+    
+    // 即使没有历史记录，也通知Home.vue清空侧边栏
+    emit('conversation-history-loaded', {
+      sessionId: sessionId,
+      history: [],
+      length: 0
+    });
     return;
   }
 
@@ -176,12 +183,26 @@ const loadConversationHistory = async (sessionId: number | string | null) => {
       currentAgentResponse.value = history[history.length - 1].agent; // 显示最新的AI回复
       lastLoadedSessionId.value = sessionId; // 记录已加载的会话ID
       console.log(`加载了 ${history.length} 条历史记录，当前显示索引: ${historyDisplayIndex.value}`);
+      
+      // 通知Home.vue更新侧边栏的会话历史
+      emit('conversation-history-loaded', {
+        sessionId: sessionId,
+        history: history,
+        length: history.length
+      });
     } else {
       conversationHistory.value = [];
       historyDisplayIndex.value = -1;
       currentAgentResponse.value = '';
       lastLoadedSessionId.value = sessionId; // 即使没有历史记录，也记录会话ID避免重复请求
       console.log('没有找到历史记录');
+      
+      // 即使没有历史记录，也通知Home.vue清空侧边栏
+      emit('conversation-history-loaded', {
+        sessionId: sessionId,
+        history: [],
+        length: 0
+      });
     }
   } catch (error) {
     console.error('加载历史记录失败:', error);
@@ -189,6 +210,13 @@ const loadConversationHistory = async (sessionId: number | string | null) => {
     historyDisplayIndex.value = -1;
     currentAgentResponse.value = '';
     lastLoadedSessionId.value = sessionId; // 即使失败，也记录会话ID避免重复请求
+    
+    // 加载失败时也通知Home.vue清空侧边栏
+    emit('conversation-history-loaded', {
+      sessionId: sessionId,
+      history: [],
+      length: 0
+    });
   }
 };
 
@@ -564,8 +592,69 @@ const showAgentModalAt = (data) => {
   console.log('显示Agent输入界面，接收到的定位数据:', data);
   console.log('当前交互模式:', interactionMode.value);
   
-  // 保存当前范围，用于后续插入响应
-  currentCursorRange.value = data.range;
+  // 立即保存当前光标范围，避免位置丢失
+  if (data.range) {
+    try {
+      // 验证传入的范围是否有效
+      const container = data.range.startContainer;
+      if (document.contains(container)) {
+        // 克隆并保存当前范围
+        currentCursorRange.value = data.range.cloneRange();
+        console.log('[Editor.vue] 已保存光标位置，容器:', container.nodeName, '偏移:', data.range.startOffset);
+        
+        // 验证保存的范围
+        const testContainer = currentCursorRange.value.startContainer;
+        console.log('[Editor.vue] 验证保存的范围，容器:', testContainer.nodeName, '偏移:', currentCursorRange.value.startOffset);
+        
+        // 添加一个临时标记来验证位置
+        const debugSpan = document.createElement('span');
+        debugSpan.textContent = '🔍';
+        debugSpan.style.color = 'red';
+        debugSpan.style.fontSize = '10px';
+        debugSpan.id = 'debug-cursor-position';
+        
+        try {
+          const debugRange = currentCursorRange.value.cloneRange();
+          debugRange.insertNode(debugSpan);
+          console.log('[Editor.vue] 调试标记已插入，位置验证成功');
+          
+          // 2秒后移除调试标记
+          setTimeout(() => {
+            const debugElement = document.getElementById('debug-cursor-position');
+            if (debugElement && debugElement.parentNode) {
+              debugElement.parentNode.removeChild(debugElement);
+              console.log('[Editor.vue] 调试标记已移除');
+            }
+          }, 2000);
+        } catch (debugError) {
+          console.warn('[Editor.vue] 调试标记插入失败:', debugError);
+        }
+        
+      } else {
+        console.warn('[Editor.vue] 传入的范围容器不在文档中');
+        currentCursorRange.value = null;
+      }
+    } catch (error) {
+      console.warn('[Editor.vue] 无法保存光标位置:', error);
+      currentCursorRange.value = null;
+    }
+  } else {
+    // 如果没有传入范围，尝试获取当前选择
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      try {
+        const currentRange = selection.getRangeAt(0);
+        currentCursorRange.value = currentRange.cloneRange();
+        console.log('[Editor.vue] 从当前选择保存光标位置');
+      } catch (error) {
+        console.warn('[Editor.vue] 无法从当前选择保存光标位置:', error);
+        currentCursorRange.value = null;
+      }
+    } else {
+      console.warn('[Editor.vue] 没有可用的光标位置');
+      currentCursorRange.value = null;
+    }
+  }
   
   // 根据当前模式显示对应界面
   if (interactionMode.value === 'sidebar') {
@@ -745,7 +834,13 @@ const handleInsertResponse = (responseText: string) => {
   }
   
   // 弹窗模式下的原有逻辑
+  insertContentAtCursor(responseText);
+};
+
+// 新增专门的插入方法，供外部直接调用，避免递归
+const insertContentAtCursor = (responseText: string) => {
   console.log('[Editor.vue] Request to insert:', responseText);
+  console.log('[Editor.vue] Current cursor range exists:', !!currentCursorRange.value);
   
   if (!editorContentRef.value || !responseText) {
     console.warn('[Editor.vue] Editor instance or responseText not available for insert.');
@@ -769,90 +864,230 @@ const handleInsertResponse = (responseText: string) => {
     const selection = window.getSelection();
     let range = null;
 
-    // 尝试使用保存的光标位置
+    // 首先检查是否有保存的光标位置
     if (currentCursorRange.value) {
       try {
-        range = currentCursorRange.value;
-        selection.removeAllRanges();
-        selection.addRange(range);
-      } catch (e) {
-        console.warn('[Editor.vue] Saved cursor range is invalid, using current selection');
-        range = null;
-      }
-    }
-
-    // 如果没有保存的范围或保存的范围无效，使用当前选择或创建新的
-    if (!range) {
-      if (selection.rangeCount > 0) {
-        range = selection.getRangeAt(0);
-      } else {
-        // 创建一个在编辑器末尾的范围
-        range = document.createRange();
-        const editableContent = editorElement.querySelector('.editable-content') || editorElement;
+        // 检查保存的范围是否仍然有效
+        const container = currentCursorRange.value.startContainer;
+        const offset = currentCursorRange.value.startOffset;
         
-        // 找到最后一个可插入的位置
-        if (editableContent.childNodes.length > 0) {
-          const lastNode = editableContent.childNodes[editableContent.childNodes.length - 1];
-          if (lastNode.nodeType === Node.TEXT_NODE) {
-            range.setStart(lastNode, lastNode.textContent.length);
-            range.setEnd(lastNode, lastNode.textContent.length);
-          } else if (lastNode.nodeType === Node.ELEMENT_NODE) {
-            range.setStartAfter(lastNode);
-            range.setEndAfter(lastNode);
-          }
+        console.log('[Editor.vue] 检查保存的光标位置，容器:', container.nodeName, '偏移:', offset);
+        
+        // 验证保存的范围是否仍在文档中
+        if (document.contains(container)) {
+          // 验证偏移值是否在有效范围内
+          const maxOffset = container.nodeType === Node.TEXT_NODE 
+            ? container.textContent.length 
+            : container.childNodes.length;
+          
+          const validOffset = Math.min(offset, maxOffset);
+          
+          // 创建新的范围
+          range = document.createRange();
+          range.setStart(container, validOffset);
+          range.setEnd(container, validOffset);
+          
+          // 设置选择
+          selection.removeAllRanges();
+          selection.addRange(range);
+          console.log('[Editor.vue] 成功恢复保存的光标位置，偏移:', validOffset);
         } else {
-          range.selectNodeContents(editableContent);
-          range.collapse(false);
+          console.warn('[Editor.vue] 保存的光标位置已失效，容器不在文档中');
+          currentCursorRange.value = null;
         }
-        
-        selection.removeAllRanges();
-        selection.addRange(range);
+      } catch (e) {
+        console.warn('[Editor.vue] 保存的光标范围检查失败:', e);
+        currentCursorRange.value = null;
       }
     }
 
-    // 确保range在可编辑区域内
-    const editableContent = editorElement.querySelector('.editable-content') || editorElement;
-    if (!editableContent.contains(range.startContainer)) {
-      // 如果range不在可编辑区域内，创建新的range在可编辑区域末尾
+    // 如果没有有效的保存范围，尝试使用当前选择
+    if (!range && selection.rangeCount > 0) {
+      range = selection.getRangeAt(0);
+      console.log('[Editor.vue] 使用当前选择位置');
+    }
+
+    // 如果仍然没有有效范围，寻找合适的插入位置
+    if (!range) {
+      console.log('[Editor.vue] 寻找合适的插入位置');
       range = document.createRange();
-      range.selectNodeContents(editableContent);
-      range.collapse(false);
+      
+      // 寻找合适的插入位置
+      const editableContent = editorElement.querySelector('.editable-content') || editorElement;
+      
+      // 先尝试找到调试标记的位置
+      const debugMarker = document.getElementById('debug-cursor-position');
+      if (debugMarker) {
+        console.log('[Editor.vue] 找到调试标记，在其位置插入');
+        range.setStartBefore(debugMarker);
+        range.setEndBefore(debugMarker);
+        
+        // 移除调试标记
+        if (debugMarker.parentNode) {
+          debugMarker.parentNode.removeChild(debugMarker);
+        }
+      } else {
+        // 没有调试标记，使用默认逻辑
+        const paragraphs = editableContent.querySelectorAll('p');
+        
+        if (paragraphs.length > 0) {
+          // 找到最后一个段落
+          const lastParagraph = paragraphs[paragraphs.length - 1];
+          
+          // 将光标设置到最后一个段落的末尾
+          if (lastParagraph.lastChild && lastParagraph.lastChild.nodeType === Node.TEXT_NODE) {
+            range.setStart(lastParagraph.lastChild, lastParagraph.lastChild.textContent.length);
+            range.setEnd(lastParagraph.lastChild, lastParagraph.lastChild.textContent.length);
+          } else {
+            range.selectNodeContents(lastParagraph);
+            range.collapse(false); // 移动到末尾
+          }
+          console.log('[Editor.vue] 插入位置设置到最后一个段落末尾');
+        } else {
+          // 如果没有段落，在可编辑区域开始处创建
+          range.selectNodeContents(editableContent);
+          range.collapse(true);
+          console.log('[Editor.vue] 插入位置设置到可编辑区域开始');
+        }
+      }
+      
       selection.removeAllRanges();
       selection.addRange(range);
     }
 
-    // 插入内容
-    // 将纯文本转换为HTML段落
-    const paragraphs = responseText.split('\n\n').filter(p => p.trim());
-    const htmlContent = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
+    console.log('[Editor.vue] 最终插入位置 - 容器:', range.startContainer.nodeName, '偏移:', range.startOffset);
 
+    // 清理响应文本并转换为HTML
+    const cleanText = responseText.trim();
+    
     // 删除选择的内容（如果有）
     if (!range.collapsed) {
       range.deleteContents();
+      console.log('[Editor.vue] 删除选中内容');
     }
 
-    // 创建文档片段并插入HTML内容
-    const fragment = document.createDocumentFragment();
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = htmlContent;
+    // 处理插入逻辑 - 如果光标在段落中间，需要特殊处理
+    const startContainer = range.startContainer;
+    const startOffset = range.startOffset;
     
-    while (tempDiv.firstChild) {
-      fragment.appendChild(tempDiv.firstChild);
+    // 检查是否在文本节点中间
+    if (startContainer.nodeType === Node.TEXT_NODE && startOffset > 0 && startOffset < startContainer.textContent.length) {
+      console.log('[Editor.vue] 光标在文本节点中间，分割文本节点');
+      
+      // 分割当前文本节点
+      const textBefore = startContainer.textContent.substring(0, startOffset);
+      const textAfter = startContainer.textContent.substring(startOffset);
+      
+      // 创建新的段落来插入内容
+      const newParagraph = document.createElement('p');
+      
+      // 处理响应文本
+      const paragraphs = cleanText.split(/\n\s*\n/).filter(p => p.trim());
+      if (paragraphs.length > 0) {
+        // 第一个段落继续当前行
+        const firstParagraph = paragraphs[0].trim().split('\n');
+        firstParagraph.forEach((line, lineIndex) => {
+          if (lineIndex > 0) {
+            newParagraph.appendChild(document.createElement('br'));
+          }
+          newParagraph.appendChild(document.createTextNode(line));
+        });
+      }
+      
+      // 更新当前文本节点为前半部分
+      startContainer.textContent = textBefore;
+      
+      // 创建包含后半部分文本的新文本节点
+      const afterTextNode = document.createTextNode(textAfter);
+      
+      // 找到当前段落
+      const currentParagraph = startContainer.parentElement;
+      
+      // 插入新段落
+      if (currentParagraph && currentParagraph.parentNode) {
+        // 在当前段落后插入新内容
+        currentParagraph.parentNode.insertBefore(newParagraph, currentParagraph.nextSibling);
+        
+        // 如果有后续文本，创建新段落
+        if (textAfter.trim()) {
+          const afterParagraph = document.createElement('p');
+          afterParagraph.appendChild(afterTextNode);
+          currentParagraph.parentNode.insertBefore(afterParagraph, newParagraph.nextSibling);
+        }
+        
+        // 处理剩余段落
+        if (paragraphs.length > 1) {
+          let insertAfter = textAfter.trim() ? afterParagraph : newParagraph;
+          
+          for (let i = 1; i < paragraphs.length; i++) {
+            const p = document.createElement('p');
+            const lines = paragraphs[i].trim().split('\n');
+            lines.forEach((line, lineIndex) => {
+              if (lineIndex > 0) {
+                p.appendChild(document.createElement('br'));
+              }
+              p.appendChild(document.createTextNode(line));
+            });
+            
+            insertAfter.parentNode.insertBefore(p, insertAfter.nextSibling);
+            insertAfter = p;
+          }
+        }
+        
+        // 设置光标到新内容的末尾
+        const finalParagraph = textAfter.trim() ? afterParagraph : newParagraph;
+        range.setStartAfter(finalParagraph);
+        range.setEndAfter(finalParagraph);
+      }
+    } else {
+      // 光标在段落开始或结束，使用原有逻辑
+      const fragment = document.createDocumentFragment();
+      
+      // 将响应文本按段落分割
+      const paragraphs = cleanText.split(/\n\s*\n/).filter(p => p.trim());
+      
+      if (paragraphs.length === 0) {
+        // 如果没有段落，插入一个空段落
+        const emptyP = document.createElement('p');
+        emptyP.innerHTML = '<br>';
+        fragment.appendChild(emptyP);
+        console.log('[Editor.vue] 插入空段落');
+      } else {
+        console.log('[Editor.vue] 创建', paragraphs.length, '个段落');
+        paragraphs.forEach((paragraph, index) => {
+          const p = document.createElement('p');
+          // 处理段落内的换行
+          const lines = paragraph.trim().split('\n');
+          lines.forEach((line, lineIndex) => {
+            if (lineIndex > 0) {
+              p.appendChild(document.createElement('br'));
+            }
+            p.appendChild(document.createTextNode(line));
+          });
+          fragment.appendChild(p);
+        });
+      }
+
+      // 插入内容
+      range.insertNode(fragment);
+      console.log('[Editor.vue] 内容已插入到DOM');
+
+      // 将光标移动到插入内容的末尾
+      range.collapse(false);
     }
 
-    // 插入内容
-    range.insertNode(fragment);
-
-    // 将光标移动到插入内容的末尾
-    range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
+    console.log('[Editor.vue] 光标已移动到插入内容末尾');
+
+    // 清除保存的光标位置，避免后续插入出现问题
+    currentCursorRange.value = null;
 
     // 触发输入事件以更新modelValue
     const inputEvent = new Event('input', { bubbles: true });
     editorElement.dispatchEvent(inputEvent);
 
-    console.log('[Editor.vue] Content inserted successfully');
+    console.log('[Editor.vue] Content inserted successfully at cursor position');
 
   } catch (error) {
     console.error('[Editor.vue] Error inserting content:', error);
@@ -956,6 +1191,8 @@ defineExpose({
     emit('update:modelValue', newContent);
   },
   getWordCount: () => wordCount.value,
+  // 暴露编辑器DOM元素的引用
+  editorRef: computed(() => editorContentRef.value?.editorRef),
   setInteractionMode: (mode: 'modal' | 'sidebar') => {
     interactionMode.value = mode;
     console.log(`编辑器交互模式设置为: ${mode}`);
@@ -967,6 +1204,11 @@ defineExpose({
     historyLength: conversationHistory.value.length,
     conversationHistory: conversationHistory.value // 添加完整的会话历史记录
   }),
+  // 修改为使用新的方法，避免递归调用
+  handleInsertResponse: (responseText: string) => {
+    console.log('[Editor.vue] 外部调用handleInsertResponse:', responseText);
+    insertContentAtCursor(responseText);
+  },
   closeModal: () => {
     // 关闭弹窗
     showAgentModal.value = false;
@@ -1094,7 +1336,7 @@ defineExpose({
 .editor-main {
   flex: 1;
   position: relative;
-  overflow: hidden; /* 改为hidden，让父容器控制滚动 */
+  overflow-y: auto; /* 改为auto，允许编辑器内容滚动 */
   display: flex;
   flex-direction: column;
   min-height: 0; /* 允许收缩 */

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { message, Modal, Tabs } from 'ant-design-vue';
 import { PlusOutlined, EditOutlined, CopyOutlined, DeleteOutlined } from '@ant-design/icons-vue';
-import CreateAgentForm from '@/components/CreateAgentForm.vue';
+import CreateAgentForm from '@/components/Agent/CreateAgentForm.vue';
 import agentService from '@/services/agent';
 import userService from '@/services/user';
 import type { Agent } from '@/services/agent';
@@ -21,24 +21,28 @@ const agentIdToDelete = ref<number | null>(null);
 
 // 获取用户信息
 const fetchUserInfo = async () => {
-  const cachedUser = userService.getCachedUserInfo();
+  try {
+    // 优先从API获取最新的用户信息
+    const user = await userService.getCurrentUser();
+    if (user && user.id) {
+      username.value = user.username;
+      userId.value = user.id;
+      userService.cacheUserInfo(user);
+      console.log('从API获取用户信息成功:', username.value, 'ID:', userId.value);
+      return;
+    }
+  } catch (error) {
+    console.error('从API获取用户信息失败:', error);
+  }
   
-  if (cachedUser) {
+  // 如果API获取失败，尝试从缓存获取
+  const cachedUser = userService.getCachedUserInfo();
+  if (cachedUser && cachedUser.id) {
     username.value = cachedUser.username;
     userId.value = cachedUser.id;
     console.log('从缓存获取用户信息成功:', username.value, 'ID:', userId.value);
   } else {
-    try {
-      const user = await userService.getCurrentUser();
-      if (user) {
-        username.value = user.username;
-        userId.value = user.id;
-        userService.cacheUserInfo(user);
-        console.log('从API获取用户信息成功:', username.value, 'ID:', userId.value);
-      }
-    } catch (error) {
-      console.error('获取用户信息失败:', error);
-    }
+    console.error('缓存中也没有有效的用户信息');
   }
 };
 
@@ -299,8 +303,9 @@ onMounted(async () => {
 <style scoped>
 .agent-management {
   padding: 24px;
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
+  width: 100%;
   height: 100%;
   overflow: auto;
 }
@@ -309,7 +314,7 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 32px;
 }
 
 .page-header h1 {
@@ -345,23 +350,29 @@ onMounted(async () => {
 }
 
 .agent-tabs-container {
-  margin-bottom: 24px;
+  margin-bottom: 32px;
 }
 
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
   margin-top: 20px;
 }
 
-@media (max-width: 1400px) {
+@media (max-width: 1600px) {
+  .agent-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 1200px) {
   .agent-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 768px) {
   .agent-grid {
     grid-template-columns: 1fr;
   }
@@ -371,7 +382,7 @@ onMounted(async () => {
   background-color: #fff;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  padding: 20px;
+  padding: 24px;
   transition: transform 0.2s, box-shadow 0.2s;
   display: flex;
   flex-direction: column;
@@ -535,5 +546,20 @@ onMounted(async () => {
   padding: 40px;
   color: #666;
   font-size: 16px;
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+  .agent-management {
+    padding: 16px;
+  }
+  
+  .page-header {
+    margin-bottom: 24px;
+  }
+  
+  .agent-tabs-container {
+    margin-bottom: 24px;
+  }
 }
 </style> 

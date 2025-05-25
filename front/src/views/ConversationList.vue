@@ -5,5 +5,5 @@
 </template>
 
 <script>
-import MermaidRenderer from '@/components/MermaidRenderer.vue';
+import MermaidRenderer from '@/components/rendering/MermaidRenderer.vue';
 </script> 

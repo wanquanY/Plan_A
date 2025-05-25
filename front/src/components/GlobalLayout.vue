@@ -214,7 +214,7 @@ const handleNewNote = async () => {
     // 使用note服务创建新笔记，不设置默认标题
     const { note_id } = await noteService.createNote({
       title: "", // 空标题，将在用户输入第一行时自动设置
-      content: "<p></p>"
+      content: '<h1 class="title-placeholder" data-placeholder="请输入标题"></h1><p></p>'
     });
     
     // 清空当前会话ID
@@ -236,12 +236,83 @@ const handleNavigation = (path) => {
   router.push(path);
 };
 
+// 处理笔记重命名
+const handleNoteRenamed = (renameData) => {
+  console.log('笔记重命名事件:', renameData);
+  // 通过provide将重命名事件传递给子组件
+  noteRenamedEvent.value = { ...renameData, timestamp: Date.now() };
+};
+
+// 处理笔记删除
+const handleNoteDeleted = async (deleteData) => {
+  console.log('笔记删除事件:', deleteData);
+  
+  const { deletedNoteId, deletedNoteIndex, totalNotes } = deleteData;
+  
+  // 检查被删除的笔记是否是当前正在编辑的笔记
+  const currentNoteId = router.currentRoute.value.query.note;
+  const isCurrentNoteDeleted = currentNoteId && parseInt(currentNoteId) === deletedNoteId;
+  
+  console.log(`当前编辑的笔记ID: ${currentNoteId}, 被删除的笔记ID: ${deletedNoteId}, 是否删除当前笔记: ${isCurrentNoteDeleted}`);
+  
+  // 等待一小段时间确保笔记列表已刷新
+  await new Promise(resolve => setTimeout(resolve, 200));
+  
+  // 获取当前最新的笔记列表
+  const currentNotes = notes.value;
+  
+  if (currentNotes.length === 0) {
+    // 如果没有笔记了，创建一个新笔记
+    console.log('没有剩余笔记，创建新笔记');
+    await handleNewNote();
+    return;
+  }
+  
+  // 只有当删除的是当前正在编辑的笔记时，才需要自动导航到下一个笔记
+  if (!isCurrentNoteDeleted) {
+    console.log('删除的不是当前编辑的笔记，无需导航');
+    return;
+  }
+  
+  // 确定要打开的下一个笔记
+  let nextNoteId = null;
+  
+  // 优化选择逻辑：优先选择删除位置的下一个笔记，如果没有则选择前一个
+  if (deletedNoteIndex < currentNotes.length) {
+    // 如果删除的不是最后一个，打开同一位置的笔记（原来下一个笔记现在在这个位置）
+    nextNoteId = currentNotes[deletedNoteIndex].id;
+    console.log(`打开删除位置的笔记，ID: ${nextNoteId}`);
+  } else if (deletedNoteIndex > 0 && currentNotes.length > 0) {
+    // 如果删除的是最后一个，打开前一个笔记
+    nextNoteId = currentNotes[currentNotes.length - 1].id;
+    console.log(`打开前一个笔记，ID: ${nextNoteId}`);
+  } else if (currentNotes.length > 0) {
+    // 备用方案：打开第一个笔记
+    nextNoteId = currentNotes[0].id;
+    console.log(`打开第一个笔记，ID: ${nextNoteId}`);
+  }
+  
+  if (nextNoteId) {
+    // 导航到下一个笔记
+    console.log(`准备导航到笔记 ${nextNoteId}`);
+    router.push(`/?note=${nextNoteId}`);
+  } else {
+    // 如果没有找到合适的笔记，创建新笔记
+    console.log('没有找到合适的笔记，创建新笔记');
+    await handleNewNote();
+  }
+};
+
+// 创建一个响应式对象来传递重命名事件
+const noteRenamedEvent = ref(null);
+
 // 提供全局数据给子组件
 provide('sessions', sessions);
 provide('notes', notes);
 provide('fetchSessions', fetchSessions);
 provide('fetchNotes', fetchNotes);
 provide('currentSessionId', currentSessionId);
+provide('noteRenamedEvent', noteRenamedEvent);
 
 // 添加事件监听调试日志
 console.log('GlobalLayout组件已加载，监听Sidebar的note-click事件');
@@ -270,6 +341,8 @@ console.log('GlobalLayout组件已加载，监听Sidebar的note-click事件');
         @new-note="handleNewNote"
         @nav-to="handleNavigation"
         @load-more="handleLoadMore"
+        @note-renamed="handleNoteRenamed"
+        @note-deleted="handleNoteDeleted"
       />
       
       <!-- 主内容区 -->

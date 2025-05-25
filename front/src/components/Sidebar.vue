@@ -66,7 +66,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['logout', 'switch-tab', 'session-click', 'note-click', 'toggle-sidebar', 'new-note', 'nav-to', 'load-more']);
+const emit = defineEmits(['logout', 'switch-tab', 'session-click', 'note-click', 'toggle-sidebar', 'new-note', 'nav-to', 'load-more', 'note-renamed', 'note-deleted']);
 
 // 确保始终使用笔记标签
 onMounted(() => {
@@ -195,8 +195,12 @@ const submitRename = async (event) => {
   }
   
   try {
-    await noteService.updateNote(editingNoteId.value, {
-      title: newNoteName.value.trim()
+    // 保存当前编辑的笔记ID，因为重置状态后会被清空
+    const currentEditingNoteId = editingNoteId.value;
+    const newTitle = newNoteName.value.trim();
+    
+    await noteService.updateNote(currentEditingNoteId, {
+      title: newTitle
     });
     
     // 更新成功提示
@@ -210,6 +214,9 @@ const submitRename = async (event) => {
     if (fetchNotes) {
       fetchNotes(1, false);
     }
+
+    // 发出note-renamed事件 - 使用保存的noteId
+    emit('note-renamed', { noteId: currentEditingNoteId, title: newTitle });
   } catch (error) {
     console.error('重命名笔记失败:', error);
     message.error('重命名失败，请稍后重试');
@@ -223,14 +230,26 @@ const handleDeleteClick = async (event, note) => {
   try {
     // 确认删除
     if (confirm(`确定要删除笔记"${note.title}"吗？此操作不可恢复。`)) {
+      // 保存删除前的笔记信息，用于确定下一个要打开的笔记
+      const deletedNoteId = note.id;
+      const currentNoteIndex = props.notes.findIndex(n => n.id === deletedNoteId);
+      
       const success = await noteService.deleteNote(note.id);
       
       if (success) {
         message.success('笔记已删除');
+        
         // 刷新笔记列表 - 使用注入的fetchNotes方法，从第1页开始重新获取笔记
         if (fetchNotes) {
-          fetchNotes(1, false);
+          await fetchNotes(1, false);
         }
+        
+        // 发出note-deleted事件，传递被删除的笔记ID和索引信息
+        emit('note-deleted', { 
+          deletedNoteId: deletedNoteId,
+          deletedNoteIndex: currentNoteIndex,
+          totalNotes: props.notes.length
+        });
       } else {
         message.error('删除笔记失败');
       }

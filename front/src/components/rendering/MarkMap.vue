@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, nextTick } from 'vue';
 import { Markmap } from 'markmap-view';
 import { Transformer } from 'markmap-lib';
 
@@ -65,9 +65,39 @@ const renderMarkmap = async () => {
   isError.value = false;
   
   try {
+    // 等待DOM更新
+    await nextTick();
+    
+    // 验证SVG容器尺寸
+    const svgElement = svgRef.value;
+    const containerRect = svgElement.getBoundingClientRect();
+    
+    console.log('SVG容器尺寸检查:', {
+      width: containerRect.width,
+      height: containerRect.height,
+      clientWidth: svgElement.clientWidth,
+      clientHeight: svgElement.clientHeight
+    });
+    
+    // 如果尺寸无效，等待一段时间再重试
+    if (containerRect.width <= 0 || containerRect.height <= 0) {
+      console.warn('SVG容器尺寸无效，等待DOM完全渲染...');
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      const retryRect = svgElement.getBoundingClientRect();
+      if (retryRect.width <= 0 || retryRect.height <= 0) {
+        console.error('SVG容器尺寸仍然无效:', retryRect);
+        throw new Error(`SVG容器尺寸无效: ${retryRect.width}x${retryRect.height}`);
+      }
+    }
+    
     // 转换markdown为思维导图数据
     const { root, features } = transformer.transform(props.content);
     transformedData.value = { root, features };
+    
+    if (!root) {
+      throw new Error('无法解析思维导图内容');
+    }
     
     // 清空现有的SVG内容
     svgRef.value.innerHTML = '';
@@ -86,24 +116,62 @@ const renderMarkmap = async () => {
     // 保存实例引用
     markmap.value = mm;
     
-    // 立即尝试适配一次
+    if (!mm) {
+      throw new Error('创建markmap实例失败');
+    }
+    
+    console.log('Markmap实例创建成功');
+    
+    // 检查SVG状态后再尝试适配 - 添加更严格的验证
     if (mm && typeof mm.fit === 'function') {
-      mm.fit();
+      try {
+        const svgRect = svgRef.value.getBoundingClientRect();
+        
+        // 验证尺寸是否为有效数字
+        if (svgRect.width > 0 && svgRect.height > 0 && 
+            !isNaN(svgRect.width) && !isNaN(svgRect.height) &&
+            isFinite(svgRect.width) && isFinite(svgRect.height)) {
+          
+          console.log('执行首次fit，SVG尺寸:', svgRect);
+          mm.fit();
+          console.log('首次fit执行成功');
+        } else {
+          console.warn('SVG尺寸包含无效值，跳过首次fit:', svgRect);
+        }
+      } catch (fitError) {
+        console.warn('首次适配失败，将在延迟后重试:', fitError);
+        // 不抛出错误，继续执行
+      }
     }
     
     // 短延迟后再次适配并设置完成状态
     setTimeout(() => {
       try {
-        // 再次适配视图
-        if (mm && typeof mm.fit === 'function') {
-          mm.fit();
+        // 再次检查SVG状态并适配视图
+        if (mm && typeof mm.fit === 'function' && svgRef.value) {
+          const svgRect = svgRef.value.getBoundingClientRect();
+          
+          // 更严格的验证
+          if (svgRect.width > 0 && svgRect.height > 0 && 
+              !isNaN(svgRect.width) && !isNaN(svgRect.height) &&
+              isFinite(svgRect.width) && isFinite(svgRect.height)) {
+            
+            console.log('执行延迟fit，SVG尺寸:', svgRect);
+            mm.fit();
+            console.log('延迟fit执行成功');
+          } else {
+            console.warn('延迟fit时SVG尺寸包含无效值:', svgRect);
+          }
         }
         isLoading.value = false;
+        console.log('思维导图渲染完成');
       } catch (e) {
         console.error('思维导图适配失败:', e);
         isLoading.value = false;
+        // 即使fit失败，也不设置错误状态，因为图表可能已经渲染成功
       }
-    }, 100); // 减少延迟时间
+    }, 300); // 增加延迟时间，确保DOM完全渲染
+    
   } catch (error) {
     console.error('渲染思维导图失败:', error);
     isError.value = true;
@@ -128,8 +196,24 @@ const copyContent = () => {
 
 // 以合适的尺寸重新适应SVG大小
 const fitMap = () => {
-  if (markmap.value) {
-    markmap.value.fit();
+  if (markmap.value && svgRef.value) {
+    try {
+      const svgRect = svgRef.value.getBoundingClientRect();
+      
+      // 验证尺寸是否为有效数字
+      if (svgRect.width > 0 && svgRect.height > 0 && 
+          !isNaN(svgRect.width) && !isNaN(svgRect.height) &&
+          isFinite(svgRect.width) && isFinite(svgRect.height)) {
+        
+        console.log('手动fit，SVG尺寸:', svgRect);
+        markmap.value.fit();
+        console.log('手动fit执行成功');
+      } else {
+        console.warn('手动fit时SVG尺寸包含无效值:', svgRect);
+      }
+    } catch (error) {
+      console.error('手动适配思维导图失败:', error);
+    }
   }
 };
 </script>

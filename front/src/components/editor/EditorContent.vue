@@ -53,9 +53,9 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, nextTick, computed } from 'vue';
-import uploadService from '../services/uploadService';
+import uploadService from '../../services/uploadService';
 import { message } from 'ant-design-vue';
-import agentService from '../services/agent';
+import agentService from '../../services/agent';
 
 const props = defineProps({
   modelValue: {
@@ -176,9 +176,14 @@ const updateEditorContent = (content) => {
     editorRef.value.innerHTML = cleanContent;
   }
   
-  // 在内容更新后强制运行ensureBottomSpace
+  // 在内容更新后处理代码块后的段落
   nextTick(() => {
-    ensureBottomSpace();
+    // 确保标题占位符是空的
+    const titlePlaceholder = editorRef.value?.querySelector('.title-placeholder');
+    if (titlePlaceholder && titlePlaceholder.innerHTML.trim() !== '') {
+      console.log('updateEditorContent: 清空标题占位符内容');
+      titlePlaceholder.innerHTML = '';
+    }
     
     // 查找所有代码块，确保在最后一个代码块后有段落
     setTimeout(() => {
@@ -189,11 +194,8 @@ const updateEditorContent = (content) => {
         let hasContentAfterCodeBlock = false;
         
         while (nextElement) {
-          if (!nextElement.classList.contains('bottom-placeholder')) {
-            hasContentAfterCodeBlock = true;
-            break;
-          }
-          nextElement = nextElement.nextElementSibling;
+          hasContentAfterCodeBlock = true;
+          break;
         }
         
         if (!hasContentAfterCodeBlock) {
@@ -201,14 +203,8 @@ const updateEditorContent = (content) => {
           emptyParagraph.innerHTML = '<br>';
           emptyParagraph.className = 'after-code-block-paragraph';
           
-          // 获取底部占位元素
-          const bottomPlaceholder = editorRef.value.querySelector('.bottom-placeholder');
-          
-          if (bottomPlaceholder && bottomPlaceholder.parentNode) {
-            bottomPlaceholder.parentNode.insertBefore(emptyParagraph, bottomPlaceholder);
-          } else {
-            editorRef.value.appendChild(emptyParagraph);
-          }
+          // 直接添加到编辑器末尾
+          editorRef.value.appendChild(emptyParagraph);
         }
       }
     }, 200);
@@ -233,6 +229,25 @@ const getFullContent = () => {
 // 处理输入事件
 const handleInput = (event) => {
   if (isComposing.value || !editorRef.value) return;
+  
+  // 处理标题占位符的特殊逻辑
+  const titlePlaceholder = editorRef.value.querySelector('.title-placeholder');
+  if (titlePlaceholder) {
+    const titleContent = titlePlaceholder.textContent || '';
+    
+    // 如果用户在标题占位符中输入了内容
+    if (titleContent && titleContent.trim() !== '') {
+      // 移除占位符类，让它变成正常的标题
+      titlePlaceholder.classList.remove('title-placeholder');
+      titlePlaceholder.removeAttribute('data-placeholder');
+    } else if (!titleContent || titleContent.trim() === '') {
+      // 如果内容为空，确保占位符样式正确
+      titlePlaceholder.classList.add('title-placeholder');
+      titlePlaceholder.setAttribute('data-placeholder', '请输入标题');
+      // 清空内容，让CSS伪元素显示占位符
+      titlePlaceholder.innerHTML = '';
+    }
+  }
   
   // 保存当前滚动位置
   const scrollTop = editorRef.value.scrollTop;
@@ -536,32 +551,8 @@ const handleKeyDown = (event) => {
         node = node.parentNode;
       }
       
-      if (node && (node as HTMLElement).tagName === 'P' && 
-          (!node.textContent || node.textContent.trim() === '')) {
-        
-        // 计算连续空段落的数量
-        let emptyParagraphCount = 1; // 当前段落已经是空的
-        let prevNode = node.previousSibling;
-        
-        // 向上计数空段落
-        while (prevNode) {
-          if (prevNode.nodeType === Node.ELEMENT_NODE && 
-              (prevNode as HTMLElement).tagName === 'P' && 
-              (!prevNode.textContent || prevNode.textContent.trim() === '')) {
-            emptyParagraphCount++;
-          } else {
-            // 一旦遇到非空段落，停止计数
-            break;
-          }
-          prevNode = prevNode.previousSibling;
-        }
-        
-        // 如果已经有3个或更多连续空段落，阻止创建新段落
-        if (emptyParagraphCount >= 3) {
-          event.preventDefault();
-          console.log('已达到最大空行数量(3)，阻止创建新空行');
-        }
-      }
+      // 移除空行限制，允许用户创建任意数量的空行
+      // 原有的空行限制逻辑已被移除，用户可以自由创建空段落
     }
   }
   
@@ -659,11 +650,41 @@ const setReadOnlyContent = (content) => {
   updateEditorContent(props.modelValue);
 };
 
+// 聚焦到标题占位符
+const focusTitle = () => {
+  if (!editorRef.value) return;
+  
+  const titlePlaceholder = editorRef.value.querySelector('.title-placeholder');
+  if (titlePlaceholder) {
+    // 确保标题占位符为空
+    if (titlePlaceholder.innerHTML !== '') {
+      titlePlaceholder.innerHTML = '';
+    }
+    
+    // 设置光标到标题开始位置
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(titlePlaceholder);
+      range.collapse(true);
+      
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    
+    // 聚焦到标题元素
+    titlePlaceholder.focus();
+    
+    console.log('已聚焦到标题占位符');
+  }
+};
+
 // 暴露方法和引用
 defineExpose({
   editorRef,
   focus: () => editorRef.value?.focus(),
-  setReadOnlyContent
+  setReadOnlyContent,
+  focusTitle
 });
 
 // 直接DOM事件监听器，确保不会错过input事件
@@ -671,6 +692,32 @@ onMounted(() => {
   if (editorRef.value) {
     updateEditorContent(props.modelValue);
     countWords();
+    
+    // 确保标题占位符是空的，让CSS伪元素显示
+    nextTick(() => {
+      const titlePlaceholder = editorRef.value?.querySelector('.title-placeholder');
+      if (titlePlaceholder) {
+        console.log('检查标题占位符元素:', titlePlaceholder);
+        console.log('标题占位符内容:', titlePlaceholder.innerHTML);
+        console.log('标题占位符属性:', titlePlaceholder.getAttribute('data-placeholder'));
+        
+        // 如果标题占位符不为空，清空它
+        if (titlePlaceholder.innerHTML.trim() !== '') {
+          console.log('清空标题占位符内容');
+          titlePlaceholder.innerHTML = '';
+        }
+        
+        // 确保有data-placeholder属性
+        if (!titlePlaceholder.getAttribute('data-placeholder')) {
+          titlePlaceholder.setAttribute('data-placeholder', '请输入标题');
+        }
+        
+        // 自动聚焦到标题占位符，让真实光标在标题位置闪烁
+        setTimeout(() => {
+          focusTitle();
+        }, 100); // 稍微延迟确保DOM完全渲染
+      }
+    });
     
     // 添加DOM级别的事件监听器以确保捕获所有变更
     editorRef.value.addEventListener('input', () => {
@@ -716,9 +763,6 @@ onMounted(() => {
         }
       }
     });
-    
-    // 确保末尾有一个可以点击的空白区域
-    ensureBottomSpace();
   }
 });
 
@@ -729,16 +773,26 @@ const handleEditorClick = (event) => {
   
   const target = event.target;
   
-  // 处理底部占位元素的点击
-  if (target.classList.contains('bottom-placeholder') || 
-      target.closest('.bottom-placeholder')) {
+  // 处理标题占位符点击
+  if (target.classList.contains('title-placeholder')) {
+    // 确保标题占位符为空，让CSS伪元素显示占位符
+    if (target.innerHTML !== '') {
+      target.innerHTML = '';
+    }
     
-    event.preventDefault();
-    event.stopPropagation();
-    console.log('检测到底部占位区域点击，创建新段落');
+    // 设置光标到标题开始位置
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      range.collapse(true);
+      
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
     
-    // 插入新段落
-    insertNewParagraphAtBottom();
+    // 确保编辑器获得焦点
+    target.focus();
     return;
   }
   
@@ -766,157 +820,63 @@ const handleEditorClick = (event) => {
     return;
   }
   
-  // 其余的点击处理逻辑保持不变
-  // ... existing code ...
+  // 其他正常的点击处理，让浏览器处理光标位置
 };
 
-// 修改确保底部有足够空白区域的函数
-const ensureBottomSpace = () => {
-  if (!editorRef.value) return;
-  
-  // 检查是否已经存在底部占位段落
-  let bottomPlaceholder = editorRef.value.querySelector('.bottom-placeholder');
-  
-  // 如果不存在，则创建一个
-  if (!bottomPlaceholder) {
-    // 创建底部占位元素
-    bottomPlaceholder = document.createElement('div');
-    bottomPlaceholder.className = 'bottom-placeholder';
+// 加载Agent列表
+const loadAgents = async () => {
+  try {
+    const agentList = await agentService.getAllAgents();
+    agents.value = agentList;
     
-    // 添加到编辑器末尾
-    editorRef.value.appendChild(bottomPlaceholder);
-    
-    // 为底部占位元素添加点击事件
-    bottomPlaceholder.addEventListener('click', (event) => {
-      console.log('底部占位元素点击事件触发');
-      event.preventDefault();
-      event.stopPropagation();
-      
-      // 创建一个新段落
-      insertNewParagraphAtBottom();
-    });
-  }
-  
-  // 检查是否有代码块元素
-  const codeBlocks = editorRef.value.querySelectorAll('.code-block-wrapper, pre');
-  
-  // 如果存在代码块，检查最后一个代码块后是否有段落
-  if (codeBlocks.length > 0) {
-    const lastCodeBlock = codeBlocks[codeBlocks.length - 1];
-    
-    // 找到这个代码块后的所有兄弟元素
-    let nextElement = lastCodeBlock.nextElementSibling;
-    let hasContentAfterCodeBlock = false;
-    
-    // 检查代码块后是否有内容（除了底部占位符）
-    while (nextElement) {
-      if (!nextElement.classList.contains('bottom-placeholder')) {
-        hasContentAfterCodeBlock = true;
-        break;
-      }
-      nextElement = nextElement.nextElementSibling;
+    // 默认选择第一个Agent
+    if (agentList.length > 0 && !selectedAgent.value) {
+      selectedAgent.value = agentList[0];
     }
-    
-    // 如果最后一个代码块后没有内容，添加一个新段落
-    if (!hasContentAfterCodeBlock) {
-      console.log('检测到代码块是最后一个元素，添加一个空段落');
-      const emptyParagraph = document.createElement('p');
-      emptyParagraph.innerHTML = '<br>';
-      emptyParagraph.className = 'after-code-block-paragraph';
-      
-      // 将空段落插入到代码块后，底部占位符前
-      if (bottomPlaceholder.parentNode) {
-        bottomPlaceholder.parentNode.insertBefore(emptyParagraph, bottomPlaceholder);
-      }
-    }
-  }
-  
-  // 确保底部占位符不会被其他操作删除
-  setTimeout(() => {
-    if (editorRef.value && !editorRef.value.querySelector('.bottom-placeholder')) {
-      ensureBottomSpace();
-    }
-  }, 500);
-};
-
-// 修改insertNewParagraphAtBottom函数，大约在730行左右
-const insertNewParagraphAtBottom = () => {
-  if (!editorRef.value) return;
-  
-  // 获取底部占位元素
-  const bottomPlaceholder = editorRef.value.querySelector('.bottom-placeholder');
-  if (!bottomPlaceholder) return;
-  
-  // 创建新段落
-  const newParagraph = document.createElement('p');
-  newParagraph.innerHTML = '<br>';
-  
-  // 插入到底部占位元素之前
-  if (bottomPlaceholder.parentNode) {
-    bottomPlaceholder.parentNode.insertBefore(newParagraph, bottomPlaceholder);
-    
-    // 设置光标到新段落
-    const selection = window.getSelection();
-    if (selection) {
-      const range = document.createRange();
-      range.selectNodeContents(newParagraph);
-      range.collapse(true); // 光标在开始位置
-      
-      selection.removeAllRanges();
-      selection.addRange(range);
-      
-      // 确保编辑器获得焦点
-      editorRef.value.focus();
-      
-      // 获取新段落的位置，确保其在视口中可见
-      const newParagraphRect = newParagraph.getBoundingClientRect();
-      const viewportHeight = window.innerHeight;
-      
-      // 只有当新段落不完全可见时才滚动
-      if (newParagraphRect.bottom > viewportHeight) {
-        // 使用全局滚动
-        window.scrollTo({
-          top: window.scrollY + (newParagraphRect.bottom - viewportHeight) + 30,
-          behavior: 'smooth'
-        });
-      }
-      
-      // 触发内容更新
-      emit('update:modelValue', getFullContent());
-    }
+  } catch (error) {
+    console.error('加载AI助手列表失败:', error);
   }
 };
 
-// 添加一个新的辅助函数，确保元素在视口中可见
-const ensureElementVisible = (element: HTMLElement) => {
-  if (!element) return;
+// 显示Agent输入框
+const showAgentInputAt = (position, range) => {
+  // 保存当前位置和Range
+  cursorPosition.value = position;
+  activeRange.value = range;
   
-  const elementRect = element.getBoundingClientRect();
-  const viewportHeight = window.innerHeight;
+  // 显示输入框
+  showAgentInput.value = true;
   
-  // 检查元素是否在视口之下（需要向下滚动）
-  if (elementRect.bottom > viewportHeight) {
-    // 使用全局滚动
-    const scrollY = window.scrollY + (elementRect.bottom - viewportHeight) + 30; // 额外30px的缓冲空间
-    window.scrollTo({
-      top: scrollY,
-      behavior: 'smooth'
-    });
-    return;
+  // 加载Agent列表
+  if (agents.value.length === 0) {
+    loadAgents();
   }
   
-  // 检查元素是否在视口之上（需要向上滚动）
-  if (elementRect.top < 0) {
-    // 使用全局滚动
-    const scrollY = window.scrollY + elementRect.top - 60; // 额外空间，考虑工具栏高度
-    window.scrollTo({
-      top: Math.max(0, scrollY), // 确保不会滚动到负值
-      behavior: 'smooth'
-    });
-    return;
-  }
+  // 输入框聚焦
+  nextTick(() => {
+    agentInputRef.value?.focus();
+  });
+};
+
+// 关闭Agent输入框
+const closeAgentInput = () => {
+  showAgentInput.value = false;
+  agentInputText.value = '';
+};
+
+// 发送消息到Agent
+const sendToAgent = () => {
+  if (!agentInputText.value.trim() || !selectedAgent.value) return;
   
-  // 元素已经可见，不需要滚动
+  // 传递给父组件处理发送逻辑
+  emit('send-to-agent', {
+    agentId: selectedAgent.value.id,
+    content: agentInputText.value.trim(),
+    range: activeRange.value
+  });
+  
+  // 关闭输入框
+  closeAgentInput();
 };
 
 // 处理粘贴事件
@@ -1177,16 +1137,24 @@ const handleSlashSymbol = (event) => {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) return false;
   
-  const range = selection.getRangeAt(0);
+  const originalRange = selection.getRangeAt(0);
   
   try {
+    // 先克隆原始范围，避免后续操作影响它
+    const savedRange = originalRange.cloneRange();
+    
+    // 创建一个独立的范围用于插入临时标记
+    const tempRange = originalRange.cloneRange();
+    
     // 创建临时标记用于获取准确位置
     const tempSpan = document.createElement('span');
     tempSpan.id = 'temp-cursor-marker';
-    tempSpan.innerHTML = '&nbsp;';
+    tempSpan.style.position = 'absolute';
+    tempSpan.style.width = '1px';
+    tempSpan.style.height = '1px';
+    tempSpan.style.opacity = '0';
     
     // 插入临时标记到光标位置
-    const tempRange = range.cloneRange();
     tempRange.insertNode(tempSpan);
     
     // 获取标记位置（相对于视口）
@@ -1196,7 +1164,6 @@ const handleSlashSymbol = (event) => {
     const editorRect = editorRef.value.getBoundingClientRect();
     
     // 获取编辑器的offsetParent以计算正确的offsetLeft
-    const editorOffsetParent = editorRef.value.offsetParent;
     const editorOffsetLeft = editorRef.value.offsetLeft;
     
     // 计算编辑区域中的实际可编辑宽度信息
@@ -1204,8 +1171,6 @@ const handleSlashSymbol = (event) => {
       left: editorRect.left,
       right: editorRect.right,
       width: editorRect.width,
-      // 使用offsetLeft获取编辑区域相对于其父容器的水平偏移
-      // 这是大纲区域的宽度（如果存在大纲的话）
       editorOffsetLeft: editorOffsetLeft
     };
     
@@ -1215,18 +1180,18 @@ const handleSlashSymbol = (event) => {
       editorOffset: editorOffsetLeft
     });
     
-    // 移除临时标记
+    // 立即移除临时标记
     if (tempSpan.parentNode) {
       tempSpan.parentNode.removeChild(tempSpan);
     }
     
-    // 恢复原始选区
+    // 恢复原始选区到保存的位置
     selection.removeAllRanges();
-    selection.addRange(range);
+    selection.addRange(savedRange);
     
-    // 发送事件显示弹窗在光标所在行下方
+    // 发送事件显示弹窗在光标所在行下方，传递保存的范围
     emit('show-agent-modal', { 
-      range,
+      range: savedRange, // 传递保存的原始范围
       cursorPosition: {
         // 提供绝对位置（相对于视口）
         viewport: {
@@ -1246,12 +1211,13 @@ const handleSlashSymbol = (event) => {
   } catch (error) {
     console.error('计算光标位置时出错:', error);
     
-    // 备用方案：使用鼠标事件坐标
+    // 备用方案：使用原始范围和鼠标事件坐标
     const editorRect = editorRef.value.getBoundingClientRect();
     const editorOffsetLeft = editorRef.value.offsetLeft;
+    const backupRange = originalRange.cloneRange();
     
     emit('show-agent-modal', { 
-      range,
+      range: backupRange, // 使用备用的原始范围克隆
       cursorPosition: {
         viewport: {
           y: event.clientY || 0,
@@ -1273,70 +1239,86 @@ const handleSlashSymbol = (event) => {
     return true;
   }
 };
-
-// 加载Agent列表
-const loadAgents = async () => {
-  try {
-    const agentList = await agentService.getAllAgents();
-    agents.value = agentList;
-    
-    // 默认选择第一个Agent
-    if (agentList.length > 0 && !selectedAgent.value) {
-      selectedAgent.value = agentList[0];
-    }
-  } catch (error) {
-    console.error('加载AI助手列表失败:', error);
-  }
-};
-
-// 显示Agent输入框
-const showAgentInputAt = (position, range) => {
-  // 保存当前位置和Range
-  cursorPosition.value = position;
-  activeRange.value = range;
-  
-  // 显示输入框
-  showAgentInput.value = true;
-  
-  // 加载Agent列表
-  if (agents.value.length === 0) {
-    loadAgents();
-  }
-  
-  // 输入框聚焦
-  nextTick(() => {
-    agentInputRef.value?.focus();
-  });
-};
-
-// 关闭Agent输入框
-const closeAgentInput = () => {
-  showAgentInput.value = false;
-  agentInputText.value = '';
-};
-
-// 发送消息到Agent
-const sendToAgent = () => {
-  if (!agentInputText.value.trim() || !selectedAgent.value) return;
-  
-  // 传递给父组件处理发送逻辑
-  emit('send-to-agent', {
-    agentId: selectedAgent.value.id,
-    content: agentInputText.value.trim(),
-    range: activeRange.value
-  });
-  
-  // 关闭输入框
-  closeAgentInput();
-};
 </script>
 
-<style>
+<style scoped>
+/* 标题占位符样式 */
+.title-placeholder {
+  position: relative;
+  font-size: 28px !important;
+  font-weight: 600 !important;
+  margin: 0 0 20px 0 !important;
+  padding: 10px 0 !important;
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  line-height: 1.2 !important;
+  min-height: 1.2em; /* 确保有足够的高度 */
+  color: #333 !important; /* 改为正常颜色，让真实光标可见 */
+  display: block !important; /* 确保显示为块级元素 */
+}
+
+/* 使用伪元素显示占位符文本 */
+.editor-content .title-placeholder:empty::before {
+  content: attr(data-placeholder) !important;
+  color: #999 !important;
+  font-style: italic !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 10px !important;
+  pointer-events: none !important; /* 不可选中 */
+  user-select: none !important; /* 不可选中 */
+  z-index: 0 !important; /* 降低层级，让真实光标显示在上方 */
+  display: block !important;
+  font-size: 28px !important;
+  font-weight: 600 !important;
+  line-height: 1.2 !important;
+}
+
+/* 备用选择器，确保占位符能显示 */
+h1.title-placeholder:empty::before {
+  content: "请输入标题" !important;
+  color: #999 !important;
+  font-style: italic !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 10px !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  z-index: 0 !important; /* 降低层级，让真实光标显示在上方 */
+  display: block !important;
+  font-size: 28px !important;
+  font-weight: 600 !important;
+  line-height: 1.2 !important;
+}
+
+/* 聚焦时的占位符样式 */
+.editor-content .title-placeholder:focus:empty::before {
+  color: #ccc !important; /* 聚焦时占位符更淡，突出真实光标 */
+}
+
+/* 当标题有内容时的样式 */
+.title-placeholder:not(:empty) {
+  color: #333 !important;
+  font-style: normal !important;
+}
+
+/* 确保聚焦时有光标 */
+.title-placeholder:focus {
+  color: #333 !important;
+  font-style: normal !important;
+}
+
+/* 当有内容时隐藏伪元素 */
+.title-placeholder:not(:empty)::before {
+  display: none !important;
+}
+
 /* 编辑器内容区域样式 */
 .editor-content {
   flex: 1;
   overflow: visible; /* 保持visible，让父容器处理滚动 */
-  min-height: 100%; /* 改为100%，适应父容器 */
+  min-height: auto; /* 改为auto，不强制100%高度 */
   width: 100%;
   outline: none;
   line-height: 1.6;
@@ -1392,11 +1374,7 @@ const sendToAgent = () => {
   margin-bottom: 200px;
 }
 
-/* 底部占位元素样式 */
-.bottom-placeholder {
-  height: 200px;
-  cursor: text;
-}
+/* 底部占位元素样式 - 移除 */
 
 /* 图片上传占位符样式 */
 :deep(.image-upload-placeholder) {
@@ -1708,5 +1686,57 @@ const sendToAgent = () => {
     opacity: 1;
     transform: translateY(0);
   }
+}
+</style>
+
+<style>
+/* 全局样式，确保标题占位符能正确显示 */
+.title-placeholder {
+  position: relative !important;
+  font-size: 28px !important;
+  font-weight: 600 !important;
+  margin: 0 0 20px 0 !important;
+  padding: 10px 0 !important;
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  line-height: 1.2 !important;
+  min-height: 1.2em !important;
+  color: #333 !important; /* 改为正常颜色，让真实光标可见 */
+  display: block !important;
+}
+
+.title-placeholder:empty::before {
+  content: attr(data-placeholder) !important;
+  color: #999 !important;
+  font-style: italic !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 10px !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  z-index: 0 !important; /* 降低层级，让真实光标显示在上方 */
+  display: block !important;
+  font-size: 28px !important;
+  font-weight: 600 !important;
+  line-height: 1.2 !important;
+}
+
+.title-placeholder:focus:empty::before {
+  color: #ccc !important; /* 聚焦时占位符更淡，突出真实光标 */
+}
+
+.title-placeholder:not(:empty) {
+  color: #333 !important;
+  font-style: normal !important;
+}
+
+.title-placeholder:focus {
+  color: #333 !important;
+  font-style: normal !important;
+}
+
+.title-placeholder:not(:empty)::before {
+  display: none !important;
 }
 </style> 

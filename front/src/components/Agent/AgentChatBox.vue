@@ -40,8 +40,8 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
-import type { Agent } from '../services/agent';
-import chatService from '../services/chat';
+import type { Agent } from '../../services/agent';
+import chatService from '../../services/chat';
 
 const props = defineProps({
   agent: {

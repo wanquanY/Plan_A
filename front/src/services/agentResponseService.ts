@@ -238,7 +238,7 @@ export const processRenderedHtml = async (htmlContent: string, container: HTMLEl
       codeContainer.replaceWith(codeBlockEl);
       
       // 异步导入CodeBlock组件以避免循环依赖
-      const CodeBlockModule = await import('../components/CodeBlock.vue');
+      const CodeBlockModule = await import('../components/rendering/CodeBlock.vue');
       const CodeBlock = CodeBlockModule.default;
       
       // 使用导入的createApp函数创建CodeBlock组件实例
@@ -516,7 +516,7 @@ export const setupCodeBlocks = async () => {
     console.log(`找到${codeBlocks.length}个未处理的代码块，将替换为CodeBlock组件`);
     
     // 导入CodeBlock组件
-    const CodeBlockModule = await import('../components/CodeBlock.vue');
+    const CodeBlockModule = await import('../components/rendering/CodeBlock.vue');
     const CodeBlock = CodeBlockModule.default;
     
     for (const codeElement of codeBlocks) {

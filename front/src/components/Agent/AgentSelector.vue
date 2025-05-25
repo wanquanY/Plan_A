@@ -42,9 +42,9 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
-import agentService from '../services/agent';
-import userService from '../services/user';
-import type { Agent } from '../services/agent';
+import agentService from '../../services/agent';
+import userService from '../../services/user';
+import type { Agent } from '../../services/agent';
 
 const props = defineProps({
   show: {

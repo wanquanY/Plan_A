@@ -30,7 +30,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
-import agentService from '../services/agent';
+import agentService from '../../services/agent';
 
 const props = defineProps({
   showSelector: {

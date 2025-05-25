@@ -25,13 +25,13 @@ export const renderMermaidDiagrams = () => {
 export const renderCodeBlocks = async (handleMarkMaps = true) => {
   try {
     // 导入需要的组件
-    const CodeBlockModule = await import('../components/CodeBlock.vue');
+    const CodeBlockModule = await import('../components/rendering/CodeBlock.vue');
     const CodeBlock = CodeBlockModule.default;
     
     // 如果需要处理思维导图，导入MarkMap组件
     let MarkMap: Component | null = null;
     if (handleMarkMaps) {
-      const MarkMapModule = await import('../components/MarkMap.vue');
+      const MarkMapModule = await import('../components/rendering/MarkMap.vue');
       MarkMap = MarkMapModule.default;
     }
     
@@ -884,7 +884,7 @@ export const renderMarkMaps = async () => {
     console.log('开始处理MarkMap思维导图');
     
     // 导入MarkMap组件
-    const MarkMapModule = await import('../components/MarkMap.vue');
+    const MarkMapModule = await import('../components/rendering/MarkMap.vue');
     const MarkMap = MarkMapModule.default;
     
     // 简化锁检查逻辑

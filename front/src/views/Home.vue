@@ -6,16 +6,16 @@ import { message } from 'ant-design-vue';
 import authService from '../services/auth';
 import chatService from '../services/chat';
 import noteService from '../services/note';
-import Editor from '../components/Editor.vue';
+import Editor from '../components/editor/Editor.vue';
 import mermaid from 'mermaid';
-import MermaidRenderer from '@/components/MermaidRenderer.vue';
-import MarkMap from '@/components/MarkMap.vue';
+import MermaidRenderer from '@/components/rendering/MermaidRenderer.vue';
+import MarkMap from '@/components/rendering/MarkMap.vue';
 import { isMindMapContent as isMindMapContentFromService, 
          formatMessageContent as formatMessageContentFromService, 
          formatMessagesToHtml as formatMessagesToHtmlFromService } from '../services/markdownService';
 import { renderCodeBlocks } from '../services/renderService';
 import { debounce } from 'lodash';
-import AgentSidebar from '../components/AgentSidebar.vue';
+import AgentSidebar from '../components/Agent/AgentSidebar.vue';
 
 // 初始化mermaid配置
 mermaid.initialize({
@@ -42,6 +42,7 @@ const currentSessionId = inject('currentSessionId');
 const sessions = inject('sessions');
 const fetchSessions = inject('fetchSessions');
 const fetchNotes = inject('fetchNotes');
+const noteRenamedEvent = inject('noteRenamedEvent');
 
 // 笔记相关数据
 const currentNoteId = ref<number | null>(null);
@@ -56,19 +57,17 @@ const debouncedSave = debounce(async (content: string) => {
   try {
     // 只有当内容变化时才保存
     if (content !== lastSavedContent.value) {
-      // 检测是否有标题变化（用户的第一句话）
+      // 检测是否有标题变化（从第一行H1标签提取）
       let title = editorTitle.value;
       
-      // 如果检测到第一行输入，并且之前没有检测到用户输入
-      if (!firstUserInputDetected.value) {
-        // 从内容中提取第一行作为标题
-        const firstLine = content.replace(/<(?:.|\n)*?>/gm, '')
-                                 .trim()
-                                 .split('\n')[0]
-                                 .substring(0, 50);
+      // 从内容中提取第一行H1标签作为标题
+      const h1Match = content.match(/<h1[^>]*>(.*?)<\/h1>/i);
+      if (h1Match) {
+        const h1Content = h1Match[1].replace(/<[^>]*>/g, '').trim(); // 移除HTML标签
         
-        if (firstLine && firstLine.length > 0) {
-          title = firstLine;
+        // 如果H1内容不是占位符文本，则使用它作为标题
+        if (h1Content && h1Content !== '请输入标题' && h1Content.length > 0) {
+          title = h1Content.substring(0, 50); // 限制标题长度
           editorTitle.value = title;
           firstUserInputDetected.value = true;
         }
@@ -129,10 +128,19 @@ onBeforeMount(() => {
     }
   } else if (route.query.new) {
     // 如果URL中有new参数，表示用户想创建一个新笔记
-    editorContent.value = '<p></p>';
+    // 清理侧边栏的对话历史记录
+    console.log('URL新建笔记，清理侧边栏对话历史记录');
+    sidebarConversationHistory.value = [];
+    sidebarHistoryIndex.value = -1;
+    sidebarHistoryLength.value = 0;
+    sidebarAgentResponse.value = '';
+    sidebarIsAgentResponding.value = false;
+    
+    editorContent.value = '<h1 class="title-placeholder" data-placeholder="请输入标题"></h1><p></p>';
     editorTitle.value = '新笔记';
     currentSessionId.value = null;
     currentNoteId.value = null;
+    firstUserInputDetected.value = false; // 重置第一次输入检测
   } else {
     // 如果URL中没有任何参数，且用户已登录，检查是否有默认笔记
     if (authService.isAuthenticated()) {
@@ -193,10 +201,19 @@ watch(() => route.query, (newQuery) => {
     }
   } else if (newQuery.new) {
     // 如果URL中有new参数，表示用户想创建一个新笔记
-    editorContent.value = '<p></p>';
+    // 清理侧边栏的对话历史记录
+    console.log('URL新建笔记，清理侧边栏对话历史记录');
+    sidebarConversationHistory.value = [];
+    sidebarHistoryIndex.value = -1;
+    sidebarHistoryLength.value = 0;
+    sidebarAgentResponse.value = '';
+    sidebarIsAgentResponding.value = false;
+    
+    editorContent.value = '<h1 class="title-placeholder" data-placeholder="请输入标题"></h1><p></p>';
     editorTitle.value = '新笔记';
     currentSessionId.value = null;
     currentNoteId.value = null;
+    firstUserInputDetected.value = false; // 重置第一次输入检测
   }
 }, { deep: true });
 
@@ -267,6 +284,14 @@ const fetchNoteDetail = async (noteId: number) => {
     console.log(`开始获取笔记详情，ID: ${noteId}`);
     currentNoteId.value = noteId;
     
+    // 清理侧边栏的对话历史记录
+    console.log('切换笔记，清理侧边栏对话历史记录');
+    sidebarConversationHistory.value = [];
+    sidebarHistoryIndex.value = -1;
+    sidebarHistoryLength.value = 0;
+    sidebarAgentResponse.value = '';
+    sidebarIsAgentResponding.value = false;
+    
     // 检查笔记关联的会话
     if (route.query.sessionId) {
       currentSessionId.value = Number(route.query.sessionId);
@@ -287,13 +312,43 @@ const fetchNoteDetail = async (noteId: number) => {
     if (note.session_id && !route.query.sessionId) {
       console.log(`笔记关联了会话ID: ${note.session_id}，设置currentSessionId`);
       currentSessionId.value = note.session_id;
+      
+      // 加载关联会话的历史记录到侧边栏
+      try {
+        const sessionData = await chatService.getSessionDetail(note.session_id);
+        console.log('获取到的会话数据:', sessionData);
+        
+        if (sessionData && sessionData.conversationHistory && sessionData.conversationHistory.length > 0) {
+          console.log('会话历史记录详情:', sessionData.conversationHistory);
+          sidebarConversationHistory.value = [...sessionData.conversationHistory];
+          sidebarHistoryLength.value = sessionData.conversationHistory.length;
+          sidebarHistoryIndex.value = sessionData.conversationHistory.length - 1; // 显示最新的回复
+          console.log(`加载关联会话历史记录，条数: ${sessionData.conversationHistory.length}`);
+          console.log('设置后的sidebarConversationHistory:', sidebarConversationHistory.value);
+        } else {
+          console.log('会话数据为空或没有conversationHistory字段');
+          sidebarConversationHistory.value = [];
+        }
+      } catch (error) {
+        console.error('加载关联会话历史记录失败:', error);
+        sidebarConversationHistory.value = [];
+      }
+    } else {
+      console.log('笔记没有关联的session_id或URL中已有sessionId，清空会话历史');
+      sidebarConversationHistory.value = [];
     }
     
     // 判断是否是新创建的笔记
-    const isNewNote = !note.content || note.content === '';
+    const isNewNote = !note.content || note.content === '' || note.title === '';
     
     // 设置编辑器内容和标题
-    editorContent.value = isNewNote ? '# ' : (note.content || '<p></p>');
+    if (isNewNote) {
+      editorContent.value = '<h1 class="title-placeholder" data-placeholder="请输入标题"></h1><p></p>';
+      firstUserInputDetected.value = false; // 新笔记需要检测第一次输入
+    } else {
+      editorContent.value = note.content || '<p></p>';
+      firstUserInputDetected.value = true; // 已有内容的笔记不需要检测第一次输入
+    }
     editorTitle.value = note.title || '无标题笔记';
     
     // 在DOM更新后立即渲染组件
@@ -467,11 +522,21 @@ const toggleSidebar = () => {
 
 // 新建笔记或会话
 const handleNewNote = () => {
+  // 清理侧边栏的对话历史记录
+  console.log('新建笔记，清理侧边栏对话历史记录');
+  sidebarConversationHistory.value = [];
+  sidebarHistoryIndex.value = -1;
+  sidebarHistoryLength.value = 0;
+  sidebarAgentResponse.value = '';
+  sidebarIsAgentResponding.value = false;
+  
   // 总是使用会话逻辑
   // 实现新建会话逻辑 - 只清空编辑器，不直接创建会话
-  editorContent.value = '<p></p>';
+  editorContent.value = '<h1 class="title-placeholder" data-placeholder="请输入标题"></h1><p></p>';
   editorTitle.value = '新笔记';
   currentSessionId.value = null; // 清空当前会话ID
+  currentNoteId.value = null; // 清空当前笔记ID
+  firstUserInputDetected.value = false; // 重置第一次输入检测
 };
 
 // 创建新会话
@@ -802,10 +867,12 @@ const handleToggleSidebarMode = (data) => {
                 conversationHistory: sidebarConversationHistory.value
               });
             }
-          } else if (editorRef.value.showDemoModal) {
-            // 没有内容时显示演示弹窗
-            editorRef.value.showDemoModal();
           }
+          // 移除自动显示演示弹窗的逻辑，让用户主动触发
+          // } else if (editorRef.value.showDemoModal) {
+          //   // 没有内容时显示演示弹窗
+          //   editorRef.value.showDemoModal();
+          // }
         }
       }, 350); // 等待侧边栏动画完成
       
@@ -936,21 +1003,47 @@ const handleSidebarSend = async (data) => {
 const handleSidebarInsert = (text) => {
   console.log('Home接收到侧边栏插入文本事件:', text);
   
-  // 直接在当前编辑器内容末尾插入文本
-  if (text && text.trim()) {
-    // 将文本转换为HTML段落格式
-    const paragraphs = text.split('\n\n').filter(p => p.trim());
-    const htmlContent = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
-    
-    // 如果当前内容只是一个空段落，替换它
-    if (editorContent.value === '<p></p>' || editorContent.value === '<p>开始写作...</p>') {
-      editorContent.value = htmlContent;
-    } else {
-      // 否则在末尾添加
-      editorContent.value += htmlContent;
+  // 调用Editor组件的精确插入方法，而不是简单追加到末尾
+  if (text && text.trim() && editorRef.value) {
+    try {
+      // 直接调用Editor组件暴露的handleInsertResponse方法
+      // 这样可以确保内容插入到正确的光标位置
+      if (typeof editorRef.value.handleInsertResponse === 'function') {
+        editorRef.value.handleInsertResponse(text);
+        console.log('通过Editor组件的方法插入文本到光标位置');
+      } else {
+        // 备用方案：如果Editor组件没有暴露该方法，直接操作内容
+        console.warn('Editor组件未暴露handleInsertResponse方法，使用备用方案');
+        
+        // 将文本转换为HTML段落格式
+        const paragraphs = text.split('\n\n').filter(p => p.trim());
+        const htmlContent = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
+        
+        // 如果当前内容只是一个空段落，替换它
+        if (editorContent.value === '<p></p>' || editorContent.value === '<p>开始写作...</p>' || editorContent.value === '<p>请输入内容...</p>') {
+          editorContent.value = htmlContent;
+        } else {
+          // 否则在末尾添加
+          editorContent.value += htmlContent;
+        }
+        
+        console.log('使用备用方案插入文本到编辑器末尾');
+      }
+    } catch (error) {
+      console.error('插入文本时出错:', error);
+      
+      // 错误情况下的备用方案
+      const paragraphs = text.split('\n\n').filter(p => p.trim());
+      const htmlContent = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
+      
+      if (editorContent.value === '<p></p>' || editorContent.value === '<p>开始写作...</p>' || editorContent.value === '<p>请输入内容...</p>') {
+        editorContent.value = htmlContent;
+      } else {
+        editorContent.value += htmlContent;
+      }
+      
+      console.log('错误情况下使用备用方案插入文本');
     }
-    
-    console.log('文本已插入到编辑器');
   }
 };
 
@@ -998,6 +1091,85 @@ onMounted(() => {
     initializeEditorMode();
   });
 });
+
+const handleConversationHistoryLoaded = (data) => {
+  console.log('Home接收到会话历史记录加载事件:', data);
+  
+  // 更新侧边栏的会话历史记录
+  if (data.history && data.history.length > 0) {
+    console.log(`设置侧边栏历史记录，条数: ${data.history.length}`);
+    sidebarConversationHistory.value = [...data.history];
+    sidebarHistoryLength.value = data.history.length;
+    sidebarHistoryIndex.value = data.history.length - 1; // 显示最新的回复
+    console.log('侧边栏历史记录已更新:', sidebarConversationHistory.value);
+  } else {
+    console.log('清空侧边栏历史记录');
+    sidebarConversationHistory.value = [];
+    sidebarHistoryLength.value = 0;
+    sidebarHistoryIndex.value = -1;
+  }
+};
+
+// 监听笔记重命名事件
+watch(noteRenamedEvent, (newEvent) => {
+  if (newEvent && newEvent.title && newEvent.noteId && currentNoteId.value) {
+    // 只有当重命名的笔记是当前正在编辑的笔记时才更新
+    if (newEvent.noteId === currentNoteId.value) {
+      console.log('收到当前笔记重命名事件，新标题:', newEvent.title);
+      
+      // 更新编辑器标题
+      editorTitle.value = newEvent.title;
+      
+      // 更新编辑器内容中的第一行H1标题
+      updateEditorFirstLineTitle(newEvent.title);
+    } else {
+      console.log('收到其他笔记重命名事件，忽略');
+    }
+  }
+}, { deep: true });
+
+// 更新编辑器第一行标题的函数
+const updateEditorFirstLineTitle = (newTitle) => {
+  if (!editorRef.value || !editorRef.value.editorRef) return;
+  
+  const editorElement = editorRef.value.editorRef;
+  const firstH1 = editorElement.querySelector('h1');
+  
+  if (firstH1) {
+    // 如果第一行是标题占位符，移除占位符类并设置新标题
+    if (firstH1.classList.contains('title-placeholder')) {
+      firstH1.classList.remove('title-placeholder');
+      firstH1.removeAttribute('data-placeholder');
+    }
+    
+    // 设置新的标题内容
+    firstH1.textContent = newTitle;
+    
+    // 触发内容更新
+    const newContent = editorElement.innerHTML;
+    editorContent.value = newContent;
+    
+    console.log('已更新编辑器第一行标题为:', newTitle);
+  } else {
+    // 如果没有H1标签，在编辑器开头插入一个
+    const newH1 = document.createElement('h1');
+    newH1.textContent = newTitle;
+    
+    // 插入到编辑器开头
+    if (editorElement.firstChild) {
+      editorElement.insertBefore(newH1, editorElement.firstChild);
+    } else {
+      editorElement.appendChild(newH1);
+    }
+    
+    // 触发内容更新
+    const newContent = editorElement.innerHTML;
+    editorContent.value = newContent;
+    
+    console.log('已在编辑器开头插入新标题:', newTitle);
+  }
+};
+
 </script>
 
 <template>
@@ -1016,6 +1188,7 @@ onMounted(() => {
               @sidebar-send="handleSidebarSend"
               @sidebar-insert="handleSidebarInsert"
               @sidebar-navigate-history="handleSidebarNavigateHistory"
+              @conversation-history-loaded="handleConversationHistoryLoaded"
               ref="editorRef"
               :conversation-id="currentSessionId"
               :note-id="currentNoteId"
@@ -1077,7 +1250,7 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow-y: auto; /* 改为auto，让编辑器区域可以独立滚动 */
+  overflow: hidden; /* 改为hidden，让Editor组件内部处理滚动 */
   padding: 16px 32px 0;
   width: 90%;  /* 将宽度减少为原来的90% */
   margin: 0 auto;  /* 居中显示 */

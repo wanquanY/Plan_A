@@ -212,9 +212,9 @@ onMounted(() => {
     </div>
     
     <div v-else class="profile-content">
-      <Row :gutter="24">
+      <Row :gutter="32">
         <!-- 左侧个人信息 -->
-        <Col :xs="24" :md="14">
+        <Col :xs="24" :lg="16" :xl="14">
           <Card class="profile-card info-card" :bordered="false">
             <template #title>
               <div class="card-title">
@@ -226,13 +226,13 @@ onMounted(() => {
             <div class="avatar-section">
               <div class="avatar-container">
                 <Avatar 
-                  :size="100" 
+                  :size="120" 
                   :src="userInfo.avatar_url" 
                   v-if="userInfo.avatar_url"
                   class="user-avatar"
                 />
                 <Avatar 
-                  :size="100" 
+                  :size="120" 
                   :icon="UserOutlined" 
                   v-else 
                   class="user-avatar"
@@ -268,7 +268,7 @@ onMounted(() => {
               layout="vertical"
               class="profile-form"
             >
-              <Row :gutter="16">
+              <Row :gutter="24">
                 <Col :span="24">
                   <Form.Item
                     label="用户名"
@@ -328,7 +328,7 @@ onMounted(() => {
         </Col>
         
         <!-- 右侧密码修改 -->
-        <Col :xs="24" :md="10">
+        <Col :xs="24" :lg="8" :xl="10">
           <Card class="profile-card password-card" :bordered="false">
             <template #title>
               <div class="card-title">
@@ -423,46 +423,48 @@ onMounted(() => {
 
 <style scoped>
 .user-profile {
-  padding: 24px;
-  max-width: 1200px;
+  padding: 32px 40px;
+  max-width: 1600px;
   margin: 0 auto;
   height: 100%;
   overflow: auto;
 }
 
 .page-header {
-  margin-bottom: 32px;
+  margin-bottom: 40px;
   border-bottom: 1px solid #f0f0f0;
-  padding-bottom: 16px;
+  padding-bottom: 20px;
 }
 
 .page-header h1 {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 600;
   margin: 0;
   color: #262626;
 }
 
 .subtitle {
-  margin-top: 8px;
+  margin-top: 12px;
   color: #8c8c8c;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .profile-content {
-  padding-bottom: 40px;
+  padding-bottom: 60px;
 }
 
 .profile-card {
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  border-radius: 16px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
   overflow: hidden;
   height: 100%;
   transition: all 0.3s ease;
+  padding: 32px;
 }
 
 .profile-card:hover {
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
 }
 
 .info-card {
@@ -476,31 +478,31 @@ onMounted(() => {
 .card-title {
   display: flex;
   align-items: center;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   color: #1890ff;
 }
 
 .card-title :deep(svg) {
-  margin-right: 8px;
-  font-size: 20px;
+  margin-right: 10px;
+  font-size: 22px;
 }
 
 .avatar-section {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 32px;
 }
 
 .avatar-container {
   position: relative;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .user-avatar {
   border: 4px solid #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 }
 
 .upload-overlay {
@@ -536,31 +538,32 @@ onMounted(() => {
 
 .user-meta h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 600;
   color: #262626;
 }
 
 .user-meta p {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   color: #8c8c8c;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .profile-form, .password-form {
-  margin-top: 16px;
+  margin-top: 24px;
 }
 
 .form-actions {
-  margin-top: 24px;
+  margin-top: 32px;
   display: flex;
   justify-content: flex-end;
 }
 
 .save-button, .change-password-button {
-  min-width: 120px;
-  height: 40px;
-  border-radius: 6px;
+  min-width: 140px;
+  height: 44px;
+  border-radius: 8px;
+  font-size: 16px;
 }
 
 .save-button {
@@ -598,6 +601,63 @@ onMounted(() => {
   }
 }
 
+@media (max-width: 1400px) {
+  .user-profile {
+    max-width: 1200px;
+    padding: 24px 32px;
+  }
+  
+  .profile-card {
+    padding: 28px; /* 中等屏幕稍微减少内边距 */
+  }
+}
+
+@media (max-width: 1200px) {
+  .user-profile {
+    max-width: 100%;
+    padding: 24px;
+  }
+  
+  .page-header h1 {
+    font-size: 28px;
+  }
+  
+  .subtitle {
+    font-size: 16px;
+  }
+  
+  .profile-card {
+    padding: 24px;
+  }
+}
+
+@media (max-width: 992px) {
+  .user-profile {
+    padding: 20px;
+  }
+  
+  .page-header {
+    margin-bottom: 32px;
+  }
+  
+  .profile-content {
+    padding-bottom: 40px;
+  }
+  
+  .profile-card + .profile-card {
+    margin-top: 24px;
+  }
+  
+  .avatar-section {
+    margin-bottom: 24px;
+  }
+  
+  .user-avatar {
+    width: 100px !important;
+    height: 100px !important;
+  }
+}
+
 @media (max-width: 767px) {
   .user-profile {
     padding: 16px;
@@ -611,8 +671,96 @@ onMounted(() => {
     font-size: 24px;
   }
   
+  .subtitle {
+    font-size: 14px;
+  }
+  
+  .profile-card {
+    padding: 20px;
+    border-radius: 12px;
+  }
+  
+  .card-title {
+    font-size: 18px;
+  }
+  
+  .user-meta h2 {
+    font-size: 22px;
+  }
+  
+  .user-avatar {
+    width: 80px !important;
+    height: 80px !important;
+  }
+  
+  .save-button, .change-password-button {
+    min-width: 120px;
+    height: 40px;
+    font-size: 14px;
+  }
+  
   .profile-card + .profile-card {
     margin-top: 24px;
   }
+}
+
+@media (max-width: 480px) {
+  .user-profile {
+    padding: 12px;
+  }
+  
+  .profile-card {
+    padding: 16px;
+  }
+  
+  .page-header h1 {
+    font-size: 20px;
+  }
+  
+  .user-meta h2 {
+    font-size: 20px;
+  }
+  
+  .form-actions {
+    margin-top: 24px;
+  }
+}
+
+/* 表单标签样式优化 */
+.profile-form :deep(.ant-form-item-label > label),
+.password-form :deep(.ant-form-item-label > label) {
+  font-size: 16px;
+  font-weight: 500;
+  color: #262626;
+}
+
+/* 表单项间距优化 */
+.profile-form :deep(.ant-form-item),
+.password-form :deep(.ant-form-item) {
+  margin-bottom: 24px;
+}
+
+/* 输入框样式优化 */
+.profile-form :deep(.ant-input),
+.profile-form :deep(.ant-input-password),
+.password-form :deep(.ant-input),
+.password-form :deep(.ant-input-password) {
+  border-radius: 8px;
+  border: 2px solid #f0f0f0;
+  transition: all 0.3s ease;
+}
+
+.profile-form :deep(.ant-input:focus),
+.profile-form :deep(.ant-input-password:focus),
+.password-form :deep(.ant-input:focus),
+.password-form :deep(.ant-input-password:focus) {
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+}
+
+/* 分割线样式优化 */
+.profile-card :deep(.ant-divider) {
+  margin: 32px 0;
+  border-color: #f0f0f0;
 }
 </style> 

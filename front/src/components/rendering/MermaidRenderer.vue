@@ -7,8 +7,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
 import mermaid from 'mermaid';
-import { renderMermaidDynamically, setupMermaidAutoRender } from '../services/renderService';
-import { isMermaidContent } from '../services/markdownService';
+import { renderMermaidDynamically, setupMermaidAutoRender } from '../../services/renderService';
+import { isMermaidContent } from '../../services/markdownService';
 
 // 在组件挂载时初始化并渲染mermaid图表
 let mermaidObserver = null;
@@ -46,7 +46,7 @@ onMounted(() => {
     if (errorElements.length > 0) {
       console.log(`检测到${errorElements.length}个可能渲染失败的mermaid元素，尝试修复`);
       // 导入修复函数
-      import('../services/renderService').then(({ renderMermaidDynamically }) => {
+      import('../../services/renderService').then(({ renderMermaidDynamically }) => {
         renderMermaidDynamically();
       });
     }

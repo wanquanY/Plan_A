@@ -264,7 +264,7 @@ import {
   WindowsOutlined,
 } from '@ant-design/icons-vue';
 import { ref } from 'vue';
-import uploadService from '../services/uploadService';
+import uploadService from '../../services/uploadService';
 import { message } from 'ant-design-vue';
 
 defineProps({

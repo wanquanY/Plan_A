@@ -10,9 +10,13 @@
       <div v-if="isAgentResponding || agentResponse || historyLength > 0" class="agent-response-area">
         <!-- 显示流式响应内容 -->
         <div v-if="agentResponse" class="response-content">
-          {{ agentResponse }}
-          <!-- 在流式响应过程中显示打字指示器 -->
-          <span v-if="isAgentResponding" class="typing-indicator">|</span>
+          <!-- 正在打字时显示简单文本和打字指示器 -->
+          <div v-if="isAgentResponding" class="typing-content">
+            <span>{{ agentResponse }}</span>
+            <span class="typing-indicator">|</span>
+          </div>
+          <!-- 打字完成后显示渲染的markdown内容 -->
+          <div v-else class="markdown-content" v-html="renderMarkdown(agentResponse)"></div>
           
           <!-- 操作按钮（仅图标，与侧边栏样式一致） -->
           <div v-if="!isAgentResponding" class="message-actions">
@@ -54,7 +58,7 @@
             <button @click="copyResponse" class="action-btn" title="复制">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path>
               </svg>
             </button>
           </div>
@@ -77,13 +81,25 @@
           ref="unifiedInputRef"
         />
       </div>
+
+      <!-- 渲染组件（隐藏） -->
+      <div style="display: none;">
+        <MermaidRenderer ref="mermaidRenderer" />
+        <CodeBlock ref="codeBlockRenderer" :code="''" :language="'text'" />
+        <MarkMap ref="markMapRenderer" :content="''" />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue';
-import UnifiedInput from './unified-input/UnifiedInput.vue';
+import UnifiedInput from '../unified-input/UnifiedInput.vue';
+import MermaidRenderer from '../rendering/MermaidRenderer.vue';
+import CodeBlock from '../rendering/CodeBlock.vue';
+import MarkMap from '../rendering/MarkMap.vue';
+import { markdownToHtml } from '../../services/markdownService';
+import { renderMermaidDynamically, renderCodeBlocks, renderMarkMaps } from '../../services/renderService';
 
 const PROSEMIRROR_PADDING = 16; // 编辑器内边距 (px)
 const FIXED_MODAL_WIDTH = 650; // 弹窗固定宽度 (px)
@@ -125,13 +141,32 @@ const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'na
 // 状态变量
 const modalRef = ref(null);
 const unifiedInputRef = ref(null);
+const mermaidRenderer = ref(null);
+const codeBlockRenderer = ref(null);
+const markMapRenderer = ref(null);
 
 watch(() => props.agentResponse, (newValue) => {
   console.log('[AgentInputModal] prop agentResponse updated:', newValue);
+  // 如果响应完成，触发特殊组件渲染
+  if (newValue && !props.isAgentResponding) {
+    nextTick(() => {
+      setTimeout(() => {
+        renderSpecialComponents();
+      }, 100);
+    });
+  }
 });
 
 watch(() => props.isAgentResponding, (newValue) => {
   console.log('[AgentInputModal] prop isAgentResponding updated:', newValue);
+  // 响应完成后，延迟触发特殊组件渲染
+  if (!newValue && props.agentResponse) {
+    nextTick(() => {
+      setTimeout(() => {
+        renderSpecialComponents();
+      }, 200);
+    });
+  }
 });
 
 // 计算弹窗位置样式
@@ -214,6 +249,51 @@ const copyResponse = async () => {
     } catch (err) {
       console.error('复制失败:', err);
     }
+  }
+};
+
+// 渲染markdown内容
+const renderMarkdown = (content) => {
+  if (!content) return '';
+  
+  try {
+    // 使用markdownService将markdown转换为HTML
+    const htmlContent = markdownToHtml(content);
+    
+    // 延迟渲染特殊组件（在DOM更新后）
+    nextTick(() => {
+      renderSpecialComponents();
+    });
+    
+    return htmlContent;
+  } catch (error) {
+    console.error('渲染markdown失败:', error);
+    // 如果渲染失败，回退到纯文本显示
+    return content.replace(/\n/g, '<br>');
+  }
+};
+
+// 渲染特殊组件（Mermaid图表、代码块、思维导图）
+const renderSpecialComponents = async () => {
+  try {
+    if (!modalRef.value) return;
+    
+    // 渲染代码块
+    await renderCodeBlocks(true);
+    
+    // 渲染Mermaid图表
+    setTimeout(() => {
+      renderMermaidDynamically();
+    }, 100);
+    
+    // 渲染思维导图
+    setTimeout(() => {
+      renderMarkMaps();
+    }, 200);
+    
+    console.log('AgentInputModal: 特殊组件渲染完成');
+  } catch (error) {
+    console.error('渲染特殊组件失败:', error);
   }
 };
 
@@ -402,6 +482,256 @@ onMounted(() => {
   max-height: 320px;
   overflow-y: auto;
   position: relative;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+/* 打字内容样式 */
+.typing-content {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1f2937;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  max-width: 100%;
+}
+
+/* Markdown内容样式 */
+.markdown-content {
+  /* 基础文本样式 */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  color: #1f2937;
+  white-space: normal;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow: hidden;
+}
+
+/* Markdown标题样式 */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin: 1em 0 0.5em 0;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #111827;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content h1 { font-size: 1.5em; }
+.markdown-content h2 { font-size: 1.3em; }
+.markdown-content h3 { font-size: 1.1em; }
+.markdown-content h4 { font-size: 1em; }
+
+/* Markdown段落样式 */
+.markdown-content p {
+  margin: 0.8em 0;
+  line-height: 1.6;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Markdown列表样式 */
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.8em 0;
+  padding-left: 1.5em;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content li {
+  margin: 0.2em 0;
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Markdown链接样式 */
+.markdown-content a {
+  color: #3b82f6;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+.markdown-content a:hover {
+  border-bottom-color: #3b82f6;
+}
+
+/* Markdown强调样式 */
+.markdown-content strong {
+  font-weight: 600;
+  color: #111827;
+}
+
+.markdown-content em {
+  font-style: italic;
+  color: #374151;
+}
+
+/* Markdown引用样式 */
+.markdown-content blockquote {
+  margin: 1em 0;
+  padding: 0 1em;
+  color: #6b7280;
+  border-left: 3px solid #d1d5db;
+  background-color: #f9fafb;
+  border-radius: 0 4px 4px 0;
+}
+
+/* Markdown内联代码样式 */
+.markdown-content code:not(pre code) {
+  background-color: #f3f4f6;
+  color: #e11d48;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.875em;
+  border: 1px solid #e5e7eb;
+}
+
+/* Markdown代码块样式 */
+.markdown-content pre {
+  background-color: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.875em;
+  line-height: 1.45;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: #1f2937;
+  font-size: inherit;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Markdown表格样式 */
+.markdown-content table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 100%;
+  margin: 1em 0;
+  font-size: 0.875em;
+  overflow-x: auto;
+  display: block;
+  white-space: nowrap;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #d1d5db;
+  padding: 0.5em 0.75em;
+  text-align: left;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content tbody,
+.markdown-content thead,
+.markdown-content tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.markdown-content th {
+  background-color: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+}
+
+.markdown-content tr:nth-child(even) {
+  background-color: #f9fafb;
+}
+
+/* Mermaid图表容器样式 */
+.markdown-content :deep(.mermaid-container) {
+  margin: 1em 0;
+  background-color: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px;
+  text-align: center;
+  overflow: auto;
+}
+
+.markdown-content :deep(.mermaid) {
+  max-width: 100%;
+  overflow: visible;
+}
+
+.markdown-content :deep(.mermaid svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+/* 思维导图容器样式 */
+.markdown-content :deep(.markmap-component-wrapper) {
+  margin: 1em 0;
+  background-color: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px;
+  min-height: 300px;
+  overflow: hidden;
+}
+
+.markdown-content :deep(.markmap-svg) {
+  width: 100%;
+  min-height: 300px;
+}
+
+/* 代码块组件样式适配 */
+.markdown-content :deep(.code-block-wrapper) {
+  margin: 1em 0;
+  position: relative;
+}
+
+.markdown-content :deep(.code-copy-button) {
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.markdown-content :deep(.code-block-wrapper:hover .code-copy-button) {
+  opacity: 1;
+}
+
+/* 水平分割线样式 */
+.markdown-content hr {
+  border: none;
+  height: 1px;
+  background-color: #e5e7eb;
+  margin: 1.5em 0;
+}
+
+/* 图片样式 */
+.markdown-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 0.5em 0;
 }
 
 .typing-indicator {
