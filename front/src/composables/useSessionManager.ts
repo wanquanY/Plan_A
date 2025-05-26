@@ -143,8 +143,6 @@ export function useSessionManager() {
       sidebarIsAgentResponding.value = true;
       sidebarAgentResponse.value = ''; // 清空之前的响应
       let finalConversationId = currentSessionId?.value;
-      let pendingToolStatuses: any[] = []; // 待插入的工具状态
-      let lastContentLength = 0; // 上次内容长度
       
       // 使用chatService的streamChat方法
       const abortController = await chatService.streamChat({
@@ -172,39 +170,15 @@ export function useSessionManager() {
         if (toolStatus) {
           console.log('useSessionManager 收到工具状态更新:', toolStatus);
           
-          // 将工具状态添加到待插入列表
-          pendingToolStatuses.push(toolStatus);
-          
-          // 调用原有的工具状态处理
+          // 注意：不再将工具状态插入到文本中，现在使用 contentChunks 系统
+          // 只调用工具状态处理回调，让新的组件系统处理显示
           if (onToolStatus) {
             onToolStatus(toolStatus);
           }
         }
         
-        // 如果有新的内容且有待插入的工具状态
-        if (content && content.length > lastContentLength && pendingToolStatuses.length > 0) {
-          // 在内容的适当位置插入工具状态
-          const newContent = content.substring(lastContentLength);
-          
-          // 查找合适的插入点（句号、换行符等）
-          const insertPoints = findInsertionPoints(newContent);
-          
-          if (insertPoints.length > 0) {
-            // 在第一个合适的位置插入工具状态
-            const insertPoint = insertPoints[0] + lastContentLength;
-            const toolStatusHtml = pendingToolStatuses.map(ts => generateToolStatusHtml(ts)).join('\n');
-            
-            content = content.substring(0, insertPoint) + '\n\n' + toolStatusHtml + '\n\n' + content.substring(insertPoint);
-            
-            // 清空待插入的工具状态
-            pendingToolStatuses = [];
-            console.log('工具状态已插入到内容位置:', insertPoint);
-          }
-        }
-        
         if (content) {
           sidebarAgentResponse.value = content;
-          lastContentLength = content.length;
           console.log('更新侧边栏响应内容，长度:', content.length);
         }
         
@@ -218,12 +192,7 @@ export function useSessionManager() {
           console.log('流式响应完成');
           sidebarIsAgentResponding.value = false;
           
-          // 如果还有未插入的工具状态，在末尾插入
-          if (pendingToolStatuses.length > 0) {
-            const toolStatusHtml = pendingToolStatuses.map(ts => generateToolStatusHtml(ts)).join('\n');
-            sidebarAgentResponse.value += '\n\n' + toolStatusHtml;
-            pendingToolStatuses = [];
-          }
+          // 注意：不再在末尾插入工具状态HTML，现在使用 contentChunks 系统
           
           // 延迟一小段时间后将当前对话添加到历史记录中，确保响应状态完全更新
           setTimeout(() => {
@@ -265,78 +234,8 @@ export function useSessionManager() {
     }
   };
 
-  // 查找合适的插入点
-  const findInsertionPoints = (text: string): number[] => {
-    const points: number[] = [];
-    
-    // 查找句号、感叹号、问号后的位置
-    const sentenceEnds = /[。！？.!?]\s*/g;
-    let match;
-    while ((match = sentenceEnds.exec(text)) !== null) {
-      points.push(match.index + match[0].length);
-    }
-    
-    // 查找换行符后的位置
-    const lineBreaks = /\n\s*/g;
-    while ((match = lineBreaks.exec(text)) !== null) {
-      points.push(match.index + match[0].length);
-    }
-    
-    // 如果没有找到合适的点，返回文本末尾
-    if (points.length === 0) {
-      points.push(text.length);
-    }
-    
-    return points.sort((a, b) => a - b);
-  };
-
-  // 生成工具状态的HTML
-  const generateToolStatusHtml = (toolStatus: any) => {
-    const { type, tool_call_id, tool_name, status } = toolStatus;
-    
-    // 获取工具显示名称
-    const getToolDisplayName = (toolName: string): string => {
-      const toolNameMap: Record<string, string> = {
-        'tavily_search': 'Tavily 搜索',
-        'tavily_extract': 'Tavily 网页提取',
-        'serper_search': 'Serper 搜索',
-        'serper_news': 'Serper 新闻',
-        'serper_scrape': 'Serper 网页抓取',
-        'web_search': '网页搜索',
-        'web_scrape': '网页抓取',
-        'file_read': '文件读取',
-        'file_write': '文件写入',
-        'code_execute': '代码执行'
-      };
-      return toolNameMap[toolName] || toolName;
-    };
-    
-    // 获取工具状态文本
-    const getToolStatusText = (status: string): string => {
-      const statusMap: Record<string, string> = {
-        'preparing': '准备中...',
-        'executing': '执行中...',
-        'completed': '已完成',
-        'error': '执行失败'
-      };
-      return statusMap[status] || status;
-    };
-    
-    let statusText = '';
-    let icon = '🔧';
-    
-    if (type === 'tool_call_start' || type === 'tool_call_executing') {
-      statusText = getToolStatusText('executing');
-    } else if (type === 'tool_call_completed') {
-      statusText = getToolStatusText('completed');
-      icon = '✅';
-    } else if (type === 'tool_call_error') {
-      statusText = getToolStatusText('error');
-      icon = '❌';
-    }
-    
-    return `<div class="inline-tool-status-text">${icon} ${getToolDisplayName(tool_name)} - ${statusText}</div>`;
-  };
+  // 注意：移除了 findInsertionPoints 和 generateToolStatusHtml 函数，
+  // 现在使用新的 contentChunks 系统处理工具状态显示
 
   // 处理侧边栏导航历史
   const handleSidebarNavigateHistory = (payload: any) => {

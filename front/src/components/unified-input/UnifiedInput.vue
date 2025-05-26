@@ -198,8 +198,10 @@ const handleSendMessage = () => {
   
   // 清空输入框
   inputValue.value = ''; 
-
+  
+  // 重置输入框高度
   nextTick(() => {
+    autoResize();
     emit('send', messageData); 
   });
 };
@@ -266,6 +268,10 @@ const focus = () => {
 
 const clearInput = () => {
   inputValue.value = '';
+  // 重置输入框高度
+  nextTick(() => {
+    autoResize();
+  });
 };
 
 defineExpose({
@@ -280,6 +286,8 @@ onMounted(() => {
   if (props.autoFocus) {
     nextTick(() => {
       inputRef.value?.focus();
+      // 确保初始高度正确
+      autoResize();
     });
   }
   

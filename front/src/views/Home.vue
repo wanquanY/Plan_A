@@ -391,8 +391,8 @@ onMounted(() => {
         </div>
         
         <!-- 侧边栏 -->
-        <Transition name="sidebar" mode="out-in">
-          <div v-if="sidebarManager.showSidebar.value" class="sidebar-wrapper">
+        <Transition name="sidebar">
+          <div v-if="sidebarManager.showSidebar.value" class="sidebar-wrapper" key="sidebar">
             <AgentSidebar
               :visible="sidebarManager.showSidebar.value"
               :agentResponse="sessionManager.sidebarAgentResponse.value" 
@@ -493,6 +493,7 @@ onMounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: transparent; /* 确保包装器背景透明 */
 }
 
 /* 侧边栏滚动条美化 */
@@ -521,20 +522,34 @@ onMounted(() => {
   scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
 }
 
-/* 侧边栏动画 */
-.sidebar-enter-active,
+/* 侧边栏动画 - 优化版本 */
+.sidebar-enter-active {
+  transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
 .sidebar-leave-active {
-  transition: all 0.3s ease-in-out;
+  transition: transform 0.25s cubic-bezier(0.55, 0.06, 0.68, 0.19);
 }
 
 .sidebar-enter-from {
-  opacity: 0;
-  transform: translateX(20px);
+  transform: translateX(100%);
 }
 
 .sidebar-leave-to {
-  opacity: 0;
-  transform: translateX(20px);
+  transform: translateX(100%);
+}
+
+/* 确保侧边栏包装器始终透明 */
+.sidebar-wrapper {
+  background: transparent !important;
+}
+
+/* 确保侧边栏内容立即可见 */
+.sidebar-enter-active .agent-sidebar,
+.sidebar-leave-active .agent-sidebar {
+  background: #ffffff;
+  opacity: 1;
+  visibility: visible;
 }
 
 @media (max-width: 768px) {

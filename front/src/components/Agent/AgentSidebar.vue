@@ -12,159 +12,16 @@
     </div>
 
     <!-- 聊天消息区域 -->
-    <div class="chat-messages" ref="messagesContainer">
-      <div v-if="messages.length === 0" class="empty-chat">
-        <div class="empty-icon">💬</div>
-        <p>开始与AI助手对话吧</p>
-      </div>
-      
-      <!-- 消息列表 -->
-      <div 
-        v-for="(message, index) in messages" 
-        :key="message.id || index"
-        class="message-wrapper"
-        :class="message.type"
-      >
-        <!-- 用户消息 -->
-        <div v-if="message.type === 'user'" class="message user-message">
-          <div class="message-header">
-            <span class="message-label">我</span>
-            <div class="message-time">
-              {{ formatTime(message.timestamp) }}
-            </div>
-          </div>
-          
-          <!-- 编辑状态 -->
-          <div v-if="message.isEditing" class="message-content editing">
-            <textarea 
-              v-model="message.editContent"
-              class="edit-textarea"
-              :placeholder="message.content"
-              @keydown.ctrl.enter="saveEditMessage(message)"
-              @keydown.esc="cancelEditMessage(message)"
-              ref="editTextarea"
-            ></textarea>
-            <div class="edit-actions">
-              <button @click="saveEditMessage(message)" class="save-btn" :disabled="!message.editContent?.trim()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="20,6 9,17 4,12"></polyline>
-                </svg>
-                保存并重新执行
-              </button>
-              <button @click="saveEditMessageOnly(message)" class="save-only-btn" :disabled="!message.editContent?.trim()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                  <polyline points="17,21 17,13 7,13 7,21"></polyline>
-                  <polyline points="7,3 7,8 15,8"></polyline>
-                </svg>
-                仅保存
-              </button>
-              <button @click="cancelEditMessage(message)" class="cancel-btn">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-                取消
-              </button>
-            </div>
-          </div>
-          
-          <!-- 正常显示状态 -->
-          <div v-else class="message-content">
-            {{ message.content }}
-            
-            <!-- 用户消息操作按钮 -->
-            <div class="message-actions">
-              <button @click="startEditMessage(message)" class="action-btn" title="编辑消息">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                </svg>
-              </button>
-              <button @click="copyMessage(message.content)" class="action-btn" title="复制">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-        
-        <!-- AI消息 -->
-        <div v-else-if="message.type === 'agent'" class="message agent-message">
-          <div class="message-header">
-            <span class="message-label">{{ message.agent?.name || 'AI助手' }}</span>
-            <div class="message-time">
-              {{ formatTime(message.timestamp) }}
-            </div>
-          </div>
-          
-          <div class="message-content">
-            <!-- 渲染混合内容（文本 + 工具状态按流式顺序） -->
-            <div v-if="message.isTyping" class="typing-content">
-              <!-- 如果有contentChunks，使用新的块结构 -->
-              <div v-if="message.contentChunks && message.contentChunks.length > 0">
-                <div v-for="(chunk, index) in message.contentChunks" :key="index" class="content-chunk">
-                  <!-- 文本块 -->
-                  <span v-if="chunk.type === 'text'" v-html="formatTextWithBreaks(chunk.content)"></span>
-                  <!-- 工具状态块 -->
-                  <div v-else-if="chunk.type === 'tool_status'" class="inline-tool-status" :class="chunk.status">
-                    <span class="tool-icon">{{ getToolStatusIcon(chunk.status) }}</span>
-                    <span class="tool-text">{{ getToolDisplayName(chunk.tool_name) }} {{ getToolStatusText(chunk.status) }}</span>
-                  </div>
-                </div>
-              </div>
-              <!-- 兼容旧的消息格式 -->
-              <div v-else>
-                <span v-html="formatTextWithBreaks(message.content)"></span>
-              </div>
-              <span v-if="message.isTyping" class="typing-indicator">|</span>
-            </div>
-            <!-- 完成后显示最终内容 -->
-            <div v-else class="markdown-content">
-              <!-- 如果有contentChunks，使用新的块结构 -->
-              <div v-if="message.contentChunks && message.contentChunks.length > 0">
-                <div v-for="(chunk, index) in message.contentChunks" :key="index" class="content-chunk">
-                  <!-- 文本块 -->
-                  <div v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content)"></div>
-                  <!-- 工具状态块 -->
-                  <div v-else-if="chunk.type === 'tool_status'" class="inline-tool-status completed">
-                    <span class="tool-icon">{{ getToolStatusIcon('completed') }}</span>
-                    <span class="tool-text">{{ getToolDisplayName(chunk.tool_name) }} 完成</span>
-                  </div>
-                </div>
-              </div>
-              <!-- 兼容旧的消息格式（历史消息） -->
-              <div v-else v-html="renderMarkdown(message.content)"></div>
-            </div>
-          </div>
-          
-          <!-- 操作按钮 -->
-          <div v-if="!message.isTyping && message.content" class="message-actions">
-            <button @click="insertToEditor(message.content)" class="action-btn" title="插入文档">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9 10L5 6M5 6L9 2M5 6h11a4 4 0 0 1 4 4v4"></path>
-              </svg>
-            </button>
-            <button @click="copyMessage(message.content)" class="action-btn" title="复制">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-              </svg>
-            </button>
-          </div>
-        </div>
-        
-        <!-- 加载消息 -->
-        <div v-else-if="message.type === 'loading'" class="message loading-message">
-          <div class="loading-indicator">
-            <div class="loading-spinner"></div>
-            <span>正在思考中...</span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <AgentMessageList
+      :messages="messages"
+      @start-edit="startEditMessage"
+      @save-edit="saveEditMessage"
+      @save-edit-only="saveEditMessageOnly"
+      @cancel-edit="cancelEditMessage"
+      @copy-message="copyMessage"
+      @insert-to-editor="insertToEditor"
+      ref="messageListRef"
+    />
 
     <!-- 输入区域 -->
     <div class="input-section">
@@ -186,16 +43,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue';
+import { ref, onMounted, watch, nextTick } from 'vue';
+import { message } from 'ant-design-vue';
 import UnifiedInput from '../unified-input/UnifiedInput.vue';
+import AgentMessageList from './AgentMessageList.vue';
 import MermaidRenderer from '../rendering/MermaidRenderer.vue';
 import CodeBlock from '../rendering/CodeBlock.vue';
 import MarkMap from '../rendering/MarkMap.vue';
-import { markdownToHtml } from '../../services/markdownService';
+import { useAgentChat } from '../../composables/useAgentChat';
+import { useStreamingResponse } from '../../composables/useStreamingResponse';
+// 注意：移除了 useToolCallsStatus，现在使用 contentChunks 系统
+import { parseAgentMessage, extractTextFromInteractionFlow } from '../../utils/messageParser';
 import { renderMermaidDynamically, renderCodeBlocks, renderMarkMaps } from '../../services/renderService';
+import { markdownToHtml } from '../../services/markdownService';
 import chatService from '../../services/chat';
-import { message } from 'ant-design-vue';
-import { useToolCallsStatus } from '../../composables/useToolCallsStatus';
 
 const props = defineProps({
   visible: {
@@ -230,144 +91,52 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message']);
 
-// 状态变量
+// 组件引用
 const unifiedInputRef = ref(null);
-const messagesContainer = ref(null);
-const messages = ref([]);
-const currentAgent = ref(null);
+const messageListRef = ref(null);
 const mermaidRenderer = ref(null);
 const codeBlockRenderer = ref(null);
 const markMapRenderer = ref(null);
-const editTextarea = ref(null);
-const isEditingMessage = ref(false);
-const editingController = ref(null);
 
-// 使用工具调用状态管理
+// 使用composables
 const {
-  toolCalls: toolCallsStatus,
-  handleToolStatus: originalHandleToolStatus,
-  clearToolCalls
-} = useToolCallsStatus();
+  messages,
+  isEditingMessage,
+  editingController,
+  lastProcessedResponse,
+  deduplicateMessages,
+  addUserMessage,
+  addAgentMessage,
+  getCurrentTypingMessage,
+  startEditMessage: startEdit,
+  cancelEditMessage: cancelEdit,
+  getMessageIndexInHistory,
+  clearMessages,
+  copyMessage
+} = useAgentChat();
 
-// 包装工具状态处理函数，添加界面更新逻辑
-const handleToolStatus = (toolStatus) => {
+const {
+  handleToolStatus: handleToolStatusUpdate,
+  handleStreamingText,
+  handleCompleteResponse,
+  getSortedContentChunks
+} = useStreamingResponse();
+
+// 注意：移除了 useToolCallsStatus，工具状态现在通过 contentChunks 管理
+
+// 当前选择的Agent
+const currentAgent = ref(null);
+
+// 处理工具状态更新
+const handleToolStatus = (toolStatus: any) => {
   console.log('AgentSidebar 处理工具状态:', toolStatus);
   
-  // 调用原始的工具状态处理函数
-  originalHandleToolStatus(toolStatus);
-  
-  // 将工具状态添加到当前AI消息的内容块中
+  // 实时添加工具状态到当前正在进行的AI消息中
   nextTick(() => {
-    // 查找当前正在进行的AI消息
-    const currentAgentMsgIndex = messages.value.findIndex(msg => 
-      msg.type === 'agent' && msg.isTyping
-    );
-    
-    if (currentAgentMsgIndex !== -1) {
-      const currentMsg = messages.value[currentAgentMsgIndex];
-      
-      // 初始化contentChunks数组
-      if (!currentMsg.contentChunks) {
-        currentMsg.contentChunks = [];
-      }
-      
-      // 添加工具状态块到内容流中
-      const toolChunk = {
-        type: 'tool_status',
-        tool_name: toolStatus.tool_name,
-        status: toolStatus.status,
-        tool_call_id: toolStatus.tool_call_id,
-        timestamp: new Date()
-      };
-      
-      // 检查是否已经有相同tool_call_id的状态，如果有则更新，否则添加
-      const existingIndex = currentMsg.contentChunks.findIndex(
-        chunk => chunk.type === 'tool_status' && chunk.tool_call_id === toolStatus.tool_call_id
-      );
-      
-      if (existingIndex !== -1) {
-        // 更新现有的工具状态
-        currentMsg.contentChunks[existingIndex] = toolChunk;
-      } else {
-        // 添加新的工具状态
-        currentMsg.contentChunks.push(toolChunk);
-      }
-      
-      console.log('添加工具状态到内容流:', toolChunk);
-      console.log('当前内容块数量:', currentMsg.contentChunks.length);
+    const currentMsg = getCurrentTypingMessage();
+    if (currentMsg) {
+      handleToolStatusUpdate(toolStatus, currentMsg);
     }
-  });
-};
-
-// 检查是否有正在输入的AI消息
-const hasTypingAgentMessage = computed(() => {
-  return messages.value.some(msg => msg.type === 'agent' && msg.isTyping);
-});
-
-// 检查是否有活跃的工具调用
-const hasActiveTools = computed(() => {
-  return toolCallsStatus.value.some(tool => 
-    tool.status === 'preparing' || tool.status === 'executing'
-  );
-});
-
-// 渲染markdown内容
-const renderMarkdown = (content) => {
-  if (!content) return '';
-  
-  try {
-    // 使用markdownService将markdown转换为HTML
-    const htmlContent = markdownToHtml(content);
-    
-    // 延迟渲染特殊组件（在DOM更新后）
-    nextTick(() => {
-      renderSpecialComponents();
-    });
-    
-    return htmlContent;
-  } catch (error) {
-    console.error('渲染markdown失败:', error);
-    // 如果渲染失败，回退到纯文本显示
-    return content.replace(/\n/g, '<br>');
-  }
-};
-
-// 渲染特殊组件（Mermaid图表、代码块、思维导图）
-const renderSpecialComponents = async () => {
-  try {
-    if (!messagesContainer.value) return;
-    
-    // 渲染代码块
-    await renderCodeBlocks(true);
-    
-    // 渲染Mermaid图表
-    setTimeout(() => {
-      renderMermaidDynamically();
-    }, 100);
-    
-    // 渲染思维导图
-    setTimeout(() => {
-      renderMarkMaps();
-    }, 200);
-    
-    console.log('AgentSidebar: 特殊组件渲染完成');
-  } catch (error) {
-    console.error('渲染特殊组件失败:', error);
-  }
-};
-
-// 消息去重函数
-const deduplicateMessages = (messageList) => {
-  const seen = new Set();
-  return messageList.filter(msg => {
-    // 创建消息的唯一标识
-    const key = `${msg.type}_${msg.content}_${msg.timestamp?.getTime() || 0}`;
-    if (seen.has(key)) {
-      console.log('发现重复消息，已过滤:', msg.id || 'no-id');
-      return false;
-    }
-    seen.add(key);
-    return true;
   });
 };
 
@@ -375,18 +144,16 @@ const deduplicateMessages = (messageList) => {
 const initializeFromHistory = (forceUpdate = false) => {
   console.log('=== AgentSidebar: 初始化聊天记录 ===');
   console.log('历史记录数量:', props.conversationHistory?.length || 0);
-  console.log('历史记录内容:', props.conversationHistory);
   console.log('forceUpdate:', forceUpdate);
   console.log('当前isAgentResponding:', props.isAgentResponding);
-  console.log('当前messages数量:', messages.value.length);
   
-  // 如果当前正在响应且不是强制更新，不要重新初始化，避免覆盖正在进行的对话
+  // 如果当前正在响应且不是强制更新，不要重新初始化
   if (props.isAgentResponding && !forceUpdate) {
     console.log('当前正在响应中，跳过历史记录初始化');
     return;
   }
   
-  // 如果有正在进行的AI消息（isTyping为true），且不是强制更新，也跳过初始化
+  // 如果有正在进行的AI消息且不是强制更新，也跳过初始化
   const hasActiveAgentMessage = messages.value.some(msg => msg.type === 'agent' && msg.isTyping);
   if (hasActiveAgentMessage && !forceUpdate) {
     console.log('有正在进行的AI消息，跳过历史记录初始化');
@@ -394,16 +161,14 @@ const initializeFromHistory = (forceUpdate = false) => {
   }
   
   if (!props.conversationHistory || props.conversationHistory.length === 0) {
-    console.log('历史记录为空，强制清空messages');
-    // 历史记录为空时，强制清空messages（无论是否有当前消息）
-      messages.value = [];
-    console.log('已强制清空messages');
+    console.log('历史记录为空，清空messages');
+    clearMessages();
     return;
   }
 
   console.log('开始处理历史记录，条数:', props.conversationHistory.length);
   
-  // 检查当前messages是否已经包含了这些历史记录，避免重复添加
+  // 检查当前messages是否已经包含了这些历史记录
   const currentHistoryIds = new Set();
   messages.value.forEach(msg => {
     if (msg.id && msg.id.startsWith('history_')) {
@@ -413,7 +178,7 @@ const initializeFromHistory = (forceUpdate = false) => {
   
   // 生成新的历史记录ID集合
   const newHistoryIds = new Set();
-  props.conversationHistory.forEach((conversation, index) => {
+  props.conversationHistory.forEach((conversation: any, index: number) => {
     if (conversation.user) {
       newHistoryIds.add(`history_${index}_user`);
     }
@@ -433,9 +198,9 @@ const initializeFromHistory = (forceUpdate = false) => {
   
   console.log('历史记录内容不同，开始重新初始化');
   
-  const newMessages = [];
+  const newMessages: any[] = [];
   
-  props.conversationHistory.forEach((conversation, index) => {
+  props.conversationHistory.forEach((conversation: any, index: number) => {
     console.log(`处理第${index}条历史记录:`, conversation);
     
     // 添加用户消息
@@ -444,65 +209,85 @@ const initializeFromHistory = (forceUpdate = false) => {
         id: `history_${index}_user`,
         type: 'user',
         content: conversation.user,
-        timestamp: new Date(Date.now() - (props.conversationHistory.length - index) * 60000), // 模拟时间间隔
+        timestamp: new Date(Date.now() - (props.conversationHistory.length - index) * 60000),
         agent: currentAgent.value
       };
       newMessages.push(userMsg);
-      console.log('添加用户消息:', userMsg);
     }
     
     // 添加AI消息
     if (conversation.agent) {
+      const parsedMessage = parseAgentMessage(conversation.agent);
+      let displayContent = conversation.agent;
+      let contentChunks: any[] = [];
+      
+      // 如果是新的JSON结构，构建contentChunks
+      if (typeof parsedMessage === 'object' && parsedMessage.type === 'agent_response') {
+        displayContent = extractTextFromInteractionFlow(parsedMessage.interaction_flow);
+        
+        // 将交互流程转换为contentChunks格式
+        contentChunks = parsedMessage.interaction_flow.map((segment: any) => {
+          if (segment.type === 'text') {
+            return {
+              type: 'text',
+              content: segment.content,
+              timestamp: new Date(segment.timestamp)
+            };
+          } else if (segment.type === 'tool_call') {
+            return {
+              type: 'tool_status',
+              tool_name: segment.name,
+              status: segment.status,
+              tool_call_id: segment.id,
+              timestamp: new Date(segment.started_at),
+              result: segment.result,
+              error: segment.error
+            };
+          }
+          return segment;
+        });
+      } else {
+        // 旧格式，创建简单的文本块
+        contentChunks = [{
+          type: 'text',
+          content: displayContent,
+          timestamp: new Date()
+        }];
+      }
+      
       const agentMsg = {
         id: `history_${index}_agent`,
         type: 'agent',
-        content: conversation.agent,
-        timestamp: new Date(Date.now() - (props.conversationHistory.length - index - 0.5) * 60000), // 稍后的时间
+        content: displayContent,
+        originalContent: conversation.agent,
+        timestamp: new Date(Date.now() - (props.conversationHistory.length - index - 0.5) * 60000),
         agent: currentAgent.value,
         isTyping: false,
-        // 为历史消息添加contentChunks结构以保持一致性
-        contentChunks: [{
-          type: 'text',
-          content: conversation.agent,
-          timestamp: new Date()
-        }]
+        contentChunks: contentChunks
       };
       newMessages.push(agentMsg);
-      console.log('添加AI消息:', agentMsg);
     }
   });
   
-  console.log('生成的新消息数组，长度:', newMessages.length);
-  console.log('新消息详情:', newMessages);
-  
-  // 如果是强制更新，直接使用历史消息；否则检查是否有正在进行的消息
+  // 更新消息列表
   if (forceUpdate) {
     messages.value = deduplicateMessages(newMessages);
-    console.log('强制更新使用历史消息，总消息数量:', messages.value.length);
   } else {
-    // 检查是否有正在进行的消息（正在输入但还没完成的）
     const activeMessages = messages.value.filter(msg => 
       msg.type === 'agent' && msg.isTyping && msg.content !== '' && 
-      !msg.id?.startsWith('history_') // 排除历史消息
+      !msg.id?.startsWith('history_')
     );
     
-    console.log('正在进行的消息数量:', activeMessages.length);
-    
-    // 如果有正在进行的消息，合并到历史消息后面；否则直接使用历史消息
     if (activeMessages.length > 0) {
-      // 去重：确保不会重复添加相同的活跃消息
-      const uniqueActiveMessages = activeMessages.filter(activeMsg => 
+      const uniqueActiveMessages = activeMessages.filter((activeMsg: any) => 
         !newMessages.some(newMsg => 
           newMsg.content === activeMsg.content && 
           newMsg.type === activeMsg.type
         )
       );
       messages.value = deduplicateMessages([...newMessages, ...uniqueActiveMessages]);
-      console.log('保留正在进行的消息，总消息数量:', messages.value.length);
     } else {
-      // 没有正在进行的消息，直接使用历史消息（避免重复）
       messages.value = deduplicateMessages(newMessages);
-      console.log('使用历史消息，总消息数量:', messages.value.length);
     }
   }
   
@@ -510,63 +295,19 @@ const initializeFromHistory = (forceUpdate = false) => {
   
   // 滚动到底部
   nextTick(() => {
-    scrollToBottom();
-  });
-};
-
-// 添加测试数据的功能（用于调试）
-const addTestMessages = () => {
-  const testMessages = [
-    {
-      id: 'test_1_user',
-      type: 'user',
-      content: '你好，请帮我写一篇关于人工智能的文章',
-      timestamp: new Date(Date.now() - 300000), // 5分钟前
-      agent: { name: '小助理', avatar_url: 'https://placehold.co/32x32?text=AI' }
-    },
-    {
-      id: 'test_1_agent',
-      type: 'agent',
-      content: '您好！我很乐意帮您写一篇关于人工智能的文章。以下是一篇简洁而全面的人工智能介绍：\n\n# 人工智能：塑造未来的技术\n\n人工智能（AI）已经从科幻概念发展为现实中的强大技术。它正在改变我们的生活方式、工作方式以及与世界互动的方式。\n\n## 什么是人工智能？\n\n人工智能是指机器模拟人类智能的能力，包括学习、推理、感知和决策制定。',
-      timestamp: new Date(Date.now() - 280000), // 4分40秒前  
-      agent: { name: '小助理', avatar_url: 'https://placehold.co/32x32?text=AI' },
-      isTyping: false
-    },
-    {
-      id: 'test_2_user',
-      type: 'user',
-      content: '请继续完善这篇文章，添加更多关于机器学习的内容',
-      timestamp: new Date(Date.now() - 120000), // 2分钟前
-      agent: { name: '小助理', avatar_url: 'https://placehold.co/32x32?text=AI' }
-    },
-    {
-      id: 'test_2_agent',
-      type: 'agent',
-      content: '当然！让我为您继续完善这篇文章，特别是机器学习部分：\n\n## 机器学习：AI的核心驱动力\n\n机器学习是人工智能的一个重要分支，它使计算机能够从数据中学习并做出预测或决策，而无需明确编程。\n\n### 主要类型：\n\n1. **监督学习**：使用标记数据训练模型\n2. **无监督学习**：从未标记数据中发现模式\n3. **强化学习**：通过与环境交互学习最优策略',
-      timestamp: new Date(Date.now() - 60000), // 1分钟前
-      agent: { name: '小助理', avatar_url: 'https://placehold.co/32x32?text=AI' },
-      isTyping: false
-    }
-  ];
-  
-  messages.value = testMessages;
-  console.log('添加了测试消息，数量:', messages.value.length);
-  
-  nextTick(() => {
-    scrollToBottom();
+    messageListRef.value?.scrollToBottom();
   });
 };
 
 // 发送消息
-const handleSendMessage = (messageData) => {
-  // 清空之前的工具状态
-  clearToolCalls();
+const handleSendMessage = (messageData: any) => {
+  // 注意：不再需要清空工具状态，因为现在使用 contentChunks 系统
   
-  // 检查是否已经有相同内容的用户消息（避免重复发送）
+  // 检查是否已经有相同内容的用户消息
   const hasSameUserMessage = messages.value.some(msg => 
     msg.type === 'user' && 
     msg.content === messageData.content &&
-    Math.abs(msg.timestamp?.getTime() - Date.now()) < 5000 // 5秒内
+    Math.abs(msg.timestamp?.getTime() - Date.now()) < 5000
   );
   
   if (hasSameUserMessage) {
@@ -574,40 +315,21 @@ const handleSendMessage = (messageData) => {
     return;
   }
   
-  // 添加用户消息到聊天记录
-  const currentTime = Date.now();
-  const userMessage = {
-    id: `user_${currentTime}_${Math.random().toString(36).substr(2, 9)}`,
-    type: 'user',
-    content: messageData.content,
-    timestamp: new Date(),
-    agent: messageData.agent
-  };
-  messages.value.push(userMessage);
-
-  // 添加AI消息（初始为空，用于显示工具状态和流式内容）
-  const agentMessage = {
-    id: `agent_${currentTime + 1}_${Math.random().toString(36).substr(2, 9)}`,
-    type: 'agent',
-    content: '',
-    timestamp: new Date(),
-    agent: messageData.agent,
-    isTyping: true,
-    contentChunks: []
-  };
-  messages.value.push(agentMessage);
+  // 添加用户消息和AI消息
+  addUserMessage(messageData.content, messageData.agent);
+  addAgentMessage(messageData.agent);
 
   // 滚动到底部
   nextTick(() => {
-    scrollToBottom();
+    messageListRef.value?.scrollToBottom();
   });
 
   // 发送给父组件
-  emit('send', messageData); 
+  emit('send', messageData);
 };
 
 // 选择Agent
-const handleSelectAgent = (agent) => {
+const handleSelectAgent = (agent: any) => {
   currentAgent.value = agent;
   emit('select-agent', agent);
 };
@@ -618,59 +340,22 @@ const handleUploadFile = () => {
 };
 
 // 插入到编辑器
-const insertToEditor = (content) => {
+const insertToEditor = (content: string) => {
   emit('request-insert', content);
 };
 
-// 复制消息
-const copyMessage = async (content) => {
-  try {
-    await navigator.clipboard.writeText(content);
-    console.log('消息已复制到剪贴板');
-  } catch (err) {
-    console.error('复制失败:', err);
-  }
-};
-
 // 开始编辑消息
-const startEditMessage = (messageObj) => {
-  if (isEditingMessage.value) {
-    message.warning('请先完成当前消息的编辑');
-    return;
-  }
-  
-  console.log('开始编辑消息:', messageObj);
-  messageObj.isEditing = true;
-  messageObj.editContent = messageObj.content;
-  isEditingMessage.value = true;
-  
-  // 聚焦到编辑框
-  nextTick(() => {
-    const textareas = document.querySelectorAll('.edit-textarea');
-    if (textareas.length > 0) {
-      const textarea = textareas[textareas.length - 1];
-      textarea.focus();
-      textarea.select();
-    }
-  });
+const startEditMessage = (messageObj: any) => {
+  startEdit(messageObj);
 };
 
 // 取消编辑消息
-const cancelEditMessage = (messageObj) => {
-  console.log('取消编辑消息:', messageObj);
-  messageObj.isEditing = false;
-  messageObj.editContent = '';
-  isEditingMessage.value = false;
-  
-  // 如果有正在进行的编辑请求，取消它
-  if (editingController.value) {
-    editingController.value.abort();
-    editingController.value = null;
-  }
+const cancelEditMessage = (messageObj: any) => {
+  cancelEdit(messageObj);
 };
 
 // 保存编辑消息并重新执行
-const saveEditMessage = async (messageObj) => {
+const saveEditMessage = async (messageObj: any) => {
   if (!messageObj.editContent?.trim()) {
     message.warning('请输入消息内容');
     return;
@@ -682,15 +367,9 @@ const saveEditMessage = async (messageObj) => {
   }
   
   try {
-    console.log('保存并重新执行消息:', {
-      messageId: messageObj.id,
-      originalContent: messageObj.content,
-      newContent: messageObj.editContent,
-      conversationId: props.conversationId
-    });
+    console.log('保存并重新执行消息:', messageObj);
     
-    // 先找到消息在历史记录中的索引（使用原始内容）
-    const messageIndex = getMessageIndexInHistory(messageObj);
+    const messageIndex = getMessageIndexInHistoryLocal(messageObj);
     if (messageIndex === -1) {
       message.error('无法找到消息在历史记录中的位置');
       return;
@@ -717,19 +396,11 @@ const saveEditMessage = async (messageObj) => {
     });
     
     // 添加AI消息用于显示工具状态和流式内容
-    const agentMessage = {
-      id: Date.now() + '_edit_agent',
-      type: 'agent',
-      content: '',
-      timestamp: new Date(),
-      agent: currentAgent.value,
-      isTyping: true
-    };
-    messages.value.push(agentMessage);
+    const agentMessage = addAgentMessage(currentAgent.value);
     
     // 滚动到底部
     nextTick(() => {
-      scrollToBottom();
+      messageListRef.value?.scrollToBottom();
     });
     
     // 调用编辑接口（流式响应）
@@ -743,16 +414,13 @@ const saveEditMessage = async (messageObj) => {
     };
     
     console.log('发送编辑请求:', editRequest);
-    console.log('会话ID:', props.conversationId);
     
-    // 标记正在编辑重新执行，避免与普通响应冲突
     let isEditingRerun = true;
     
     editingController.value = await chatService.editMessage(
       props.conversationId,
       editRequest,
-      (response, isComplete, conversationId, toolStatus) => {
-        // 只有在编辑重新执行时才处理这里的响应
+      (response: any, isComplete: boolean, conversationId: any, toolStatus: any) => {
         if (!isEditingRerun) return;
         
         // 处理工具状态更新
@@ -763,39 +431,24 @@ const saveEditMessage = async (messageObj) => {
         // 解析响应内容
         let content = '';
         if (response && response.data && response.data.data) {
-          // 优先使用full_content，如果没有则使用message.content
           content = response.data.data.full_content || 
                     (response.data.data.message && response.data.data.message.content) || '';
         } else if (typeof response === 'string') {
-          // 兼容处理：如果直接是字符串
           content = response;
         }
         
-        // 查找是否已有正在编辑的AI消息
-        const existingEditAgentMsgIndex = messages.value.findIndex(msg => 
-          msg.type === 'agent' && msg.isTyping && msg.id && msg.id.includes('edit_')
-        );
-        
-        if (existingEditAgentMsgIndex !== -1) {
-          // 更新现有的编辑消息
-          messages.value[existingEditAgentMsgIndex].content = content;
-          messages.value[existingEditAgentMsgIndex].isTyping = !isComplete;
-        } else {
-          // 添加新的编辑AI消息，使用特殊ID标识
-          const agentMessage = {
-            id: Date.now() + '_edit_agent',
-            type: 'agent',
-            content: content,
-            timestamp: new Date(),
-            agent: currentAgent.value,
-            isTyping: !isComplete
-          };
-          messages.value.push(agentMessage);
+        // 查找编辑的AI消息并更新
+        const editAgentMsg = getCurrentTypingMessage();
+        if (editAgentMsg) {
+          if (!handleCompleteResponse(content, editAgentMsg)) {
+            handleStreamingText(content, editAgentMsg);
+          }
+          editAgentMsg.isTyping = !isComplete;
         }
         
         // 滚动到底部
         nextTick(() => {
-          scrollToBottom();
+          messageListRef.value?.scrollToBottom();
           if (isComplete) {
             setTimeout(() => {
               renderSpecialComponents();
@@ -805,26 +458,24 @@ const saveEditMessage = async (messageObj) => {
         
         if (isComplete) {
           editingController.value = null;
-          isEditingRerun = false; // 标记编辑重新执行完成
+          isEditingRerun = false;
           
-          // 编辑重新执行完成后，通知父组件重新获取会话历史记录
-          // 这样可以获得最新的消息ID，为下次编辑做准备
           setTimeout(() => {
             console.log('编辑重新执行完成，请求刷新会话历史记录');
             emit('edit-message', {
               messageIndex,
               newContent: messageObj.content,
               rerun: true,
-              refreshHistory: true // 新增标志，表示需要刷新历史记录
+              refreshHistory: true
             });
-          }, 500); // 延迟500ms，确保后端数据已更新
+          }, 500);
         }
       }
     );
     
     message.success('消息编辑成功，正在重新执行...');
     
-  } catch (error) {
+  } catch (error: any) {
     console.error('编辑消息失败:', error);
     message.error('编辑消息失败: ' + (error.message || '未知错误'));
     
@@ -834,8 +485,8 @@ const saveEditMessage = async (messageObj) => {
   }
 };
 
-// 仅保存编辑消息（不重新执行）
-const saveEditMessageOnly = async (messageObj) => {
+// 仅保存编辑消息
+const saveEditMessageOnly = async (messageObj: any) => {
   if (!messageObj.editContent?.trim()) {
     message.warning('请输入消息内容');
     return;
@@ -855,7 +506,7 @@ const saveEditMessageOnly = async (messageObj) => {
     });
     
     // 找到消息在历史记录中的索引
-    const messageIndex = getMessageIndexInHistory(messageObj);
+    const messageIndex = getMessageIndexInHistoryLocal(messageObj);
     if (messageIndex === -1) {
       message.error('无法找到消息在历史记录中的位置');
       return;
@@ -897,8 +548,8 @@ const saveEditMessageOnly = async (messageObj) => {
   }
 };
 
-// 获取消息在历史记录中的索引
-const getMessageIndexInHistory = (messageObj) => {
+// 获取消息在历史记录中的索引（本地实现，因为需要访问props）
+const getMessageIndexInHistoryLocal = (messageObj) => {
   console.log('=== 开始计算消息ID ===');
   console.log('要编辑的消息内容:', messageObj.content);
   console.log('当前会话历史:', props.conversationHistory);
@@ -978,9 +629,8 @@ const formatTime = (timestamp) => {
 
 // 滚动到底部
 const scrollToBottom = () => {
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
-  }
+  // 使用 messageListRef 来滚动
+  messageListRef.value?.scrollToBottom();
 };
 
 // 关闭侧边栏
@@ -988,10 +638,53 @@ const close = () => {
   emit('close');
 };
 
+// 渲染特殊组件（Mermaid、代码块、思维导图等）
+const renderSpecialComponents = () => {
+  nextTick(() => {
+    try {
+      // 渲染 Mermaid 图表
+      renderMermaidDynamically();
+      
+      // 渲染代码块
+      renderCodeBlocks();
+      
+      // 渲染思维导图
+      renderMarkMaps();
+      
+      console.log('特殊组件渲染完成');
+    } catch (error) {
+      console.error('渲染特殊组件失败:', error);
+    }
+  });
+};
+
+// 渲染markdown内容
+const renderMarkdown = (content) => {
+  if (!content) return '';
+  
+  try {
+    // 使用markdownService渲染markdown
+    const htmlContent = markdownToHtml(content);
+    return htmlContent;
+  } catch (error) {
+    console.error('渲染markdown失败:', error);
+    // 如果渲染失败，回退到纯文本显示
+    return content.replace(/\n/g, '<br>');
+  }
+};
+
+// 注意：lastProcessedResponse 已在 composable 中定义，这里不需要重复声明
+
 // 监听AI响应变化
 watch(() => props.agentResponse, (newResponse) => {
   if (newResponse) {
     console.log('收到新的agentResponse:', newResponse.length, '字符');
+    
+    // 检查是否与上次处理的内容相同，避免重复处理
+    if (newResponse === lastProcessedResponse.value) {
+      console.log('内容与上次相同，跳过重复处理');
+      return;
+    }
     
     // 检查是否有正在进行的编辑重新执行
     const hasEditingMessage = messages.value.some(msg => 
@@ -1004,6 +697,63 @@ watch(() => props.agentResponse, (newResponse) => {
       return;
     }
     
+    // 尝试解析agentResponse，检查是否是JSON结构
+    let parsedResponse = null;
+    let displayContent = newResponse;
+    let contentChunks = [];
+    
+    try {
+      // 尝试解析JSON结构
+      parsedResponse = parseAgentMessage(newResponse);
+      
+      if (typeof parsedResponse === 'object' && parsedResponse.type === 'agent_response') {
+        console.log('检测到JSON结构的agent响应，interaction_flow长度:', parsedResponse.interaction_flow?.length || 0);
+        
+        // 提取纯文本内容用于显示
+        displayContent = extractTextFromInteractionFlow(parsedResponse.interaction_flow);
+        
+        // 将interaction_flow转换为contentChunks格式，保持时间顺序
+        contentChunks = parsedResponse.interaction_flow.map(segment => {
+          if (segment.type === 'text') {
+            return {
+              type: 'text',
+              content: segment.content,
+              timestamp: new Date(segment.timestamp)
+            };
+          } else if (segment.type === 'tool_call') {
+            return {
+              type: 'tool_status',
+              tool_name: segment.name,
+              status: segment.status,
+              tool_call_id: segment.id,
+              timestamp: new Date(segment.started_at),
+              result: segment.result,
+              error: segment.error
+            };
+          }
+          return segment;
+        });
+        
+        console.log('转换后的contentChunks:', contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
+      } else {
+        // 不是JSON结构，使用原始内容
+        console.log('不是JSON结构，使用原始内容处理');
+        contentChunks = [{
+          type: 'text',
+          content: newResponse,
+          timestamp: new Date()
+        }];
+      }
+    } catch (error) {
+      console.log('解析agentResponse失败，使用原始内容:', error.message);
+      // 解析失败，使用原始内容
+      contentChunks = [{
+        type: 'text',
+        content: newResponse,
+        timestamp: new Date()
+      }];
+    }
+    
     // 查找现有的正在进行的AI消息（排除历史消息和编辑消息）
     const existingAgentMsgIndex = messages.value.findIndex(msg => 
       msg.type === 'agent' && 
@@ -1014,44 +764,83 @@ watch(() => props.agentResponse, (newResponse) => {
     if (existingAgentMsgIndex !== -1) {
       // 更新现有消息
       const currentMsg = messages.value[existingAgentMsgIndex];
-      currentMsg.content = newResponse;
+      
+      // 更新消息内容
+      currentMsg.content = displayContent;
+      currentMsg.originalContent = newResponse; // 保存原始内容
       currentMsg.isTyping = props.isAgentResponding;
       
-      // 初始化contentChunks数组
-      if (!currentMsg.contentChunks) {
-        currentMsg.contentChunks = [];
-      }
-      
-      // 更新或添加文本内容块
-      const textChunkIndex = currentMsg.contentChunks.findIndex(chunk => chunk.type === 'text');
-      const textChunk = {
-        type: 'text',
-        content: newResponse,
-        timestamp: new Date()
-      };
-      
-      if (textChunkIndex !== -1) {
-        // 更新现有的文本块
-        currentMsg.contentChunks[textChunkIndex] = textChunk;
+      // 如果是JSON结构响应，说明是最终的完整响应，直接替换
+      if (typeof parsedResponse === 'object' && parsedResponse.type === 'agent_response') {
+        console.log('收到最终JSON结构响应，替换为完整的interaction_flow');
+        currentMsg.contentChunks = contentChunks;
       } else {
-        // 如果没有文本块，添加到开头（工具状态通常在文本前面）
-        const toolStatusCount = currentMsg.contentChunks.filter(chunk => chunk.type === 'tool_status').length;
-        if (toolStatusCount > 0) {
-          // 如果有工具状态，文本块插入到最后
-          currentMsg.contentChunks.push(textChunk);
-        } else {
-          // 如果没有工具状态，文本块放在开头
-          currentMsg.contentChunks.unshift(textChunk);
+        // 对于非JSON结构响应（流式文本），智能分段处理
+        if (!currentMsg.contentChunks) {
+          currentMsg.contentChunks = [];
+          currentMsg.lastTextLength = 0;
+        }
+        
+        // 更新消息的完整内容
+        currentMsg.content = newResponse;
+        
+        // 检查是否有新的文本内容需要处理
+        const currentTextLength = newResponse.length;
+        
+        // 如果文本长度增加了，需要处理新增的内容
+        if (currentTextLength > currentMsg.lastTextLength) {
+          const newTextContent = newResponse.substring(currentMsg.lastTextLength);
+          
+          // 检查是否有工具状态块
+          const hasToolStatus = currentMsg.contentChunks.some(chunk => chunk.type === 'tool_status');
+          
+          if (hasToolStatus) {
+            // 如果有工具状态，说明需要创建新的文本段
+            if (newTextContent.trim()) {
+              const textChunk = {
+                type: 'text',
+                content: newTextContent,
+                timestamp: new Date(), // 使用当前时间，确保在工具状态之后
+                segmentIndex: currentMsg.contentChunks.filter(c => c.type === 'text').length
+              };
+              currentMsg.contentChunks.push(textChunk);
+              console.log('工具调用后创建新文本段:', newTextContent.substring(0, 50));
+            }
+            currentMsg.lastTextLength = currentTextLength;
+          } else {
+            // 没有工具状态，更新或创建第一个文本块
+            let firstTextChunk = currentMsg.contentChunks.find(chunk => chunk.type === 'text');
+            
+            if (firstTextChunk) {
+              // 更新现有文本块
+              firstTextChunk.content = newResponse;
+            } else {
+              // 创建第一个文本块
+              firstTextChunk = {
+                type: 'text',
+                content: newResponse,
+                timestamp: currentMsg.baseTimestamp || currentMsg.timestamp || new Date(),
+                segmentIndex: 0
+              };
+              currentMsg.contentChunks.push(firstTextChunk);
+            }
+            currentMsg.lastTextLength = currentTextLength;
+          }
         }
       }
       
       console.log('更新现有AI消息，索引:', existingAgentMsgIndex);
-      console.log('当前内容块:', currentMsg.contentChunks);
+      console.log('显示内容长度:', displayContent.length);
+      console.log('内容块数量:', currentMsg.contentChunks.length);
+      console.log('内容块详情:', currentMsg.contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
+      
+      // 更新最后处理的响应内容
+      lastProcessedResponse.value = newResponse;
     } else {
       // 检查是否已经有相同内容的消息，避免重复添加
       const hasSameContent = messages.value.some(msg => 
         msg.type === 'agent' && 
-        msg.content === newResponse && 
+        msg.content === displayContent && 
         !msg.isTyping &&
         !msg.id?.startsWith('history_') // 排除历史消息
       );
@@ -1069,18 +858,20 @@ watch(() => props.agentResponse, (newResponse) => {
         const agentMessage = {
           id: `agent_${currentTime}_${Math.random().toString(36).substr(2, 9)}`, // 更唯一的ID
           type: 'agent',
-          content: newResponse,
+          content: displayContent,
+          originalContent: newResponse, // 保存原始内容
           timestamp: new Date(),
           agent: currentAgent.value,
           isTyping: props.isAgentResponding,
-          contentChunks: [{
-            type: 'text',
-            content: newResponse,
-            timestamp: new Date()
-          }]
+          contentChunks: contentChunks
         };
         messages.value.push(agentMessage);
         console.log('添加新的AI消息，ID:', agentMessage.id);
+        console.log('显示内容长度:', displayContent.length);
+        console.log('内容块数量:', contentChunks.length);
+        
+        // 更新最后处理的响应内容
+        lastProcessedResponse.value = newResponse;
       } else {
         console.log('检测到重复内容或时间过近，跳过添加');
       }
@@ -1109,6 +900,9 @@ watch(() => props.isAgentResponding, (isResponding) => {
     if (typingMsgIndex !== -1) {
       messages.value[typingMsgIndex].isTyping = false;
     }
+    
+    // 响应完成后，清理最后处理的响应内容，为下次对话做准备
+    lastProcessedResponse.value = '';
     
     // 响应完成后，延迟触发特殊组件渲染
     nextTick(() => {
@@ -1238,107 +1032,25 @@ onMounted(() => {
 
 // 暴露方法给父组件
 defineExpose({
-  handleToolStatus,
-  clearToolCalls
+  handleToolStatus
 });
 
 // 添加调试信息
 console.log('AgentSidebar defineExpose:', {
-  handleToolStatus: typeof handleToolStatus,
-  clearToolCalls: typeof clearToolCalls
+  handleToolStatus: typeof handleToolStatus
 });
 
-// 格式化文本，保持换行
-const formatTextWithBreaks = (text) => {
-  if (!text) return '';
-  return text.replace(/\n/g, '<br>');
-};
+// 注意：formatTextWithBreaks、getToolStatusIcon、getToolDisplayName 函数已移除，
+// 这些功能现在在子组件中实现
 
-// 格式化内容，包括工具调用状态
-const formatContentWithToolStatus = (content, isTyping) => {
-  let result = '';
-  
-  // 首先处理文本内容（这是主要内容）
-  if (content) {
-    if (isTyping) {
-      // 打字时保持简单格式
-      result = formatTextWithBreaks(content);
-    } else {
-      // 完成时使用markdown渲染
-      result = renderMarkdown(content);
-    }
-  }
-  
-  // 如果有工具调用状态，在内容后面添加（但不覆盖内容）
-  if (toolCallsStatus.value.length > 0) {
-    const toolStatusHtml = generateToolStatusHtml();
-    
-    if (result) {
-      // 如果有文本内容，在后面添加工具状态
-      result += '\n\n' + toolStatusHtml;
-    } else {
-      // 如果没有文本内容，只显示工具状态
-      result = toolStatusHtml;
-    }
-  }
-  
-  return result || content || ''; // 确保至少返回原始内容
-};
+// 注意：getToolStatusText 函数已移除，现在在子组件中实现
 
-// 生成工具状态HTML
-const generateToolStatusHtml = () => {
-  if (!toolCallsStatus.value.length) return '';
-  
-  let html = '<div class="tool-status-line">';
-  
-  toolCallsStatus.value.forEach((tool, index) => {
-    const statusIcon = getToolStatusIcon(tool.status);
-    const toolDisplayName = getToolDisplayName(tool.name);
-    
-    if (index > 0) html += ' • ';
-    
-    html += `<span class="tool-item ${tool.status}">${statusIcon} ${toolDisplayName}</span>`;
-  });
-  
-  html += '</div>';
-  return html;
-};
+// 注意：getSortedContentChunks 已在 useStreamingResponse composable 中定义
 
-// 获取工具状态图标
-const getToolStatusIcon = (status) => {
-  const icons = {
-    'preparing': '🔧',
-    'executing': '⚡',
-    'completed': '✅',
-    'error': '❌'
-  };
-  return icons[status] || '🔧';
-};
+// 注意：formatContentWithToolStatus 和 generateToolStatusHtml 函数已移除，
+// 现在使用新的组件结构来处理工具状态显示
 
-// 获取工具状态文本
-const getToolStatusText = (status) => {
-  const texts = {
-    'preparing': '准备中...',
-    'executing': '执行中...',
-    'completed': '完成',
-    'error': '失败'
-  };
-  return texts[status] || status;
-};
 
-// 获取工具显示名称
-const getToolDisplayName = (toolName) => {
-  const nameMap = {
-    'tavily_search': 'Tavily 搜索',
-    'tavily_extract': 'Tavily 提取',
-    'serper_search': 'Serper 搜索',
-    'serper_news': 'Serper 新闻',
-    'serper_scrape': 'Serper 抓取',
-    'web_search': '网页搜索',
-    'web_scrape': '网页抓取'
-  };
-  return nameMap[toolName] || toolName;
-};
 </script>
 
 <style scoped>
@@ -1351,6 +1063,9 @@ const getToolDisplayName = (toolName) => {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  /* 确保组件立即显示，避免闪烁 */
+  opacity: 1;
+  visibility: visible;
 }
 
 .sidebar-header {
@@ -1970,214 +1685,179 @@ const getToolDisplayName = (toolName) => {
   margin-left: 0.5em;
 }
 
-/* 内联工具状态样式 */
-.inline-tool-calls {
-  margin: 8px 0;
-  padding: 0;
-}
-
-.inline-tool-call {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 4px 8px 4px 0;
-  padding: 6px 10px;
-  border-radius: 16px;
-  font-size: 12px;
-  font-weight: 500;
-  transition: all 0.3s ease;
-  border: 1px solid transparent;
-}
-
-.inline-tool-call.preparing {
-  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-  color: #92400e;
-  border-color: #f59e0b;
-}
-
-.inline-tool-call.executing {
-  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-  color: #1e40af;
-  border-color: #3b82f6;
-  animation: pulse-glow 2s ease-in-out infinite;
-}
-
-.inline-tool-call.completed {
-  background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-  color: #065f46;
-  border-color: #10b981;
-}
-
-.inline-tool-call.error {
-  background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
-  color: #991b1b;
-  border-color: #ef4444;
-}
-
-.inline-tool-call .tool-icon {
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-}
-
-.inline-tool-call.executing .tool-icon {
-  animation: rotate 2s linear infinite;
-}
-
-.inline-tool-call .tool-name {
-  font-weight: 600;
-  letter-spacing: 0.025em;
-}
-
-.inline-tool-call .tool-status {
-  font-size: 11px;
-  opacity: 0.8;
-  font-weight: 400;
-}
-
-@keyframes pulse-glow {
-  0%, 100% {
-    box-shadow: 0 0 5px rgba(59, 130, 246, 0.3);
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
-    transform: scale(1.02);
-  }
-}
-
-@keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* 确保内联工具状态在markdown内容中正确显示 */
-.markdown-content .inline-tool-calls,
-.typing-content .inline-tool-calls {
-  margin: 8px 0;
-  display: block;
-}
-
-.markdown-content .inline-tool-call,
-.typing-content .inline-tool-call {
-  display: inline-flex;
-  margin: 4px 8px 4px 0;
-}
-
-/* 简洁的工具状态样式 */
-.tool-status-line {
-  margin: 8px 0;
-  padding: 6px 12px;
-  background: rgba(99, 102, 241, 0.05);
-  border-left: 3px solid #6366f1;
-  border-radius: 4px;
-  font-size: 13px;
-  color: #6b7280;
-  font-style: italic;
-}
-
-.tool-item {
-  font-weight: 500;
-  transition: color 0.3s ease;
-}
-
-.tool-item.preparing {
-  color: #f59e0b;
-}
-
-.tool-item.executing {
-  color: #3b82f6;
-  animation: pulse-text 2s ease-in-out infinite;
-}
-
-.tool-item.completed {
-  color: #10b981;
-}
-
-.tool-item.error {
-  color: #ef4444;
-}
-
-@keyframes pulse-text {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
-/* 确保工具状态在markdown内容中正确显示 */
-.markdown-content .tool-status-line,
-.typing-content .tool-status-line {
-  margin: 8px 0;
-  display: block;
-}
+/* 注意：移除了旧的内联工具状态样式，现在使用 AgentToolCall 组件 */
 
 /* 内容块样式 */
 .content-chunk {
-  display: inline-block;
+  display: block;
   margin: 0;
 }
 
-/* 内联工具状态样式 */
-.inline-tool-status {
-  display: inline-flex;
+.content-chunk:not(:last-child) {
+  margin-bottom: 4px;
+}
+
+/* 文本内容块样式 */
+.content-chunk span {
+  display: inline;
+  line-height: 1.5;
+}
+
+/* 工具状态内容块样式 */
+.content-chunk .tool-call-card {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+/* 注意：移除了内联工具状态样式，现在使用 AgentToolCall 组件 */
+
+/* 工具卡片样式 - 简约版 */
+.tool-call-card {
+  background: transparent;
+  border: none;
+  border-left: 3px solid #e5e7eb;
+  border-radius: 0;
+  margin: 8px 0;
+  padding: 8px 12px;
+  transition: all 0.2s ease;
+  clear: both;
+  display: block;
+}
+
+.tool-call-card:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.tool-call-card.executing {
+  border-left-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.03);
+}
+
+.tool-call-card.completed {
+  border-left-color: #10b981;
+  background: rgba(16, 185, 129, 0.03);
+}
+
+.tool-call-card.error {
+  border-left-color: #ef4444;
+  background: rgba(239, 68, 68, 0.03);
+}
+
+.tool-call-header {
+  display: flex;
   align-items: center;
-  gap: 4px;
-  margin: 0 8px 0 0;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.tool-call-header .tool-icon {
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  min-width: 16px;
+  opacity: 0.7;
+}
+
+.tool-call-header .tool-name {
   font-weight: 500;
-  vertical-align: middle;
-  transition: all 0.3s ease;
+  color: #6b7280;
+  font-size: 13px;
 }
 
-.inline-tool-status.preparing {
-  background: rgba(245, 158, 11, 0.1);
-  color: #f59e0b;
-  border: 1px solid rgba(245, 158, 11, 0.3);
-}
-
-.inline-tool-status.executing {
-  background: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  animation: pulse-border 2s ease-in-out infinite;
-}
-
-.inline-tool-status.completed {
-  background: rgba(16, 185, 129, 0.1);
-  color: #10b981;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-.inline-tool-status.error {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.inline-tool-status .tool-icon {
+.tool-call-header .tool-status-text {
   font-size: 12px;
-  line-height: 1;
+  color: #9ca3af;
+  margin-left: auto;
+  margin-right: 8px;
 }
 
-.inline-tool-status.executing .tool-icon {
+.tool-call-header .expand-icon {
+  font-size: 14px;
+  color: #9ca3af;
+  transition: transform 0.2s ease;
+  cursor: pointer;
+  margin-left: auto;
+  font-weight: bold;
+}
+
+.tool-call-header .expand-icon.expanded {
+  transform: rotate(90deg);
+}
+
+.tool-result {
+  margin-top: 8px;
+  padding: 8px 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tool-result pre {
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #6b7280;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  background: #f8fafc;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+}
+
+.tool-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 4px;
+}
+
+.tool-error .error-text {
+  font-size: 12px;
+  color: #dc2626;
+  font-weight: 400;
+}
+
+.tool-call-card.executing .tool-icon {
   animation: rotate 2s linear infinite;
 }
 
-.inline-tool-status .tool-text {
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
+/* 搜索结果样式 */
+.search-results {
+  margin: 0;
 }
 
-@keyframes pulse-border {
-  0%, 100% {
-    border-color: rgba(59, 130, 246, 0.3);
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.2);
-  }
-  50% {
-    border-color: rgba(59, 130, 246, 0.6);
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
-  }
+.search-item {
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.search-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.search-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #2563eb;
+  text-decoration: none;
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+
+.search-title:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.search-snippet {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+  margin: 0;
 }
 </style> 

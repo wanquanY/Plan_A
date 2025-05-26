@@ -2,6 +2,7 @@ from typing import Dict, List, Any, AsyncGenerator, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
+from datetime import datetime
 
 from backend.schemas.chat import Message, ChatRequest, ChatCompletionResponse
 from backend.utils.logging import api_logger
@@ -16,6 +17,130 @@ from backend.services.chat_session_manager import chat_session_manager
 
 class ChatResponseService:
     """聊天响应服务"""
+    
+    @staticmethod
+    async def _process_tool_calls_with_interaction_flow_non_stream(
+        content: str,
+        tool_calls: List[Any],
+        messages: List[Dict[str, Any]],
+        agent,
+        use_model: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        tools: List[Dict[str, Any]],
+        has_tools: bool,
+        conversation_id: int,
+        db: Optional[AsyncSession] = None,
+        message_id: Optional[int] = None,
+        interaction_flow: List[Dict[str, Any]] = None
+    ) -> str:
+        """
+        处理工具调用并记录到交互流程中（非流式版本）
+        """
+        if interaction_flow is None:
+            interaction_flow = []
+        
+        # 如果有初始内容，先记录到交互流程
+        if content and content.strip():
+            interaction_flow.append({
+                "type": "text",
+                "content": content,
+                "timestamp": datetime.now().isoformat()
+            })
+        
+        # 处理工具调用
+        if tool_calls:
+            api_logger.info(f"检测到工具调用请求: {len(tool_calls)} 个工具调用")
+            
+            # 处理工具调用
+            tool_results, tool_calls_data = await chat_tool_handler.handle_tool_calls(
+                tool_calls, 
+                agent, 
+                db, 
+                conversation_id,
+                message_id=message_id
+            )
+            
+            # 记录工具调用到交互流程
+            for i, tool_call in enumerate(tool_calls):
+                tool_call_record = {
+                    "type": "tool_call",
+                    "id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "arguments": json.loads(tool_call.function.arguments),
+                    "status": "completed",
+                    "started_at": datetime.now().isoformat(),
+                    "completed_at": datetime.now().isoformat()
+                }
+                
+                # 添加结果
+                if i < len(tool_results):
+                    try:
+                        tool_call_record["result"] = json.loads(tool_results[i]["content"])
+                    except (json.JSONDecodeError, KeyError):
+                        tool_call_record["result"] = tool_results[i]["content"]
+                
+                interaction_flow.append(tool_call_record)
+            
+            # 将工具调用和结果添加到消息列表
+            messages.append({
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    } for tc in tool_calls
+                ]
+            })
+            
+            # 添加工具结果
+            for tool_result in tool_results:
+                messages.append(tool_result)
+            
+            # 递归处理工具调用
+            final_content = await chat_tool_processor.process_tool_calls_recursively(
+                content, 
+                [
+                    {
+                        'id': tc.id,
+                        'type': tc.type,
+                        'function': {
+                            'name': tc.function.name,
+                            'arguments': tc.function.arguments
+                        }
+                    } for tc in tool_calls
+                ], 
+                messages, 
+                agent, 
+                use_model, 
+                max_tokens, 
+                temperature, 
+                top_p, 
+                tools, 
+                has_tools, 
+                conversation_id,
+                db,
+                message_id=message_id
+            )
+            
+            # 如果有额外的内容，记录到交互流程
+            additional_content = final_content[len(content):] if len(final_content) > len(content) else ""
+            if additional_content.strip():
+                interaction_flow.append({
+                    "type": "text",
+                    "content": additional_content,
+                    "timestamp": datetime.now().isoformat()
+                })
+            
+            return final_content
+        
+        return content
     
     @staticmethod
     async def generate_chat_response(
@@ -203,6 +328,9 @@ class ChatResponseService:
                 assistant_message = response.choices[0].message
                 tool_calls = assistant_message.tool_calls if hasattr(assistant_message, 'tool_calls') else None
                 
+                # 初始化交互流程记录
+                interaction_flow = []
+                
                 # 如果有工具调用
                 if tool_calls:
                     api_logger.info(f"检测到工具调用请求: {len(tool_calls)} 个工具调用")
@@ -218,61 +346,22 @@ class ChatResponseService:
                             agent_id=agent_id
                         )
                     
-                    # 处理工具调用
-                    tool_results, tool_calls_data = await chat_tool_handler.handle_tool_calls(
-                        tool_calls, 
-                        current_agent, 
-                        db, 
+                    # 使用新的交互流程处理方法
+                    final_assistant_content = await ChatResponseService._process_tool_calls_with_interaction_flow_non_stream(
+                        assistant_message.content or "",
+                        tool_calls,
+                        messages,
+                        current_agent,
+                        use_model,
+                        max_tokens,
+                        temperature,
+                        top_p,
+                        tools,
+                        has_tools,
                         conversation_id,
-                        message_id=ai_message.id if ai_message else None
-                    )
-                    
-                    # 将工具调用和结果添加到消息列表
-                    messages.append({
-                        "role": "assistant",
-                        "content": assistant_message.content,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments
-                                }
-                            } for tc in tool_calls
-                        ]
-                    })
-                    
-                    # 添加工具结果
-                    for tool_result in tool_results:
-                        messages.append(tool_result)
-                    
-                    api_logger.info(f"使用工具结果调用递归处理器")
-                    
-                    # 使用递归工具调用处理器处理可能的多轮工具调用
-                    final_assistant_content = await chat_tool_processor.process_tool_calls_recursively(
-                        assistant_message.content or "",  # 初始内容
-                        [
-                            {
-                                'id': tc.id,
-                                'type': tc.type,
-                                'function': {
-                                    'name': tc.function.name,
-                                    'arguments': tc.function.arguments
-                                }
-                            } for tc in tool_calls
-                        ],  # 工具调用列表
-                        messages,  # 消息历史
-                        current_agent,  # Agent
-                        use_model,  # 模型
-                        max_tokens,  # 最大token
-                        temperature,  # 温度
-                        top_p,  # top_p
-                        tools,  # 工具配置
-                        has_tools,  # 是否有工具
-                        conversation_id,  # 会话ID
-                        db,  # 数据库连接
-                        ai_message.id if ai_message else None  # 消息ID
+                        db,
+                        ai_message.id if ai_message else None,
+                        interaction_flow
                     )
                     
                     # 估算token使用量（因为递归调用可能无法准确获取）
@@ -280,12 +369,18 @@ class ChatResponseService:
                     estimated_prompt_tokens = len(str(messages)) // 4
                     estimated_total_tokens = estimated_tokens + estimated_prompt_tokens
                     
-                    # 将最终的助手消息添加到记忆中
+                    # 构建最终的JSON结构
+                    final_json_content = {
+                        "type": "agent_response",
+                        "interaction_flow": interaction_flow
+                    }
+                    
+                    # 将最终的助手消息添加到记忆中（使用纯文本）
                     memory_service.add_assistant_message(conversation_id, final_assistant_content, user_id)
                     
-                    # 更新AI消息的内容为最终响应
+                    # 更新AI消息的内容为JSON结构
                     if ai_message:
-                        ai_message.content = final_assistant_content
+                        ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
                         ai_message.tokens = estimated_tokens
                         ai_message.prompt_tokens = estimated_prompt_tokens
                         ai_message.total_tokens = estimated_total_tokens
@@ -302,20 +397,34 @@ class ChatResponseService:
                         "total_tokens": estimated_total_tokens
                     }
                 else:
-                    # 常规响应处理
+                    # 常规响应处理（没有工具调用）
                     token_usage = response.usage
                     assistant_content = assistant_message.content
                     
-                    # 将助手消息添加到记忆中
+                    # 如果有内容，记录到交互流程
+                    if assistant_content and assistant_content.strip():
+                        interaction_flow.append({
+                            "type": "text",
+                            "content": assistant_content,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    
+                    # 构建JSON结构
+                    final_json_content = {
+                        "type": "agent_response",
+                        "interaction_flow": interaction_flow
+                    }
+                    
+                    # 将助手消息添加到记忆中（使用纯文本）
                     memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
                     
-                    # 如果提供了数据库会话，保存AI回复
+                    # 如果提供了数据库会话，保存AI回复（使用JSON结构）
                     if db and user_id and conversation_id:
                         await add_message(
                             db=db,
                             conversation_id=conversation_id,
                             role="assistant",
-                            content=assistant_content,
+                            content=json.dumps(final_json_content, ensure_ascii=False),
                             tokens=token_usage.completion_tokens,
                             prompt_tokens=token_usage.prompt_tokens,
                             total_tokens=token_usage.total_tokens,

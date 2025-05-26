@@ -531,25 +531,42 @@ async def get_chat_session(
                 "avatar": None
             }
         
-        # 获取该消息的工具调用历史
-        from backend.crud.tool_call import get_tool_calls_by_message
-        tool_calls = await get_tool_calls_by_message(db, msg.id)
-        
-        # 转换工具调用数据格式
+        # 检查消息内容是否是JSON结构（包含interaction_flow）
         tool_calls_data = []
-        for tool_call in tool_calls:
-            tool_calls_data.append({
-                "id": tool_call.id,
-                "tool_call_id": tool_call.tool_call_id,
-                "tool_name": tool_call.tool_name,
-                "function_name": tool_call.function_name,
-                "arguments": tool_call.arguments,
-                "status": tool_call.status,
-                "result": tool_call.result,
-                "error_message": tool_call.error_message,
-                "started_at": tool_call.started_at.isoformat() if tool_call.started_at else None,
-                "completed_at": tool_call.completed_at.isoformat() if tool_call.completed_at else None
-            })
+        is_json_structure = False
+        
+        if msg.role == "assistant" and msg.content:
+            try:
+                import json
+                parsed_content = json.loads(msg.content)
+                if (isinstance(parsed_content, dict) and 
+                    parsed_content.get("type") == "agent_response" and 
+                    "interaction_flow" in parsed_content):
+                    is_json_structure = True
+                    api_logger.debug(f"消息 {msg.id} 包含JSON结构，跳过tool_calls_data查询")
+            except (json.JSONDecodeError, TypeError):
+                # 不是JSON结构，继续正常处理
+                pass
+        
+        # 只有在消息内容不是JSON结构时，才查询并添加tool_calls_data
+        if not is_json_structure:
+            from backend.crud.tool_call import get_tool_calls_by_message
+            tool_calls = await get_tool_calls_by_message(db, msg.id)
+            
+            # 转换工具调用数据格式
+            for tool_call in tool_calls:
+                tool_calls_data.append({
+                    "id": tool_call.id,
+                    "tool_call_id": tool_call.tool_call_id,
+                    "tool_name": tool_call.tool_name,
+                    "function_name": tool_call.function_name,
+                    "arguments": tool_call.arguments,
+                    "status": tool_call.status,
+                    "result": tool_call.result,
+                    "error_message": tool_call.error_message,
+                    "started_at": tool_call.started_at.isoformat() if tool_call.started_at else None,
+                    "completed_at": tool_call.completed_at.isoformat() if tool_call.completed_at else None
+                })
         
         messages.append({
             "id": msg.id,

@@ -465,162 +465,162 @@ onMounted(async () => {
               
               <Form.Item label="工具能力">
                 <a-form-item-rest>
-                  <div class="tools-section">
-                    <div class="tools-header">
-                      <h4>
-                        <ToolOutlined />
-                        工具配置
-                        <Tag v-if="enabledToolsCount > 0" color="blue">
-                          已启用 {{ enabledToolsCount }} 个工具
-                        </Tag>
-                      </h4>
-                      <div class="tools-description">
-                        为您的Agent配置外部工具，让它能够搜索信息、解析网页等
-                      </div>
+                <div class="tools-section">
+                  <div class="tools-header">
+                    <h4>
+                      <ToolOutlined />
+                      工具配置
+                      <Tag v-if="enabledToolsCount > 0" color="blue">
+                        已启用 {{ enabledToolsCount }} 个工具
+                      </Tag>
+                    </h4>
+                    <div class="tools-description">
+                      为您的Agent配置外部工具，让它能够搜索信息、解析网页等
                     </div>
-                    
-                    <div v-if="toolsLoading" class="tools-loading">
-                      <LoadingOutlined />
-                      <span>加载工具列表中...</span>
-                    </div>
-                    
-                    <div v-else class="tools-config">
-                      <!-- 使用折叠框按提供商分组显示工具 -->
-                      <Collapse v-model:activeKey="activeProviders" class="tools-collapse">
-                        <Collapse.Panel 
-                          v-for="(tools, providerName) in toolsGrouped" 
-                          :key="providerName"
-                          class="provider-panel"
-                        >
-                          <template #header>
-                            <div class="provider-header">
-                              <div class="provider-info">
-                                <span class="provider-name">{{ tools[0]?.provider_info?.name || providerName }}</span>
-                                <Tag 
-                                  :color="getProviderStatus(providerName).enabled ? 'green' : 
-                                         getProviderStatus(providerName).partial ? 'orange' : 'default'"
-                                >
-                                  {{ tools.length }} 个工具
-                                  <span v-if="getProviderStatus(providerName).enabled"> - 全部启用</span>
-                                  <span v-else-if="getProviderStatus(providerName).partial"> - 部分启用</span>
-                                </Tag>
-                              </div>
-                              <div class="provider-actions" @click.stop>
-                                <Button 
-                                  size="small"
-                                  :type="getProviderStatus(providerName).enabled ? 'default' : 'primary'"
-                                  @click="toggleProvider(providerName, !getProviderStatus(providerName).enabled)"
-                                >
-                                  {{ getProviderStatus(providerName).enabled ? '全部禁用' : '全部启用' }}
-                                </Button>
-                              </div>
-                            </div>
-                            <div v-if="tools[0]?.provider_info?.description" class="provider-description">
-                              {{ tools[0].provider_info.description }}
-                              <a 
-                                v-if="tools[0]?.provider_info?.website" 
-                                :href="tools[0].provider_info.website" 
-                                target="_blank"
-                                class="provider-link"
-                                @click.stop
+                  </div>
+                  
+                  <div v-if="toolsLoading" class="tools-loading">
+                    <LoadingOutlined />
+                    <span>加载工具列表中...</span>
+                  </div>
+                  
+                  <div v-else class="tools-config">
+                    <!-- 使用折叠框按提供商分组显示工具 -->
+                    <Collapse v-model:activeKey="activeProviders" class="tools-collapse">
+                      <Collapse.Panel 
+                        v-for="(tools, providerName) in toolsGrouped" 
+                        :key="providerName"
+                        class="provider-panel"
+                      >
+                        <template #header>
+                          <div class="provider-header">
+                            <div class="provider-info">
+                              <span class="provider-name">{{ tools[0]?.provider_info?.name || providerName }}</span>
+                              <Tag 
+                                :color="getProviderStatus(providerName).enabled ? 'green' : 
+                                       getProviderStatus(providerName).partial ? 'orange' : 'default'"
                               >
-                                <LinkOutlined />
-                                官网
-                              </a>
+                                {{ tools.length }} 个工具
+                                <span v-if="getProviderStatus(providerName).enabled"> - 全部启用</span>
+                                <span v-else-if="getProviderStatus(providerName).partial"> - 部分启用</span>
+                              </Tag>
                             </div>
-                          </template>
-                          
-                          <div class="tools-list">
-                            <div 
-                              v-for="tool in tools" 
-                              :key="tool.name"
-                              class="tool-item"
+                            <div class="provider-actions" @click.stop>
+                              <Button 
+                                size="small"
+                                :type="getProviderStatus(providerName).enabled ? 'default' : 'primary'"
+                                @click="toggleProvider(providerName, !getProviderStatus(providerName).enabled)"
+                              >
+                                {{ getProviderStatus(providerName).enabled ? '全部禁用' : '全部启用' }}
+                              </Button>
+                            </div>
+                          </div>
+                          <div v-if="tools[0]?.provider_info?.description" class="provider-description">
+                            {{ tools[0].provider_info.description }}
+                            <a 
+                              v-if="tools[0]?.provider_info?.website" 
+                              :href="tools[0].provider_info.website" 
+                              target="_blank"
+                              class="provider-link"
+                              @click.stop
                             >
-                              <div class="tool-main">
-                                <div class="tool-info">
-                                  <div class="tool-header-row">
-                                    <Checkbox 
-                                      :checked="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled"
-                                      @change="toggleTool(tool.name)"
-                                    >
-                                      <span class="tool-name">{{ tool.display_name }}</span>
-                                    </Checkbox>
-                                    <Tag 
-                                      v-if="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled" 
-                                      color="green" 
-                                      size="small"
-                                    >
-                                      已启用
-                                    </Tag>
-                                  </div>
-                                  <div class="tool-description">
-                                    {{ tool.description }}
-                                  </div>
+                              <LinkOutlined />
+                              官网
+                            </a>
+                          </div>
+                        </template>
+                        
+                        <div class="tools-list">
+                          <div 
+                            v-for="tool in tools" 
+                            :key="tool.name"
+                            class="tool-item"
+                          >
+                            <div class="tool-main">
+                              <div class="tool-info">
+                                <div class="tool-header-row">
+                                  <Checkbox 
+                                    :checked="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled"
+                                    @change="toggleTool(tool.name)"
+                                  >
+                                    <span class="tool-name">{{ tool.display_name }}</span>
+                                  </Checkbox>
+                                  <Tag 
+                                    v-if="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled" 
+                                    color="green" 
+                                    size="small"
+                                  >
+                                    已启用
+                                  </Tag>
+                                </div>
+                                <div class="tool-description">
+                                  {{ tool.description }}
                                 </div>
                               </div>
-                              
-                              <!-- 工具配置区域 -->
-                              <div 
-                                v-if="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled" 
-                                class="tool-config"
-                              >
-                                <Divider />
-                                <div class="tool-config-content">
-                                  <div v-if="tool.api_key_required" class="api-key-section">
-                                    <Form.Item 
-                                      :label="`${tool.display_name} API密钥`"
-                                      :name="`tool_${tool.name}_api_key`"
-                                    >
-                                      <Input 
-                                        :value="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.api_key"
-                                        @input="(e) => updateToolApiKey(tool.name, e.target.value)"
-                                        placeholder="请输入API密钥"
-                                        type="password"
-                                      />
-                                      <div class="api-key-hint">
-                                        前往 
-                                        <a 
-                                          :href="tool.provider_info.website" 
-                                          target="_blank"
-                                        >
-                                          {{ tool.provider_info.name }}官网
-                                        </a> 
-                                        获取API密钥
-                                      </div>
-                                    </Form.Item>
-                                  </div>
-                                  
-                                  <!-- 工具参数说明 -->
-                                  <div v-if="tool.parameters && Object.keys(tool.parameters).length > 0" class="tool-params">
-                                    <div class="params-title">支持的参数：</div>
-                                    <div class="params-list">
-                                      <Tag 
-                                        v-for="(param, paramName) in tool.parameters" 
-                                        :key="paramName"
-                                        :color="tool.required_params.includes(paramName) ? 'red' : 'blue'"
-                                        size="small"
+                            </div>
+                            
+                            <!-- 工具配置区域 -->
+                            <div 
+                              v-if="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled" 
+                              class="tool-config"
+                            >
+                              <Divider />
+                              <div class="tool-config-content">
+                                <div v-if="tool.api_key_required" class="api-key-section">
+                                  <Form.Item 
+                                    :label="`${tool.display_name} API密钥`"
+                                    :name="`tool_${tool.name}_api_key`"
+                                  >
+                                    <Input 
+                                      :value="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.api_key"
+                                      @input="(e) => updateToolApiKey(tool.name, e.target.value)"
+                                      placeholder="请输入API密钥"
+                                      type="password"
+                                    />
+                                    <div class="api-key-hint">
+                                      前往 
+                                      <a 
+                                        :href="tool.provider_info.website" 
+                                        target="_blank"
                                       >
-                                        {{ paramName }}
-                                        <span v-if="tool.required_params.includes(paramName)">*</span>
-                                      </Tag>
+                                        {{ tool.provider_info.name }}官网
+                                      </a> 
+                                      获取API密钥
                                     </div>
+                                  </Form.Item>
+                                </div>
+                                
+                                <!-- 工具参数说明 -->
+                                <div v-if="tool.parameters && Object.keys(tool.parameters).length > 0" class="tool-params">
+                                  <div class="params-title">支持的参数：</div>
+                                  <div class="params-list">
+                                    <Tag 
+                                      v-for="(param, paramName) in tool.parameters" 
+                                      :key="paramName"
+                                      :color="tool.required_params.includes(paramName) ? 'red' : 'blue'"
+                                      size="small"
+                                    >
+                                      {{ paramName }}
+                                      <span v-if="tool.required_params.includes(paramName)">*</span>
+                                    </Tag>
                                   </div>
                                 </div>
                               </div>
                             </div>
                           </div>
-                        </Collapse.Panel>
-                      </Collapse>
-                      
-                      <!-- 如果没有工具 -->
-                      <div v-if="Object.keys(toolsGrouped).length === 0" class="no-tools">
-                        <div class="no-tools-content">
-                          <ToolOutlined />
-                          <div>暂无可用工具</div>
                         </div>
+                      </Collapse.Panel>
+                    </Collapse>
+                    
+                    <!-- 如果没有工具 -->
+                    <div v-if="Object.keys(toolsGrouped).length === 0" class="no-tools">
+                      <div class="no-tools-content">
+                        <ToolOutlined />
+                        <div>暂无可用工具</div>
                       </div>
                     </div>
                   </div>
+                </div>
                 </a-form-item-rest>
               </Form.Item>
             </div>

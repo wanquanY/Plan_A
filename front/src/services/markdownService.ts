@@ -331,6 +331,24 @@ export const formatMessagesToHtml = (messages: Message[], title?: string): strin
     // 对内容进行预处理 - 去除换行符和空格
     let cleanContent = msg.content.trim();
     
+    // 如果是agent消息，尝试解析JSON结构
+    if (!isUserMessage) {
+      try {
+        const parsed = JSON.parse(cleanContent);
+        
+        // 检查是否是新的agent响应格式
+        if (parsed.type === 'agent_response' && parsed.interaction_flow) {
+          // 提取纯文本内容用于显示
+          cleanContent = parsed.interaction_flow
+            .filter((segment: any) => segment.type === 'text')
+            .map((segment: any) => segment.content)
+            .join('');
+        }
+      } catch (error) {
+        // 如果不是JSON，使用原始内容
+      }
+    }
+    
     // 格式化内容
     const formattedContent = formatMessageContent(cleanContent);
     

@@ -2,6 +2,7 @@ from typing import Dict, List, Any, AsyncGenerator, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
+from datetime import datetime
 
 from backend.schemas.chat import ChatRequest
 from backend.utils.logging import api_logger
@@ -18,6 +19,285 @@ class ChatStreamService:
     """流式聊天响应服务"""
     
     @staticmethod
+    async def _process_tool_calls_with_interaction_flow(
+        content: str, 
+        tool_calls: List[Dict[str, Any]], 
+        messages: List[Dict[str, Any]], 
+        agent, 
+        use_model: str, 
+        max_tokens: int, 
+        temperature: float, 
+        top_p: float, 
+        tools: List[Dict[str, Any]], 
+        has_tools: bool, 
+        conversation_id: int,
+        db: Optional[AsyncSession] = None,
+        message_id: Optional[int] = None,
+        interaction_flow: List[Dict[str, Any]] = None,
+        max_iterations: int = 10  # 防止无限循环
+    ):
+        """
+        递归处理工具调用，支持无限次调用（流式版本），并记录到交互流程中
+        """
+        if interaction_flow is None:
+            interaction_flow = []
+            
+        iteration = 0
+        current_content = content
+        current_tool_calls = tool_calls
+        
+        # 进行递归处理
+        while current_tool_calls and iteration < max_iterations:
+            iteration += 1
+            api_logger.info(f"开始第 {iteration} 轮工具调用处理，共 {len(current_tool_calls)} 个工具调用")
+            
+            # 验证工具调用参数的完整性
+            valid_tool_calls = []
+            for tc in current_tool_calls:
+                # 跳过None值（可能由索引填充产生）
+                if tc is None:
+                    continue
+                    
+                # 检查函数名是否有效
+                if not tc['function']['name']:
+                    api_logger.warning(f"工具调用 {tc['id']} 函数名为空，跳过")
+                    continue
+                
+                # 检查参数是否有效
+                if tc['function']['arguments'].strip():
+                    try:
+                        # 验证JSON格式
+                        json.loads(tc['function']['arguments'])
+                        valid_tool_calls.append(tc)
+                        api_logger.info(f"工具调用 {tc['function']['name']} 参数完整: {tc['function']['arguments']}")
+                    except json.JSONDecodeError as e:
+                        api_logger.error(f"工具调用 {tc['function']['name']} 参数JSON格式错误: {tc['function']['arguments']}, 错误: {e}")
+                else:
+                    api_logger.warning(f"工具调用 {tc['function']['name']} 参数为空，跳过")
+            
+            if not valid_tool_calls:
+                api_logger.warning("没有有效的工具调用，结束工具处理")
+                break
+            
+            # 构造工具调用对象
+            class ToolCall:
+                def __init__(self, id, type, function):
+                    self.id = id
+                    self.type = type
+                    self.function = function
+            
+            class Function:
+                def __init__(self, name, arguments):
+                    self.name = name
+                    self.arguments = arguments
+            
+            # 处理当前的工具调用 - 逐个执行，每执行完一个就继续AI响应
+            tool_results = []
+            tool_index = 0
+            while tool_index < len(valid_tool_calls):
+                tc = valid_tool_calls[tool_index]
+                # 构造工具调用对象
+                func = Function(tc['function']['name'], tc['function']['arguments'])
+                tool_call_obj = ToolCall(tc['id'], tc['type'], func)
+                
+                # 记录工具调用开始到交互流程
+                tool_call_start_time = datetime.now()
+                tool_call_record = {
+                    "type": "tool_call",
+                    "id": tool_call_obj.id,
+                    "name": tool_call_obj.function.name,
+                    "arguments": json.loads(tool_call_obj.function.arguments),
+                    "status": "executing",
+                    "started_at": tool_call_start_time.isoformat()
+                }
+                interaction_flow.append(tool_call_record)
+                
+                # 发送工具调用执行状态
+                tool_status = {
+                    "type": "tool_call_executing",
+                    "tool_call_id": tool_call_obj.id,
+                    "tool_name": tool_call_obj.function.name,
+                    "status": "executing"
+                }
+                yield ("", conversation_id, tool_status)
+                
+                # 执行单个工具调用（传递message_id关联到特定消息）
+                try:
+                    single_result, single_tool_data = await chat_tool_handler.handle_tool_calls(
+                        [tool_call_obj], 
+                        agent, 
+                        db,  # 传递数据库连接，保存工具调用记录
+                        conversation_id,
+                        message_id=message_id  # 关联到特定消息
+                    )
+                    
+                    # 收集工具结果
+                    tool_results.extend(single_result)
+                    
+                    # 更新交互流程中的工具调用记录
+                    tool_call_end_time = datetime.now()
+                    tool_call_record["status"] = "completed"
+                    tool_call_record["completed_at"] = tool_call_end_time.isoformat()
+                    tool_call_record["result"] = json.loads(single_result[0]["content"]) if single_result else None
+                    
+                    # 发送工具调用完成状态，包含结果内容
+                    tool_result_content = single_result[0]["content"] if single_result else ""
+                    tool_status = {
+                        "type": "tool_call_completed",
+                        "tool_call_id": tool_call_obj.id,
+                        "tool_name": tool_call_obj.function.name,
+                        "status": "completed",
+                        "result": tool_result_content
+                    }
+                    yield ("", conversation_id, tool_status)
+                    
+                    # 立即将这个工具调用和结果添加到消息列表，然后调用API获取基于此工具结果的响应
+                    # 只使用初始内容，避免累积重复
+                    messages.append({
+                        "role": "assistant",
+                        "content": content if iteration == 1 else "",  # 只在第一轮使用初始内容
+                        "tool_calls": [
+                            {
+                                "id": tc['id'],
+                                "type": "function",
+                                "function": {
+                                    "name": tc['function']['name'],
+                                    "arguments": tc['function']['arguments']
+                                }
+                            }
+                        ]
+                    })
+                    
+                    # 添加工具结果
+                    for tool_result in single_result:
+                        messages.append(tool_result)
+                    
+                    # 立即调用API获取基于此工具结果的响应
+                    api_logger.info(f"第 {iteration} 轮工具 {tool_call_obj.function.name} 执行完成，立即获取AI响应")
+                    
+                    next_response = await openai_client_service.async_client.chat.completions.create(
+                        model=use_model,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        stream=True,
+                        tools=tools if has_tools else None
+                    )
+                    
+                    # 处理基于工具结果的流式响应
+                    current_text_segment = ""
+                    new_tool_calls = []
+                    
+                    async for chunk in next_response:
+                        if hasattr(chunk, 'choices') and chunk.choices:
+                            delta = chunk.choices[0].delta
+                            
+                            # 检查是否有新的工具调用
+                            if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                                # 如果当前有文本内容，先保存到交互流程中
+                                if current_text_segment.strip():
+                                    interaction_flow.append({
+                                        "type": "text",
+                                        "content": current_text_segment,
+                                        "timestamp": datetime.now().isoformat()
+                                    })
+                                    current_text_segment = ""
+                                
+                                # 收集新的工具调用
+                                for tool_call in delta.tool_calls:
+                                    call_index = getattr(tool_call, 'index', None)  # 使用不同的变量名避免冲突
+                                    existing_call = None
+                                    
+                                    if call_index is not None and call_index < len(new_tool_calls):
+                                        existing_call = new_tool_calls[call_index]
+                                    
+                                    if existing_call:
+                                        if tool_call.function and tool_call.function.arguments:
+                                            existing_call['function']['arguments'] += tool_call.function.arguments
+                                    else:
+                                        new_call = {
+                                            'id': tool_call.id if tool_call.id else f"call_followup_{len(new_tool_calls)}",
+                                            'type': tool_call.type if tool_call.type else 'function',
+                                            'function': {
+                                                'name': tool_call.function.name if tool_call.function and tool_call.function.name else '',
+                                                'arguments': tool_call.function.arguments if tool_call.function and tool_call.function.arguments else ''
+                                            }
+                                        }
+                                        
+                                        if call_index is not None:
+                                            while len(new_tool_calls) <= call_index:
+                                                new_tool_calls.append(None)
+                                            new_tool_calls[call_index] = new_call
+                                        else:
+                                            new_tool_calls.append(new_call)
+                            
+                            content_chunk = delta.content or ""
+                            if content_chunk:
+                                current_text_segment += content_chunk
+                                current_content += content_chunk
+                                yield content_chunk
+                    
+                    # 如果有新的文本内容，记录到交互流程
+                    if current_text_segment.strip():
+                        interaction_flow.append({
+                            "type": "text",
+                            "content": current_text_segment,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    
+                    # 如果有新的工具调用，将它们设置为下一轮处理
+                    if new_tool_calls:
+                        valid_new_tool_calls = [tc for tc in new_tool_calls if tc is not None and tc.get('function', {}).get('name')]
+                        if valid_new_tool_calls:
+                            api_logger.info(f"检测到 {len(valid_new_tool_calls)} 个新的工具调用，将在下一轮处理")
+                            # 设置为下一轮的工具调用，而不是添加到当前轮
+                            current_tool_calls = valid_new_tool_calls
+                            # 跳出当前工具处理循环，进入下一轮
+                            break
+                    
+                except Exception as e:
+                    # 工具调用失败，更新记录
+                    tool_call_end_time = datetime.now()
+                    tool_call_record["status"] = "error"
+                    tool_call_record["completed_at"] = tool_call_end_time.isoformat()
+                    tool_call_record["error"] = str(e)
+                    
+                    api_logger.error(f"工具调用失败: {tool_call_obj.function.name}, 错误: {str(e)}")
+                    
+                    # 发送工具调用错误状态
+                    tool_status = {
+                        "type": "tool_call_error",
+                        "tool_call_id": tool_call_obj.id,
+                        "tool_name": tool_call_obj.function.name,
+                        "status": "error",
+                        "error": str(e)
+                    }
+                    yield ("", conversation_id, tool_status)
+                
+                # 增加索引，处理下一个工具调用
+                tool_index += 1
+            
+            # 内层循环结束，检查是否有新的工具调用需要处理
+            # 如果current_tool_calls没有被内层循环修改，说明没有新的工具调用
+            # 将其设置为空列表以结束外层循环
+            if current_tool_calls == valid_tool_calls:
+                current_tool_calls = []
+        
+        if iteration >= max_iterations:
+            api_logger.warning(f"工具调用达到最大迭代次数 {max_iterations}，强制结束")
+        
+        api_logger.info(f"流式工具调用处理完成，共进行了 {iteration} 轮，最终内容长度: {len(current_content)}")
+        
+        # 发送工具处理完成状态
+        if iteration > 0:
+            tool_status = {
+                "type": "tools_completed",
+                "status": "completed"
+            }
+            yield ("", conversation_id, tool_status)
+    
+    @staticmethod
     async def generate_chat_stream(
         chat_request: ChatRequest,
         db: Optional[AsyncSession] = None,
@@ -28,6 +308,9 @@ class ChatStreamService:
         
         返回的是生成内容的异步生成器。第一个内容会额外返回conversation_id
         """
+        # 初始化交互流程记录
+        interaction_flow = []
+        
         try:
             api_logger.info(f"开始调用OpenAI流式API, 模型: {openai_client_service.model}, API地址: {openai_client_service.async_client.base_url}")
             
@@ -214,6 +497,7 @@ class ChatStreamService:
                 collected_tool_calls = []
                 is_first_chunk = True
                 chunk_count = 0
+                current_text_segment = ""  # 当前文本片段
                 
                 async for chunk in response:
                     # 记录流式响应的每个块的原始内容
@@ -226,6 +510,15 @@ class ChatStreamService:
                         # 检查是否有工具调用
                         if hasattr(delta, 'tool_calls') and delta.tool_calls:
                             api_logger.debug(f"流式响应中检测到工具调用: {len(delta.tool_calls)} 个")
+                            
+                            # 如果当前有文本内容，先保存到交互流程中
+                            if current_text_segment.strip():
+                                interaction_flow.append({
+                                    "type": "text",
+                                    "content": current_text_segment,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                current_text_segment = ""  # 重置文本片段
                             
                             # 收集工具调用信息
                             for tool_call in delta.tool_calls:
@@ -293,6 +586,7 @@ class ChatStreamService:
                         
                         # 累加内容
                         collected_content += content
+                        current_text_segment += content
                         
                         # 对第一个有内容的块特殊处理
                         if is_first_chunk and content:
@@ -302,6 +596,14 @@ class ChatStreamService:
                         elif content:
                             # 后续块只返回内容
                             yield content
+                
+                # 如果最后还有文本内容，保存到交互流程中
+                if current_text_segment.strip():
+                    interaction_flow.append({
+                        "type": "text",
+                        "content": current_text_segment,
+                        "timestamp": datetime.now().isoformat()
+                    })
                 
                 # 流式响应结束，检查是否有工具调用需要处理
                 api_logger.info(f"流式响应完成，共接收 {chunk_count} 个块")
@@ -335,7 +637,7 @@ class ChatStreamService:
                     api_logger.info(f"检测到 {len(valid_tool_calls)} 个有效工具调用，开始递归处理")
                     # 递归处理工具调用，支持无限次调用
                     final_content = collected_content or ""  # 保存初始内容，确保不为None
-                    async for content_chunk in chat_tool_processor.process_tool_calls_recursively_stream(
+                    async for content_chunk in ChatStreamService._process_tool_calls_with_interaction_flow(
                         collected_content or "", 
                         collected_tool_calls, 
                         messages, 
@@ -348,7 +650,8 @@ class ChatStreamService:
                         has_tools, 
                         conversation_id,
                         db,
-                        message_id=ai_message.id if ai_message else None  # 传递AI消息ID
+                        message_id=ai_message.id if ai_message else None,
+                        interaction_flow=interaction_flow
                     ):
                         if isinstance(content_chunk, tuple):
                             # 工具状态信息
@@ -358,21 +661,40 @@ class ChatStreamService:
                             yield content_chunk
                             final_content += content_chunk
                     
-                    # 更新数据库中的消息内容为最终完整内容
+                    # 构建最终的JSON结构
+                    final_json_content = {
+                        "type": "agent_response",
+                        "interaction_flow": interaction_flow
+                    }
+                    
+                    # 更新数据库中的消息内容为JSON结构
                     if ai_message:
-                        ai_message.content = final_content
+                        ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
                         # 重新计算token数量
                         ai_message.tokens = len(final_content) // 4
                         ai_message.total_tokens = ai_message.prompt_tokens + ai_message.tokens
                         await db.commit()
                         await db.refresh(ai_message)
-                        api_logger.info(f"更新AI消息内容，最终长度: {len(final_content)}")
+                        api_logger.info(f"更新AI消息为JSON结构，最终内容长度: {len(final_content)}")
                     
-                    # 保存到记忆 - 使用最终完整内容
+                    # 保存到记忆 - 使用最终完整内容（纯文本，用于对话上下文）
                     if final_content:
                         memory_service.add_assistant_message(conversation_id, final_content, user_id)
                         api_logger.info(f"流式聊天完成，最终内容长度: {len(final_content)}")
                 else:
+                    # 没有工具调用，构建简单的JSON结构
+                    if interaction_flow:
+                        final_json_content = {
+                            "type": "agent_response", 
+                            "interaction_flow": interaction_flow
+                        }
+                        
+                        # 更新数据库中的消息内容为JSON结构
+                        if ai_message:
+                            ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
+                            await db.commit()
+                            await db.refresh(ai_message)
+                    
                     api_logger.info("没有工具调用，直接保存初始内容")
                     # 没有工具调用，直接保存到记忆
                     if collected_content:
@@ -414,6 +736,7 @@ class ChatStreamService:
                         collected_tool_calls = []
                         is_first_chunk = True
                         chunk_count = 0
+                        current_text_segment = ""  # 当前文本片段
                         
                         async for chunk in response:
                             chunk_count += 1
@@ -466,12 +789,21 @@ class ChatStreamService:
                                 
                                 content = delta.content or ""
                                 collected_content += content
+                                current_text_segment += content
                                 
                                 if is_first_chunk and content:
                                     is_first_chunk = False
                                     yield (content, conversation_id)
                                 elif content:
                                     yield content
+                        
+                        # 如果最后还有文本内容，保存到交互流程中
+                        if current_text_segment.strip():
+                            interaction_flow.append({
+                                "type": "text",
+                                "content": current_text_segment,
+                                "timestamp": datetime.now().isoformat()
+                            })
                         
                         # 处理工具调用和保存消息（与上面相同的逻辑）
                         ai_message = None
@@ -497,7 +829,7 @@ class ChatStreamService:
                         if valid_tool_calls:
                             # 递归处理工具调用
                             final_content = collected_content or ""
-                            async for content_chunk in chat_tool_processor.process_tool_calls_recursively_stream(
+                            async for content_chunk in ChatStreamService._process_tool_calls_with_interaction_flow(
                                 collected_content or "", 
                                 collected_tool_calls, 
                                 messages, 
@@ -510,7 +842,8 @@ class ChatStreamService:
                                 has_tools, 
                                 conversation_id,
                                 db,
-                                message_id=ai_message.id if ai_message else None
+                                message_id=ai_message.id if ai_message else None,
+                                interaction_flow=interaction_flow
                             ):
                                 if isinstance(content_chunk, tuple):
                                     yield content_chunk
@@ -518,9 +851,15 @@ class ChatStreamService:
                                     yield content_chunk
                                     final_content += content_chunk
                             
+                            # 构建最终的JSON结构
+                            final_json_content = {
+                                "type": "agent_response",
+                                "interaction_flow": interaction_flow
+                            }
+                            
                             # 更新AI消息内容
                             if ai_message:
-                                ai_message.content = final_content
+                                ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
                                 ai_message.tokens = len(final_content) // 4
                                 ai_message.total_tokens = ai_message.prompt_tokens + ai_message.tokens
                                 await db.commit()
