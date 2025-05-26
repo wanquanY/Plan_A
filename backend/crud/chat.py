@@ -133,11 +133,10 @@ async def add_message(
     tokens: Optional[int] = None,
     prompt_tokens: Optional[int] = None,
     total_tokens: Optional[int] = None,
-    agent_id: Optional[int] = None,
-    tool_calls_data: Optional[List[Dict[str, Any]]] = None
+    agent_id: Optional[int] = None
 ) -> ChatMessage:
     """添加一条聊天消息"""
-    db_logger.debug(f"添加聊天消息: conversation_id={conversation_id}, role={role}, agent_id={agent_id}, has_tools={bool(tool_calls_data)}")
+    db_logger.debug(f"添加聊天消息: conversation_id={conversation_id}, role={role}, agent_id={agent_id}")
     
     message = ChatMessage(
         conversation_id=conversation_id,
@@ -146,8 +145,7 @@ async def add_message(
         tokens=tokens,
         prompt_tokens=prompt_tokens,
         total_tokens=total_tokens,
-        agent_id=agent_id,
-        tool_calls_data=tool_calls_data
+        agent_id=agent_id
     )
     
     db.add(message)
@@ -239,26 +237,3 @@ async def get_latest_chat(db: AsyncSession, user_id: int) -> Optional[Chat]:
     chat = result.scalars().first()
     
     return chat 
-
-
-async def update_message_tool_calls(
-    db: AsyncSession,
-    message_id: int,
-    tool_calls_data: List[Dict[str, Any]]
-) -> Optional[ChatMessage]:
-    """更新消息的工具调用数据"""
-    db_logger.debug(f"更新消息工具调用数据: message_id={message_id}")
-    
-    stmt = select(ChatMessage).where(ChatMessage.id == message_id)
-    result = await db.execute(stmt)
-    message = result.scalar_one_or_none()
-    
-    if message:
-        message.tool_calls_data = tool_calls_data
-        await db.commit()
-        await db.refresh(message)
-        db_logger.debug(f"工具调用数据已更新: message_id={message_id}")
-        return message
-    
-    db_logger.warning(f"消息不存在: message_id={message_id}")
-    return None 

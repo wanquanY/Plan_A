@@ -276,12 +276,16 @@ const handleToggleSidebarMode = (data: any) => {
 // 处理侧边栏发送消息
 const handleSidebarSend = async (data: any) => {
   try {
-    await sessionManager.handleSidebarSend(data, noteManager.currentNoteId);
+    // 定义工具状态处理回调
+    const handleToolStatus = (toolStatus: any) => {
+      if (toolStatus && agentSidebarRef.value && agentSidebarRef.value.handleToolStatus) {
+        console.log('Home.vue 收到工具状态更新:', toolStatus);
+        console.log('调用 AgentSidebar.handleToolStatus');
+        agentSidebarRef.value.handleToolStatus(toolStatus);
+      }
+    };
     
-    // 处理工具状态更新
-    if (agentSidebarRef.value && agentSidebarRef.value.handleToolStatus) {
-      // 工具状态处理逻辑
-    }
+    await sessionManager.handleSidebarSend(data, noteManager.currentNoteId, handleToolStatus);
   } catch (error) {
     console.error('发送消息失败:', error);
   }

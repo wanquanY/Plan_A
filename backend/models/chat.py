@@ -35,8 +35,12 @@ class ChatMessage(BaseModel):
     total_tokens = Column(Integer, nullable=True)  # 总token数量
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=True)  # 关联的Agent ID
     
+    # 关联关系
+    chat = relationship("Chat", back_populates="messages")
+    agent = relationship("Agent")
+    tool_calls = relationship("ToolCallHistory", back_populates="message", cascade="all, delete-orphan")
+
     # 工具调用相关字段 - 作为AI消息的一部分
-    tool_calls_data = Column(JSON, nullable=True)  # 存储工具调用的完整信息
     # 格式: [
     #   {
     #     "id": "call_123",
@@ -48,8 +52,4 @@ class ChatMessage(BaseModel):
     #     "started_at": "2025-01-01T00:00:00",
     #     "completed_at": "2025-01-01T00:00:05"
     #   }
-    # ]
-    
-    # 关联关系
-    chat = relationship("Chat", back_populates="messages")
-    agent = relationship("Agent") 
+    # ] 

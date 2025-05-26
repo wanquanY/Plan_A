@@ -485,7 +485,6 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
     let currentUserMessageId: number | undefined;
     let currentAgentMessage = '';
     let currentAgentMessageId: number | undefined;
-    let pendingToolCalls: string[] = []; // 待处理的工具调用信息
     
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
@@ -494,27 +493,20 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
       if (message.role === 'user') {
         // 如果已经有一对完整的对话，先保存它
         if (currentUserMessage && currentAgentMessage) {
-          // 将工具调用信息合并到AI消息中
-          let finalAgentMessage = currentAgentMessage;
-          if (pendingToolCalls.length > 0) {
-            finalAgentMessage = currentAgentMessage + '\n\n' + pendingToolCalls.join('\n');
-          }
-          
           agentHistory.push({
             user: currentUserMessage,
-            agent: finalAgentMessage,
+            agent: currentAgentMessage,
             userMessageId: currentUserMessageId,
             agentMessageId: currentAgentMessageId
           });
           
-          console.log(`保存对话对: user="${currentUserMessage.substring(0, 20)}...", agent="${finalAgentMessage.substring(0, 20)}..."`);
+          console.log(`保存对话对: user="${currentUserMessage.substring(0, 20)}...", agent="${currentAgentMessage.substring(0, 20)}..."`);
           
           // 重置状态
           currentUserMessage = '';
           currentUserMessageId = undefined;
           currentAgentMessage = '';
           currentAgentMessageId = undefined;
-          pendingToolCalls = [];
         }
         
         currentUserMessage = message.content;
@@ -527,60 +519,36 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
         currentAgentMessageId = message.id;
         console.log(`设置AI消息: "${currentAgentMessage.substring(0, 30)}..."`);
         
-        // 如果AI消息包含工具调用数据，格式化并添加到待处理列表
-        if (message.tool_calls_data && message.tool_calls_data.length > 0) {
-          for (const toolCall of message.tool_calls_data) {
-            const toolInfo = formatToolCallFromData(toolCall);
-            if (toolInfo) {
-              pendingToolCalls.push(toolInfo);
-              console.log(`从AI消息提取工具调用: ${toolCall.name}, 当前待处理数量: ${pendingToolCalls.length}`);
-            }
-          }
-        }
-        
         // 如果有用户消息，立即配对保存
         if (currentUserMessage) {
-          let finalAgentMessage = currentAgentMessage;
-          if (pendingToolCalls.length > 0) {
-            // 将工具调用信息放在AI消息之前，因为工具调用发生在AI回复之前
-            finalAgentMessage = pendingToolCalls.join('\n\n') + '\n\n' + currentAgentMessage;
-          }
-          
           agentHistory.push({
             user: currentUserMessage,
-            agent: finalAgentMessage,
+            agent: currentAgentMessage,
             userMessageId: currentUserMessageId,
             agentMessageId: currentAgentMessageId
           });
           
-          console.log(`立即保存对话对: user="${currentUserMessage.substring(0, 20)}...", agent="${finalAgentMessage.substring(0, 20)}..."`);
+          console.log(`立即保存对话对: user="${currentUserMessage.substring(0, 20)}...", agent="${currentAgentMessage.substring(0, 20)}..."`);
           
           // 重置状态
           currentUserMessage = '';
           currentUserMessageId = undefined;
           currentAgentMessage = '';
           currentAgentMessageId = undefined;
-          pendingToolCalls = [];
         }
       }
     }
     
     // 处理剩余的消息
     if (currentUserMessage && currentAgentMessage) {
-      let finalAgentMessage = currentAgentMessage;
-      if (pendingToolCalls.length > 0) {
-        // 将工具调用信息放在AI消息之前
-        finalAgentMessage = pendingToolCalls.join('\n\n') + '\n\n' + currentAgentMessage;
-      }
-      
       agentHistory.push({
         user: currentUserMessage,
-        agent: finalAgentMessage,
+        agent: currentAgentMessage,
         userMessageId: currentUserMessageId,
         agentMessageId: currentAgentMessageId
       });
       
-      console.log(`最终保存对话对: user="${currentUserMessage.substring(0, 20)}...", agent="${finalAgentMessage.substring(0, 20)}..."`);
+      console.log(`最终保存对话对: user="${currentUserMessage.substring(0, 20)}...", agent="${currentAgentMessage.substring(0, 20)}..."`);
     }
 
     console.log(`会话 ${sessionId} 的Agent历史记录处理完成，共 ${agentHistory.length} 对对话`);
@@ -589,71 +557,6 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
     console.error(`获取会话 ${sessionId} 的历史记录失败:`, error);
     return null;
   }
-};
-
-// 格式化工具调用消息（旧格式，保留用于兼容性）
-const formatToolCallMessage = (message: any): string | null => {
-  if (!message.tool_name) return null;
-  
-  let result = `🔧 ${message.tool_name}`;
-  
-  if (message.tool_status === 'preparing') {
-    result += ' 准备中...';
-  } else if (message.tool_status === 'executing') {
-    result += ' 执行中...';
-  } else if (message.tool_status === 'completed') {
-    result += ' 执行完成';
-    if (message.tool_result) {
-      const resultStr = typeof message.tool_result === 'string' 
-        ? message.tool_result 
-        : JSON.stringify(message.tool_result);
-      result += `\n\n结果: ${resultStr.substring(0, 200)}...`;
-    }
-  } else if (message.tool_status === 'error') {
-    result += ' 执行失败';
-    if (message.tool_error) {
-      result += `\n\n错误: ${message.tool_error}`;
-    }
-  }
-  
-  return result;
-};
-
-// 格式化工具调用数据（新格式）
-const formatToolCallFromData = (toolCall: {
-  id: string;
-  name: string;
-  arguments: any;
-  status: string;
-  result?: any;
-  error?: string;
-  started_at?: string;
-  completed_at?: string;
-}): string | null => {
-  if (!toolCall.name) return null;
-  
-  let result = `🔧 ${toolCall.name}`;
-  
-  if (toolCall.status === 'preparing') {
-    result += ' 准备中...';
-  } else if (toolCall.status === 'executing') {
-    result += ' 执行中...';
-  } else if (toolCall.status === 'completed') {
-    result += ' 执行完成';
-    if (toolCall.result) {
-      const resultStr = typeof toolCall.result === 'string' 
-        ? toolCall.result 
-        : JSON.stringify(toolCall.result);
-      result += `\n\n结果: ${resultStr.substring(0, 200)}...`;
-    }
-  } else if (toolCall.status === 'error') {
-    result += ' 执行失败';
-    if (toolCall.error) {
-      result += `\n\n错误: ${toolCall.error}`;
-    }
-  }
-  
-  return result;
 };
 
 // 创建新的会话

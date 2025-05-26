@@ -1,4 +1,4 @@
-from openai import OpenAI
+from openai import AsyncOpenAI
 from typing import Optional
 from backend.core.config import settings
 from backend.utils.logging import api_logger
@@ -13,7 +13,7 @@ if base_url and not base_url.endswith('/v1'):
     base_url = base_url.rstrip() + '/v1'
 
 # 配置OpenAI客户端
-client = OpenAI(
+client = AsyncOpenAI(
     api_key=api_key,
     base_url=base_url
 )
@@ -39,7 +39,7 @@ async def generate_title_with_ai(conversation_id: int, user_message: str) -> str
         ]
         
         # 调用AI API
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=model,
             messages=messages,
             max_tokens=30,  # 标题很短，不需要太多token

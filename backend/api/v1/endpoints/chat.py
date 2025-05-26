@@ -1,21 +1,30 @@
-from fastapi import APIRouter, Request, Depends, BackgroundTasks, Body, Path, Query
+from fastapi import APIRouter, Request, Depends, BackgroundTasks, Body, Path, Query, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from backend.schemas.chat import ChatRequest, ChatCompletionResponse, ChatCreate, ChatUpdate, ChatResponse as ChatResponseModel, ChatListResponse, AskAgainRequest
-from backend.api.deps import get_db, get_current_active_user
+from backend.schemas.chat import (
+    ChatRequest, ChatCompletionResponse, ChatCreate, ChatUpdate, 
+    ChatResponse as ChatResponseModel, ChatListResponse, AskAgainRequest, 
+    ChatMessageResponse
+)
+from backend.api.deps import get_db, get_current_active_user, get_current_user
 from backend.models.user import User
-from backend.services.chat import generate_chat_response, generate_chat_stream, get_chat_history, clear_memory, truncate_memory_after_message, replace_message_and_truncate
-from backend.crud.chat import get_user_chats, get_chat, create_chat, update_chat_title, soft_delete_chat, get_chat_messages, get_latest_chat, soft_delete_messages_after
+from backend.services.chat import (
+    generate_chat_response, generate_chat_stream, get_chat_history, 
+    clear_memory, truncate_memory_after_message, replace_message_and_truncate
+)
+from backend.crud.chat import (
+    get_user_chats, get_chat, create_chat, update_chat_title, 
+    soft_delete_chat, get_chat_messages, get_latest_chat, soft_delete_messages_after
+)
 from backend.core.response import SuccessResponse
 from backend.utils.logging import api_logger
 from backend.core.config import settings
-from typing import List, Dict, Any
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from backend.services.memory import redis_client, memory_service
 from backend.schemas.common import PaginationParams, PaginationResponse
 
@@ -143,15 +152,15 @@ async def test_openai_api(
         api_logger.info(f"测试OpenAI API连接 - BASE URL: {base_url}")
         
         # 初始化客户端
-        client = OpenAI(
+        async_client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url
         )
         
-        api_logger.info(f"客户端初始化完成, 实际URL: {client.base_url}")
+        api_logger.info(f"客户端初始化完成, 实际URL: {async_client.base_url}")
         
         # 发送测试请求
-        response = client.chat.completions.create(
+        response = await async_client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "user", "content": "Say hello"}
@@ -507,36 +516,40 @@ async def get_chat_session(
             request_id=getattr(request.state, "request_id", None)
         )
     
-    # 单独查询消息
+    # 获取会话的消息列表
     chat_messages = await get_chat_messages(db, conversation_id)
     
-    # 格式化消息
+    # 构建消息列表，包含工具调用信息
     messages = []
-    
-    # 收集消息中的agent_id
-    agent_ids = set()
     for msg in chat_messages:
-        if msg.agent_id:
-            agent_ids.add(msg.agent_id)
-    
-    # 获取所有涉及的agent信息
-    agents_dict = {}
-    if agent_ids:
-        from backend.crud.agent import agent as agent_crud
-        for agent_id in agent_ids:
-            agent = await agent_crud.get_agent_by_id(db, agent_id)
-            if agent:
-                agents_dict[agent.id] = {
-                    "id": agent.id,
-                    "name": agent.name,
-                    "avatar_url": agent.avatar_url,
-                    "model": agent.model
-                }
-    
-    for msg in chat_messages:
+        # 获取Agent信息
         agent_info = None
-        if msg.agent_id and msg.agent_id in agents_dict:
-            agent_info = agents_dict[msg.agent_id]
+        if msg.agent_id:
+            agent_info = {
+                "id": msg.agent_id,
+                "name": "默认助手",  # 这里可以根据需要从数据库获取真实的agent信息
+                "avatar": None
+            }
+        
+        # 获取该消息的工具调用历史
+        from backend.crud.tool_call import get_tool_calls_by_message
+        tool_calls = await get_tool_calls_by_message(db, msg.id)
+        
+        # 转换工具调用数据格式
+        tool_calls_data = []
+        for tool_call in tool_calls:
+            tool_calls_data.append({
+                "id": tool_call.id,
+                "tool_call_id": tool_call.tool_call_id,
+                "tool_name": tool_call.tool_name,
+                "function_name": tool_call.function_name,
+                "arguments": tool_call.arguments,
+                "status": tool_call.status,
+                "result": tool_call.result,
+                "error_message": tool_call.error_message,
+                "started_at": tool_call.started_at.isoformat() if tool_call.started_at else None,
+                "completed_at": tool_call.completed_at.isoformat() if tool_call.completed_at else None
+            })
         
         messages.append({
             "id": msg.id,
@@ -546,8 +559,8 @@ async def get_chat_session(
             "tokens": msg.tokens,
             "agent_id": msg.agent_id,
             "agent_info": agent_info,
-            # 工具调用相关字段 - 新的数据结构
-            "tool_calls_data": msg.tool_calls_data
+            # 工具调用相关字段 - 从新的数据结构获取
+            "tool_calls_data": tool_calls_data
         })
     
     result = {
@@ -1263,4 +1276,63 @@ async def ask_again(
             data={"error": str(e)},
             msg="编辑消息失败",
             request_id=getattr(request.state, "request_id", None)
-        ) 
+        )
+
+
+@router.get("/{conversation_id}/history", response_model=List[ChatMessageResponse])
+async def get_chat_history_endpoint(
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取聊天历史记录"""
+    api_logger.info(f"获取聊天历史: conversation_id={conversation_id}, user_id={current_user.id}")
+    
+    # 验证会话存在且属于当前用户
+    chat = await get_chat(db, conversation_id)
+    if not chat or chat.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="聊天会话不存在或无权访问"
+        )
+    
+    # 获取聊天消息
+    messages = await get_chat_messages(db, conversation_id)
+    
+    # 为每个消息加载工具调用信息
+    from backend.crud.tool_call import get_tool_calls_by_message
+    
+    result = []
+    for msg in messages:
+        # 获取消息的工具调用记录
+        tool_calls = await get_tool_calls_by_message(db, msg.id)
+        
+        # 转换为响应格式
+        message_data = {
+            "id": msg.id,
+            "role": msg.role,
+            "content": msg.content,
+            "tokens": msg.tokens,
+            "prompt_tokens": msg.prompt_tokens,
+            "total_tokens": msg.total_tokens,
+            "agent_id": msg.agent_id,
+            "created_at": msg.created_at,
+            "updated_at": msg.updated_at,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "tool_call_id": tc.tool_call_id,
+                    "tool_name": tc.tool_name,
+                    "function_name": tc.function_name,
+                    "arguments": tc.arguments,
+                    "status": tc.status,
+                    "result": tc.result,
+                    "error_message": tc.error_message,
+                    "started_at": tc.started_at,
+                    "completed_at": tc.completed_at
+                } for tc in tool_calls
+            ]
+        }
+        result.append(message_data)
+    
+    return result 

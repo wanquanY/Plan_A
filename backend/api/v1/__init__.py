@@ -1,11 +1,3 @@
-from fastapi import APIRouter
+from .api import api_router
 
-from backend.api.v1 import auth, users, chat, agent, note, tools
- 
-api_router = APIRouter()
-api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
-api_router.include_router(users.router, prefix="/users", tags=["users"])
-api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
-api_router.include_router(agent.router, prefix="/agent", tags=["agent"])
-api_router.include_router(note.router, prefix="/note", tags=["note"]) 
-api_router.include_router(tools.router, prefix="/tools", tags=["tools"]) 
+__all__ = ["api_router"] 

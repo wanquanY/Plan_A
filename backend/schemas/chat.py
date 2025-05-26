@@ -30,7 +30,7 @@ class AskAgainRequest(BaseModel):
 class ChatCompletionResponse(BaseModel):
     """聊天完成响应"""
     message: Message = Field(..., description="AI生成的消息")
-    usage: Optional[Dict[str, Any]] = Field(None, description="token使用统计")
+    usage: Dict[str, Any] = Field(None, description="token使用统计")
     conversation_id: Optional[int] = Field(None, description="聊天会话ID")
 
 
@@ -84,9 +84,10 @@ class ChatMessageResponse(ChatMessageBase):
     total_tokens: Optional[int] = None
     agent_id: Optional[int] = None
     agent_info: Optional[Dict[str, Any]] = None  # 包含agent名称、头像等信息
+    tool_calls: List[Dict[str, Any]] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ChatBase(BaseModel):
@@ -114,9 +115,10 @@ class ChatResponse(ChatBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     messages: Optional[List[ChatMessageResponse]] = []
+    is_active: bool
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ChatListResponse(BaseModel):
@@ -130,4 +132,21 @@ class ChatListResponse(BaseModel):
     last_message: Optional[str] = None
 
     class Config:
-        orm_mode = True 
+        from_attributes = True
+
+
+class ToolCallInfo(BaseModel):
+    """工具调用信息"""
+    id: int
+    tool_call_id: str
+    tool_name: str
+    function_name: str
+    arguments: Optional[Dict[str, Any]]
+    status: str
+    result: Optional[Dict[str, Any]]
+    error_message: Optional[str]
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True 

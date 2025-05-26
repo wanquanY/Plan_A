@@ -10,12 +10,14 @@ from datetime import datetime
 from backend.core.config import settings
 from backend.schemas.chat import Message, ChatRequest, ChatCompletionResponse
 from backend.utils.logging import api_logger
-from backend.crud.chat import create_chat, get_chat, add_message, get_chat_messages, update_chat_agent
+from backend.crud.chat import create_chat, get_chat, add_message, get_chat_messages, update_chat_agent, update_chat_title
 from backend.crud.agent import agent as agent_crud
 from backend.services.memory import memory_service
 from backend.services.tools import tools_service
+from backend.services.title_generator import generate_title_with_ai
 from backend.config.tools_config import AVAILABLE_TOOLS, get_tools_by_provider, get_tool_by_name
 from backend.config.tools_manager import tools_manager
+from backend.crud.tool_call import create_tool_call, update_tool_call_status, get_or_create_tool_call
 
 # 获取配置并进行调整
 api_key = settings.OPENAI_API_KEY
@@ -46,6 +48,37 @@ async_client = AsyncOpenAI(
 api_logger.info(f"OpenAI客户端初始化完成 - 同步客户端: {client.base_url}, 异步客户端: {async_client.base_url}")
 
 
+async def auto_generate_title_if_needed(db: AsyncSession, conversation_id: int, user_content: str):
+    """
+    如果需要，自动生成会话标题
+    
+    Args:
+        db: 数据库会话
+        conversation_id: 会话ID
+        user_content: 用户消息内容
+    """
+    try:
+        # 获取当前会话信息
+        current_chat = await get_chat(db, conversation_id)
+        if current_chat and current_chat.title == "新对话":
+            # 获取会话的消息数量，判断是否是第一次对话
+            messages_count = await get_chat_messages(db, conversation_id)
+            # 只要是新会话（标题为"新对话"）且有用户消息，就生成标题
+            user_messages = [msg for msg in messages_count if msg.role == "user"]
+            if len(user_messages) == 1:  # 只有一条用户消息，说明是第一次对话
+                api_logger.info(f"检测到第一次对话，开始自动生成标题，会话ID: {conversation_id}")
+                
+                # 使用用户的第一条消息生成标题
+                generated_title = await generate_title_with_ai(conversation_id, user_content)
+                
+                # 更新会话标题
+                await update_chat_title(db, conversation_id, generated_title)
+                api_logger.info(f"自动生成标题成功: {generated_title}, 会话ID: {conversation_id}")
+    except Exception as title_error:
+        api_logger.error(f"自动生成标题失败: {str(title_error)}")
+        # 标题生成失败不影响主要功能，继续执行
+
+
 # 获取Agent配置的工具列表
 def get_agent_tools(agent):
     """根据Agent的配置返回可用工具列表"""
@@ -60,10 +93,10 @@ def get_agent_tools(agent):
 
 
 # 处理工具调用请求
-async def handle_tool_calls(tool_calls, agent, db: Optional[AsyncSession] = None, conversation_id: Optional[int] = None):
+async def handle_tool_calls(tool_calls, agent, db: Optional[AsyncSession] = None, conversation_id: Optional[int] = None, message_id: Optional[int] = None):
     """处理工具调用请求并返回结果"""
     results = []
-    tool_calls_data = []  # 用于保存到数据库的工具调用信息
+    tool_calls_data = []  # 用于兼容性，保留原有的返回格式
     
     for tool_call in tool_calls:
         tool_call_id = tool_call.id
@@ -72,7 +105,7 @@ async def handle_tool_calls(tool_calls, agent, db: Optional[AsyncSession] = None
         
         api_logger.info(f"处理工具调用: {function_name}, 参数: {function_args}")
         
-        # 初始化工具调用数据
+        # 初始化工具调用数据（用于兼容性）
         tool_call_data = {
             "id": tool_call_id,
             "name": function_name,
@@ -159,6 +192,25 @@ async def handle_tool_calls(tool_calls, agent, db: Optional[AsyncSession] = None
             tool_call_data["result"] = tool_result
             tool_call_data["completed_at"] = datetime.now().isoformat()
             
+            # 只在工具调用成功完成时保存到数据库
+            if db and conversation_id and message_id:
+                try:
+                    await create_tool_call(
+                        db=db,
+                        message_id=message_id,
+                        conversation_id=conversation_id,
+                        tool_call_id=tool_call_id,
+                        tool_name=function_name,
+                        function_name=function_name,
+                        arguments=function_args,
+                        agent_id=agent.id if agent else None,
+                        status="completed",
+                        result=tool_result
+                    )
+                    api_logger.debug(f"工具调用完成记录已保存: {tool_call_id}")
+                except Exception as e:
+                    api_logger.error(f"保存工具调用记录失败: {str(e)}")
+            
             results.append({
                 "tool_call_id": tool_call_id,
                 "role": "tool",
@@ -173,6 +225,25 @@ async def handle_tool_calls(tool_calls, agent, db: Optional[AsyncSession] = None
             tool_call_data["status"] = "error"
             tool_call_data["error"] = str(e)
             tool_call_data["completed_at"] = datetime.now().isoformat()
+            
+            # 只在工具调用失败时保存错误记录到数据库
+            if db and conversation_id and message_id:
+                try:
+                    await create_tool_call(
+                        db=db,
+                        message_id=message_id,
+                        conversation_id=conversation_id,
+                        tool_call_id=tool_call_id,
+                        tool_name=function_name,
+                        function_name=function_name,
+                        arguments=function_args,
+                        agent_id=agent.id if agent else None,
+                        status="error",
+                        error_message=str(e)
+                    )
+                    api_logger.debug(f"工具调用错误记录已保存: {tool_call_id}")
+                except Exception as db_e:
+                    api_logger.error(f"保存工具调用错误记录失败: {str(db_e)}")
             
             # 返回错误结果
             results.append({
@@ -356,7 +427,7 @@ async def generate_chat_response(
                 api_params["tools"] = tools
             
             # 调用API
-            response = client.chat.completions.create(**api_params)
+            response = await async_client.chat.completions.create(**api_params)
             
             api_logger.debug(f"API原始响应类型: {type(response)}")
             # 记录原始响应内容
@@ -375,8 +446,25 @@ async def generate_chat_response(
             if tool_calls:
                 api_logger.info(f"检测到工具调用请求: {len(tool_calls)} 个工具调用")
                 
+                # 先保存AI消息（不包含工具调用数据）
+                ai_message = None
+                if db and user_id and conversation_id:
+                    ai_message = await add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=assistant_message.content or "",
+                        agent_id=agent_id
+                    )
+                
                 # 处理工具调用
-                tool_results, tool_calls_data = await handle_tool_calls(tool_calls, current_agent, db, conversation_id)
+                tool_results, tool_calls_data = await handle_tool_calls(
+                    tool_calls, 
+                    current_agent, 
+                    db, 
+                    conversation_id,
+                    message_id=ai_message.id if ai_message else None
+                )
                 
                 # 将工具调用和结果添加到消息列表
                 messages.append({
@@ -401,7 +489,7 @@ async def generate_chat_response(
                 api_logger.info(f"使用工具结果调用第二次API")
                 
                 # 第二次调用API，包含工具结果
-                second_response = client.chat.completions.create(
+                second_response = await async_client.chat.completions.create(
                     model=use_model,
                     messages=messages,
                     max_tokens=max_tokens,
@@ -417,21 +505,20 @@ async def generate_chat_response(
                 # 将最终的助手消息添加到记忆中
                 memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
                 
-                # 如果提供了数据库会话，保存AI回复（包含工具调用信息）
-                if db and user_id and conversation_id:
-                    await add_message(
-                        db=db,
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=assistant_content,
-                        tokens=token_usage.completion_tokens,
-                        prompt_tokens=token_usage.prompt_tokens,
-                        total_tokens=token_usage.total_tokens,
-                        agent_id=agent_id,
-                        tool_calls_data=tool_calls_data
-                    )
+                # 更新AI消息的内容为最终响应
+                if ai_message:
+                    ai_message.content = assistant_content
+                    ai_message.tokens = token_usage.completion_tokens
+                    ai_message.prompt_tokens = token_usage.prompt_tokens
+                    ai_message.total_tokens = token_usage.total_tokens
+                    await db.commit()
+                    await db.refresh(ai_message)
                 
                 api_logger.info(f"工具调用完成，最终响应长度: {len(assistant_content)}")
+                
+                # 检查是否需要自动生成标题
+                if db and conversation_id and user_content:
+                    await auto_generate_title_if_needed(db, conversation_id, user_content)
             else:
                 # 常规响应处理
                 token_usage = response.usage
@@ -455,6 +542,10 @@ async def generate_chat_response(
                 
                 api_logger.info(f"OpenAI API调用成功, 生成文本长度: {len(assistant_content)}")
             
+            # 检查是否需要自动生成标题
+            if db and conversation_id and user_content:
+                await auto_generate_title_if_needed(db, conversation_id, user_content)
+            
             return ChatCompletionResponse(
                 message=Message(
                     content=assistant_content
@@ -473,7 +564,7 @@ async def generate_chat_response(
             if "无可用渠道" in str(api_error) and current_agent and use_model != model:
                 api_logger.info(f"尝试使用默认模型 {model} 重新请求")
                 try:
-                    response = client.chat.completions.create(
+                    response = await async_client.chat.completions.create(
                         model=model,
                         messages=messages,
                         max_tokens=max_tokens,
@@ -505,6 +596,10 @@ async def generate_chat_response(
                             agent_id=agent_id
                         )
                     
+                    # 检查是否需要自动生成标题
+                    if db and conversation_id and user_content:
+                        await auto_generate_title_if_needed(db, conversation_id, user_content)
+                    
                     return ChatCompletionResponse(
                         message=Message(
                             content=assistant_content
@@ -529,6 +624,10 @@ async def generate_chat_response(
                     role="assistant",
                     content=error_message
                 )
+            
+            # 检查是否需要自动生成标题
+            if db and conversation_id and user_content:
+                await auto_generate_title_if_needed(db, conversation_id, user_content)
             
             return ChatCompletionResponse(
                 message=Message(
@@ -558,6 +657,10 @@ async def generate_chat_response(
                 )
             except Exception as db_error:
                 api_logger.error(f"保存错误信息到数据库失败: {str(db_error)}")
+        
+        # 检查是否需要自动生成标题
+        if db and conversation_id and user_content:
+            await auto_generate_title_if_needed(db, conversation_id, user_content)
         
         return ChatCompletionResponse(
             message=Message(
@@ -758,18 +861,18 @@ async def generate_chat_stream(
                 api_params["tools"] = tools
                 api_logger.info(f"流式响应中添加工具配置: {len(tools)} 个工具")
             
-            # 直接使用同步客户端，但开启流式响应
-            response = client.chat.completions.create(**api_params)
+            # 直接使用异步客户端，但开启流式响应
+            response = await async_client.chat.completions.create(**api_params)
             
             api_logger.debug(f"获取到流式响应: {type(response)}")
             
-            # 这里response是一个迭代器，需要遍历每个部分
+            # 这里response是一个异步迭代器，需要使用async for遍历每个部分
             collected_content = ""
             collected_tool_calls = []
             is_first_chunk = True
             chunk_count = 0
             
-            for chunk in response:
+            async for chunk in response:
                 # 记录流式响应的每个块的原始内容
                 chunk_count += 1
                 api_logger.debug(f"流式响应块 #{chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
@@ -862,58 +965,25 @@ async def generate_chat_stream(
             api_logger.info(f"流式响应完整内容: {collected_content}")
             api_logger.info(f"收集到的工具调用: {len(collected_tool_calls)} 个")
             
-            # 逐个处理工具调用，发送状态更新
-            tool_results = []
-            all_tool_calls_data = []
-            
-            # 构造工具调用对象
-            class ToolCall:
-                def __init__(self, id, type, function):
-                    self.id = id
-                    self.type = type
-                    self.function = function
-            
-            class Function:
-                def __init__(self, name, arguments):
-                    self.name = name
-                    self.arguments = arguments
-            
-            for tc in collected_tool_calls:
-                if tc is None:
-                    continue
-                    
-                # 构造工具调用对象
-                func = Function(tc['function']['name'], tc['function']['arguments'])
-                tool_call_obj = ToolCall(tc['id'], tc['type'], func)
+            # 先保存AI消息（如果有内容）
+            ai_message = None
+            if db and user_id and conversation_id and collected_content:
+                # 估算token数量（简单实现）
+                tokens = len(collected_content) // 4
+                prompt_tokens = len(str(messages)) // 4
+                total_tokens = tokens + prompt_tokens
                 
-                # 发送工具调用执行状态
-                tool_status = {
-                    "type": "tool_call_executing",
-                    "tool_call_id": tool_call_obj.id,
-                    "tool_name": tool_call_obj.function.name,
-                    "status": "executing"
-                }
-                yield ("", conversation_id, tool_status)
-                
-                # 执行单个工具调用
-                single_result, single_tool_data = await handle_tool_calls([tool_call_obj], current_agent, db, conversation_id)
-                tool_results.extend(single_result)
-                all_tool_calls_data.extend(single_tool_data)
-                
-                # 发送工具调用完成状态，包含结果内容
-                tool_result_content = single_result[0]["content"] if single_result else ""
-                tool_status = {
-                    "type": "tool_call_completed",
-                    "tool_call_id": tool_call_obj.id,
-                    "tool_name": tool_call_obj.function.name,
-                    "status": "completed",
-                    "result": tool_result_content  # 添加工具调用结果
-                }
-                yield ("", conversation_id, tool_status)
-                
-                # 在工具调用完成后，发送一个特殊的文本标记，表示工具调用已完成
-                tool_completion_text = f"\n\n🔧 {tool_call_obj.function.name} 执行完成\n\n"
-                yield (tool_completion_text, conversation_id)
+                ai_message = await add_message(
+                    db=db,
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=collected_content,
+                    tokens=tokens,
+                    prompt_tokens=prompt_tokens,
+                    total_tokens=total_tokens,
+                    agent_id=agent_id
+                )
+                api_logger.info(f"AI消息已保存: id={ai_message.id}")
             
             # 递归处理工具调用，支持无限次调用
             async for content_chunk in process_tool_calls_recursively_stream(
@@ -928,7 +998,8 @@ async def generate_chat_stream(
                 tools, 
                 has_tools, 
                 conversation_id,
-                db
+                db,
+                message_id=ai_message.id if ai_message else None  # 传递AI消息ID
             ):
                 if isinstance(content_chunk, tuple):
                     # 工具状态信息
@@ -938,48 +1009,21 @@ async def generate_chat_stream(
                     yield content_chunk
                     collected_content += content_chunk
             
-            # 保存最终内容到数据库
-            if db and user_id and conversation_id and collected_content:
-                # 估算token数量（简单实现）
-                tokens = len(collected_content) // 4
-                prompt_tokens = len(str(messages)) // 4
-                total_tokens = tokens + prompt_tokens
-                
-                # 如果有工具调用，需要收集工具调用数据
-                final_tool_calls_data = None
-                if collected_tool_calls:
-                    # 这里需要从工具调用处理中获取完整的工具调用数据
-                    # 由于流式处理的复杂性，我们先保存基本信息
-                    final_tool_calls_data = []
-                    for tc in collected_tool_calls:
-                        if tc:  # 跳过None值
-                            final_tool_calls_data.append({
-                                "id": tc.get("id", ""),
-                                "name": tc.get("function", {}).get("name", ""),
-                                "arguments": json.loads(tc.get("function", {}).get("arguments", "{}")),
-                                "status": "completed",  # 流式响应完成时默认为completed
-                                "result": None,  # 在递归处理中会更新
-                                "error": None,
-                                "started_at": datetime.now().isoformat(),
-                                "completed_at": datetime.now().isoformat()
-                            })
-                
-                await add_message(
-                    db=db,
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=collected_content,
-                    tokens=tokens,
-                    prompt_tokens=prompt_tokens,
-                    total_tokens=total_tokens,
-                    agent_id=agent_id,
-                    tool_calls_data=final_tool_calls_data
-                )
-                
-                # 保存到记忆
+            # 如果有额外的内容需要更新到数据库
+            if ai_message and collected_content != ai_message.content:
+                ai_message.content = collected_content
+                await db.commit()
+                await db.refresh(ai_message)
+                api_logger.info(f"更新AI消息内容，最终长度: {len(collected_content)}")
+            
+            # 保存到记忆
+            if collected_content:
                 memory_service.add_assistant_message(conversation_id, collected_content, user_id)
-                
                 api_logger.info(f"流式聊天完成，内容长度: {len(collected_content)}")
+                
+                # 检查是否需要自动生成标题
+                if db and conversation_id and user_content:
+                    await auto_generate_title_if_needed(db, conversation_id, user_content)
         
         except Exception as api_error:
             api_logger.error(f"流式API调用出错: {str(api_error)}", exc_info=True)
@@ -1003,17 +1047,17 @@ async def generate_chat_stream(
                         fallback_api_params["tools"] = tools
                     
                     # 使用默认模型重试
-                    response = client.chat.completions.create(**fallback_api_params)
+                    response = await async_client.chat.completions.create(**fallback_api_params)
                     
                     api_logger.debug(f"使用默认模型获取到流式响应: {type(response)}")
                     
-                    # 这里response是一个迭代器，需要遍历每个部分
+                    # 这里response是一个异步迭代器，需要使用async for遍历每个部分
                     collected_content = ""
                     collected_tool_calls = []
                     is_first_chunk = True
                     chunk_count = 0
                     
-                    for chunk in response:
+                    async for chunk in response:
                         # 记录流式响应的每个块的原始内容
                         chunk_count += 1
                         api_logger.debug(f"流式响应块 #{chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
@@ -1097,39 +1141,25 @@ async def generate_chat_stream(
                     api_logger.info(f"流式响应完整内容: {collected_content}")
                     api_logger.info(f"收集到的工具调用: {len(collected_tool_calls)} 个")
                     
-                    # 逐个处理工具调用，发送状态更新
-                    tool_results = []
-                    all_tool_calls_data = []
-                    
-                    for tool_call_obj in collected_tool_calls:
-                        # 发送工具调用执行状态
-                        tool_status = {
-                            "type": "tool_call_executing",
-                            "tool_call_id": tool_call_obj.id,
-                            "tool_name": tool_call_obj.function.name,
-                            "status": "executing"
-                        }
-                        yield ("", conversation_id, tool_status)
+                    # 先保存AI消息（如果有内容）
+                    ai_message = None
+                    if db and user_id and conversation_id and collected_content:
+                        # 估算token数量（简单实现）
+                        tokens = len(collected_content) // 4
+                        prompt_tokens = len(str(messages)) // 4
+                        total_tokens = tokens + prompt_tokens
                         
-                        # 执行单个工具调用
-                        single_result, single_tool_data = await handle_tool_calls([tool_call_obj], current_agent, db, conversation_id)
-                        tool_results.extend(single_result)
-                        all_tool_calls_data.extend(single_tool_data)
-                        
-                        # 发送工具调用完成状态，包含结果内容
-                        tool_result_content = single_result[0]["content"] if single_result else ""
-                        tool_status = {
-                            "type": "tool_call_completed",
-                            "tool_call_id": tool_call_obj.id,
-                            "tool_name": tool_call_obj.function.name,
-                            "status": "completed",
-                            "result": tool_result_content  # 添加工具调用结果
-                        }
-                        yield ("", conversation_id, tool_status)
-                        
-                        # 在工具调用完成后，发送一个特殊的文本标记，表示工具调用已完成
-                        tool_completion_text = f"\n\n🔧 {tool_call_obj.function.name} 执行完成\n\n"
-                        yield (tool_completion_text, conversation_id)
+                        ai_message = await add_message(
+                            db=db,
+                            conversation_id=conversation_id,
+                            role="assistant",
+                            content=collected_content,
+                            tokens=tokens,
+                            prompt_tokens=prompt_tokens,
+                            total_tokens=total_tokens,
+                            agent_id=agent_id
+                        )
+                        api_logger.info(f"AI消息已保存: id={ai_message.id}")
                     
                     # 递归处理工具调用，支持无限次调用
                     async for content_chunk in process_tool_calls_recursively_stream(
@@ -1144,7 +1174,8 @@ async def generate_chat_stream(
                         tools, 
                         has_tools, 
                         conversation_id,
-                        db
+                        db,
+                        message_id=ai_message.id if ai_message else None  # 传递AI消息ID
                     ):
                         if isinstance(content_chunk, tuple):
                             # 工具状态信息
@@ -1169,14 +1200,17 @@ async def generate_chat_stream(
                             tokens=tokens,
                             prompt_tokens=prompt_tokens,
                             total_tokens=total_tokens,
-                            agent_id=agent_id,
-                            tool_calls_data=all_tool_calls_data
+                            agent_id=agent_id
                         )
                         
                         # 保存到记忆
                         memory_service.add_assistant_message(conversation_id, collected_content, user_id)
                         
                         api_logger.info(f"流式聊天完成，内容长度: {len(collected_content)}")
+                        
+                        # 检查是否需要自动生成标题
+                        if db and conversation_id and user_content:
+                            await auto_generate_title_if_needed(db, conversation_id, user_content)
                 
                 except Exception as fallback_error:
                     api_logger.error(f"使用默认模型 {model} 流式响应仍然失败: {str(fallback_error)}", exc_info=True)
@@ -1295,6 +1329,8 @@ async def process_tool_calls_recursively(
     tools: List[Dict[str, Any]], 
     has_tools: bool, 
     conversation_id: int,
+    db: Optional[AsyncSession] = None,
+    message_id: Optional[int] = None,
     max_iterations: int = 10  # 防止无限循环
 ) -> str:
     """
@@ -1354,8 +1390,14 @@ async def process_tool_calls_recursively(
             tool_call_obj = ToolCall(tc['id'], tc['type'], func)
             tool_call_objects.append(tool_call_obj)
         
-        # 处理工具调用
-        tool_results, tool_calls_data = await handle_tool_calls(tool_call_objects, agent, db, conversation_id)
+        # 处理工具调用（不保存到数据库，因为上面已经保存过了）
+        tool_results, tool_calls_data = await handle_tool_calls(
+            tool_call_objects, 
+            agent, 
+            None,  # 不传递数据库连接，避免重复保存
+            conversation_id,
+            message_id=None  # 不保存到数据库
+        )
         
         # 将工具调用和结果添加到消息列表
         messages.append({
@@ -1380,7 +1422,7 @@ async def process_tool_calls_recursively(
         api_logger.info(f"第 {iteration} 轮工具调用完成，调用下一次API")
         
         # 调用API获取下一次响应
-        next_response = client.chat.completions.create(
+        next_response = await async_client.chat.completions.create(
             model=use_model,
             messages=messages,
             max_tokens=max_tokens,
@@ -1435,6 +1477,7 @@ async def process_tool_calls_recursively_stream(
     has_tools: bool, 
     conversation_id: int,
     db: Optional[AsyncSession] = None,
+    message_id: Optional[int] = None,
     max_iterations: int = 10  # 防止无限循环
 ):
     """
@@ -1444,6 +1487,7 @@ async def process_tool_calls_recursively_stream(
     current_content = content
     current_tool_calls = tool_calls
     
+    # 进行递归处理
     while current_tool_calls and iteration < max_iterations:
         iteration += 1
         api_logger.info(f"开始第 {iteration} 轮工具调用处理，共 {len(current_tool_calls)} 个工具调用")
@@ -1488,14 +1532,44 @@ async def process_tool_calls_recursively_stream(
                 self.name = name
                 self.arguments = arguments
         
-        tool_call_objects = []
+        # 处理当前的工具调用
+        tool_results = []
         for tc in valid_tool_calls:
+            # 构造工具调用对象
             func = Function(tc['function']['name'], tc['function']['arguments'])
             tool_call_obj = ToolCall(tc['id'], tc['type'], func)
-            tool_call_objects.append(tool_call_obj)
-        
-        # 处理工具调用
-        tool_results, tool_calls_data = await handle_tool_calls(tool_call_objects, agent, db, conversation_id)
+            
+            # 发送工具调用执行状态
+            tool_status = {
+                "type": "tool_call_executing",
+                "tool_call_id": tool_call_obj.id,
+                "tool_name": tool_call_obj.function.name,
+                "status": "executing"
+            }
+            yield ("", conversation_id, tool_status)
+            
+            # 执行单个工具调用（传递message_id关联到特定消息）
+            single_result, single_tool_data = await handle_tool_calls(
+                [tool_call_obj], 
+                agent, 
+                db,  # 传递数据库连接，保存工具调用记录
+                conversation_id,
+                message_id=message_id  # 关联到特定消息
+            )
+            
+            # 收集工具结果
+            tool_results.extend(single_result)
+            
+            # 发送工具调用完成状态，包含结果内容
+            tool_result_content = single_result[0]["content"] if single_result else ""
+            tool_status = {
+                "type": "tool_call_completed",
+                "tool_call_id": tool_call_obj.id,
+                "tool_name": tool_call_obj.function.name,
+                "status": "completed",
+                "result": tool_result_content
+            }
+            yield ("", conversation_id, tool_status)
         
         # 将工具调用和结果添加到消息列表
         messages.append({
@@ -1520,7 +1594,7 @@ async def process_tool_calls_recursively_stream(
         api_logger.info(f"第 {iteration} 轮工具调用完成，调用下一次流式API")
         
         # 调用API获取下一次响应（流式）
-        next_response = client.chat.completions.create(
+        next_response = await async_client.chat.completions.create(
             model=use_model,
             messages=messages,
             max_tokens=max_tokens,
@@ -1535,7 +1609,7 @@ async def process_tool_calls_recursively_stream(
         next_collected_tool_calls = []
         next_chunk_count = 0
         
-        for chunk in next_response:
+        async for chunk in next_response:
             next_chunk_count += 1
             api_logger.debug(f"第 {iteration} 轮流式响应块 #{next_chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
             
@@ -1569,11 +1643,11 @@ async def process_tool_calls_recursively_stream(
                             if tool_call.function and tool_call.function.arguments:
                                 existing_call['function']['arguments'] += tool_call.function.arguments
                                 api_logger.debug(f"第 {iteration} 轮累积工具调用参数: {existing_call['id']}, 当前参数: {existing_call['function']['arguments']}")
-                            
+                                
                             # 更新函数名（如果提供）
                             if tool_call.function and tool_call.function.name:
                                 existing_call['function']['name'] = tool_call.function.name
-                            
+                                
                             # 更新ID（如果提供）
                             if tool_call.id:
                                 existing_call['id'] = tool_call.id
