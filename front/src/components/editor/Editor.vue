@@ -1333,6 +1333,32 @@ defineExpose({
   overflow-y: auto; /* 大纲内容如果过长，允许滚动 */
 }
 
+/* 大纲滚动条美化 */
+.document-outline::-webkit-scrollbar {
+  width: 4px;
+}
+
+.document-outline::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 2px;
+}
+
+.document-outline::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  transition: background 0.2s ease;
+}
+
+.document-outline::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Firefox 大纲滚动条样式 */
+.document-outline {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+}
+
 .editor-main {
   flex: 1;
   position: relative;
@@ -1340,6 +1366,36 @@ defineExpose({
   display: flex;
   flex-direction: column;
   min-height: 0; /* 允许收缩 */
+}
+
+/* 美化滚动条样式 */
+.editor-main::-webkit-scrollbar {
+  width: 6px;
+}
+
+.editor-main::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 3px;
+}
+
+.editor-main::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.editor-main::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.editor-main::-webkit-scrollbar-thumb:active {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+/* Firefox 滚动条样式 */
+.editor-main {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
 }
 
 .editor-footer {
