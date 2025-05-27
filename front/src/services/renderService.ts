@@ -710,14 +710,15 @@ export const setupMermaidAutoRender = () => {
     
     // 创建一个MutationObserver来监视DOM变化
     const observer = new MutationObserver((mutations) => {
-      let hasMermaidContent = false;
-      let hasMarkmapContent = false;
-      
-      // 如果渲染正在进行中，不再继续检测
-      if (renderingInProgress) return;
-      
-      // 检查变化中是否有新增的mermaid或markmap内容
-      mutations.forEach(mutation => {
+      try {
+        let hasMermaidContent = false;
+        let hasMarkmapContent = false;
+        
+        // 如果渲染正在进行中，不再继续检测
+        if (renderingInProgress) return;
+        
+        // 检查变化中是否有新增的mermaid或markmap内容
+        mutations.forEach(mutation => {
         if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
           mutation.addedNodes.forEach(node => {
             if (node.nodeType === Node.ELEMENT_NODE) {
@@ -764,6 +765,9 @@ export const setupMermaidAutoRender = () => {
       }
       
       // 不再自动调用renderPending，而是等待流式输出结束时的明确调用
+      } catch (error) {
+        console.error('MutationObserver处理DOM变化时出错:', error);
+      }
     });
     
     // 开始监听整个文档
@@ -776,7 +780,13 @@ export const setupMermaidAutoRender = () => {
     
     // 返回observer以及触发渲染的方法，以便需要时停止监听或手动触发渲染
     return {
-      disconnect: () => observer.disconnect(),
+      disconnect: () => {
+        try {
+          observer.disconnect();
+        } catch (error) {
+          console.error('断开MutationObserver连接时出错:', error);
+        }
+      },
       renderPending: (force = false) => {
         // 如果已有渲染正在进行中，取消之前的延迟执行
         if (renderTimeout) {

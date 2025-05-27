@@ -54,8 +54,10 @@
       @agent-response-chunk="onAgentResponseChunk"
       @agent-response-complete="onAgentResponseComplete"
       @agent-response-error="onAgentResponseError"
+      @agent-tool-status="onAgentToolStatus"
     />
     <AgentInputModal
+      ref="agentInputModalRef"
       :visible="showAgentModal"
       :position="modalPosition"
       :editor-info="editorInfo"
@@ -120,12 +122,14 @@ const currentSentMessageData = ref(null);
 const conversationHistory = ref([]); // { user: string, agent: string }[]
 const historyDisplayIndex = ref(-1);
 const lastLoadedSessionId = ref(null); // 跟踪最后加载的会话ID，避免重复加载
+const currentToolStatus = ref(null); // 当前工具状态
 
 // 组件引用
 const editorContentRef = ref(null);
 const agentResponseHandlerRef = ref(null);
 const documentOutlineRef = ref(null);
 const mentionHandlerRef = ref(null);
+const agentInputModalRef = ref(null);
 
 // 确保 toggleOutline 方法存在且正确
 const toggleOutline = () => {
@@ -767,6 +771,16 @@ const handleAgentMessage = (data) => {
 const onAgentResponseChunk = (chunk: string) => {
   console.log('[Editor.vue] Received chunk:', chunk);
   currentAgentResponse.value += chunk;
+};
+
+const onAgentToolStatus = (toolStatus: any) => {
+  console.log('[Editor.vue] Received tool status:', toolStatus);
+  currentToolStatus.value = toolStatus;
+  
+  // 如果弹窗模式下的AgentInputModal有handleToolStatus方法，调用它
+  if (showAgentModal.value && agentInputModalRef.value && typeof agentInputModalRef.value.handleToolStatus === 'function') {
+    agentInputModalRef.value.handleToolStatus(toolStatus);
+  }
 };
 
 const onAgentResponseComplete = (data: { responseText: string, conversationId?: string | number }) => {

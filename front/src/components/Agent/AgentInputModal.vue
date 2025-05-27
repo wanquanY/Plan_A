@@ -10,13 +10,58 @@
       <div v-if="isAgentResponding || agentResponse || historyLength > 0" class="agent-response-area">
         <!-- 显示流式响应内容 -->
         <div v-if="agentResponse" class="response-content">
-          <!-- 正在打字时显示简单文本和打字指示器 -->
+          <!-- 正在打字时显示混合内容（文本 + 工具状态按流式顺序） -->
           <div v-if="isAgentResponding" class="typing-content">
-            <span>{{ agentResponse }}</span>
+            <!-- 如果有contentChunks，使用新的块结构 -->
+            <div v-if="parsedContentChunks && parsedContentChunks.length > 0">
+              <!-- 按时间顺序渲染所有内容块 -->
+              <template v-for="(chunk, index) in getSortedContentChunks(parsedContentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
+                <!-- 文本块 - 内联显示 -->
+                <span v-if="chunk.type === 'text'" v-html="formatTextWithBreaks(chunk.content)" class="text-chunk"></span>
+                <!-- 工具状态块 - 独立成行 -->
+                <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
+                  <AgentToolCall 
+                    :tool-name="chunk.tool_name || ''"
+                    :status="chunk.status || ''"
+                    :tool-call-id="chunk.tool_call_id || ''"
+                    :result="chunk.result"
+                    :error="chunk.error"
+                    :key="`tool-${chunk.tool_call_id}-${chunk.status}`"
+                  />
+                </div>
+              </template>
+            </div>
+            <!-- 兼容旧的消息格式 -->
+            <div v-else>
+              <span v-html="formatTextWithBreaks(agentResponse)"></span>
+            </div>
             <span class="typing-indicator">|</span>
           </div>
-          <!-- 打字完成后显示渲染的markdown内容 -->
-          <div v-else class="markdown-content" v-html="renderMarkdown(agentResponse)"></div>
+          
+          <!-- 打字完成后显示最终内容 -->
+          <div v-else class="markdown-content">
+            <!-- 如果有contentChunks，使用新的块结构 -->
+            <div v-if="parsedContentChunks && parsedContentChunks.length > 0">
+              <!-- 按时间顺序渲染所有内容块 -->
+              <template v-for="(chunk, index) in getSortedContentChunks(parsedContentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
+                <!-- 文本块 - 内联显示 -->
+                <span v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content)" class="text-chunk"></span>
+                <!-- 工具状态块 - 独立成行 -->
+                <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
+                  <AgentToolCall 
+                    :tool-name="chunk.tool_name || ''"
+                    :status="chunk.status || 'completed'"
+                    :tool-call-id="chunk.tool_call_id || ''"
+                    :result="chunk.result"
+                    :error="chunk.error"
+                    :key="`tool-completed-${chunk.tool_call_id}`"
+                  />
+                </div>
+              </template>
+            </div>
+            <!-- 兼容旧的消息格式（历史消息） -->
+            <div v-else v-html="renderMarkdown(agentResponse)"></div>
+          </div>
           
           <!-- 操作按钮（仅图标，与侧边栏样式一致） -->
           <div v-if="!isAgentResponding" class="message-actions">
@@ -95,11 +140,14 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue';
 import UnifiedInput from '../unified-input/UnifiedInput.vue';
+import AgentToolCall from './AgentToolCall.vue';
 import MermaidRenderer from '../rendering/MermaidRenderer.vue';
 import CodeBlock from '../rendering/CodeBlock.vue';
 import MarkMap from '../rendering/MarkMap.vue';
 import { markdownToHtml } from '../../services/markdownService';
 import { renderMermaidDynamically, renderCodeBlocks, renderMarkMaps } from '../../services/renderService';
+import { parseAgentMessage, extractTextFromInteractionFlow } from '../../utils/messageParser';
+import { useStreamingResponse } from '../../composables/useStreamingResponse';
 
 const PROSEMIRROR_PADDING = 16; // 编辑器内边距 (px)
 const FIXED_MODAL_WIDTH = 650; // 弹窗固定宽度 (px)
@@ -145,22 +193,192 @@ const mermaidRenderer = ref(null);
 const codeBlockRenderer = ref(null);
 const markMapRenderer = ref(null);
 
+// 使用streaming response composable
+const { 
+  getSortedContentChunks, 
+  handleToolStatus: handleToolStatusUpdate,
+  handleStreamingText,
+  handleCompleteResponse 
+} = useStreamingResponse();
+
+// 当前消息对象，用于流式响应处理
+const currentMessage = ref({
+  content: '',
+  contentChunks: [],
+  lastTextLength: 0,
+  baseTimestamp: new Date(),
+  isTyping: false
+});
+
+// 解析后的内容块
+const parsedContentChunks = computed(() => {
+  // 如果currentMessage中有contentChunks（无论是否正在响应），优先使用它们
+  if (currentMessage.value.contentChunks && currentMessage.value.contentChunks.length > 0) {
+    console.log('[AgentInputModal] 使用currentMessage的contentChunks，数量:', currentMessage.value.contentChunks.length, '响应状态:', props.isAgentResponding);
+    return currentMessage.value.contentChunks;
+  }
+  
+  if (!props.agentResponse) return [];
+  
+  try {
+    // 尝试解析JSON结构
+    const parsedResponse = parseAgentMessage(props.agentResponse);
+    
+    if (typeof parsedResponse === 'object' && parsedResponse.type === 'agent_response') {
+      console.log('检测到JSON结构的agent响应，interaction_flow长度:', parsedResponse.interaction_flow?.length || 0);
+      
+      // 将interaction_flow转换为contentChunks格式，保持时间顺序
+      const contentChunks = parsedResponse.interaction_flow.map(segment => {
+        if (segment.type === 'text') {
+          return {
+            type: 'text',
+            content: segment.content,
+            timestamp: new Date(segment.timestamp)
+          };
+        } else if (segment.type === 'tool_call') {
+          return {
+            type: 'tool_status',
+            tool_name: segment.name,
+            status: segment.status,
+            tool_call_id: segment.id,
+            timestamp: new Date(segment.started_at),
+            result: segment.result,
+            error: segment.error
+          };
+        }
+        return segment;
+      });
+      
+      console.log('转换后的contentChunks:', contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
+      return contentChunks;
+    }
+  } catch (error) {
+    console.log('解析agent响应失败，使用原始内容:', error.message);
+  }
+  
+  // 不是JSON结构或解析失败，返回空数组，使用原始内容显示
+  return [];
+});
+
+// 格式化文本，处理换行
+const formatTextWithBreaks = (text: string) => {
+  if (!text) return '';
+  return text.replace(/\n/g, '<br>');
+};
+
+// 处理工具状态更新
+const handleToolStatus = (toolStatus: any) => {
+  console.log('[AgentInputModal] 处理工具状态:', toolStatus);
+  
+  // 确保currentMessage已初始化
+  if (!currentMessage.value.contentChunks) {
+    currentMessage.value.contentChunks = [];
+    currentMessage.value.lastTextLength = 0;
+    currentMessage.value.baseTimestamp = new Date();
+  }
+  
+  // 使用streaming response composable处理工具状态
+  handleToolStatusUpdate(toolStatus, currentMessage.value);
+};
+
 watch(() => props.agentResponse, (newValue) => {
   console.log('[AgentInputModal] prop agentResponse updated:', newValue);
-  // 如果响应完成，触发特殊组件渲染
-  if (newValue && !props.isAgentResponding) {
-    nextTick(() => {
-      setTimeout(() => {
-        renderSpecialComponents();
-      }, 100);
-    });
+  
+  if (newValue) {
+    // 更新currentMessage的内容
+    currentMessage.value.content = newValue;
+    currentMessage.value.isTyping = props.isAgentResponding;
+    
+    // 如果正在响应中，处理流式文本更新
+    if (props.isAgentResponding) {
+      // 尝试解析是否包含工具状态信息
+      let responseData = null;
+      try {
+        responseData = JSON.parse(newValue);
+      } catch (error) {
+        // 不是JSON格式，继续处理为普通文本
+      }
+      
+      // 如果响应包含工具状态，先处理工具状态
+      if (responseData && responseData.data && responseData.data.tool_status) {
+        console.log('[AgentInputModal] 检测到工具状态信息:', responseData.data.tool_status);
+        handleToolStatus(responseData.data.tool_status);
+        
+        // 如果还有文本内容，继续处理文本
+        if (responseData.data.message && responseData.data.message.content) {
+          const textContent = responseData.data.full_content || responseData.data.message.content;
+          if (textContent) {
+            handleStreamingText(textContent, currentMessage.value);
+          }
+        }
+      } else {
+        // 处理普通的流式文本更新
+        handleStreamingText(newValue, currentMessage.value);
+      }
+    } else {
+      // 响应完成，尝试处理完整响应
+      console.log('[AgentInputModal] 响应完成，处理完整响应');
+      
+      // 先尝试处理完整的JSON响应
+      const completeResponseHandled = handleCompleteResponse(newValue, currentMessage.value);
+      
+      if (!completeResponseHandled) {
+        // 如果不是完整的JSON响应，使用流式处理
+        handleStreamingText(newValue, currentMessage.value);
+      }
+      
+      // 确保响应完成后currentMessage的状态正确
+      currentMessage.value.content = newValue;
+      currentMessage.value.isTyping = false;
+      
+      console.log('[AgentInputModal] 响应完成后currentMessage状态:', {
+        contentChunksLength: currentMessage.value.contentChunks?.length || 0,
+        contentLength: currentMessage.value.content?.length || 0,
+        isTyping: currentMessage.value.isTyping
+      });
+      
+      // 触发特殊组件渲染
+      nextTick(() => {
+        setTimeout(() => {
+          renderSpecialComponents();
+        }, 100);
+      });
+    }
   }
 });
 
-watch(() => props.isAgentResponding, (newValue) => {
+watch(() => props.isAgentResponding, (newValue, oldValue) => {
   console.log('[AgentInputModal] prop isAgentResponding updated:', newValue);
-  // 响应完成后，延迟触发特殊组件渲染
+  
+  // 当开始新的响应时，重置currentMessage
+  if (newValue && !oldValue) {
+    console.log('[AgentInputModal] 开始新的响应，重置currentMessage');
+    currentMessage.value = {
+      content: '',
+      contentChunks: [],
+      lastTextLength: 0,
+      baseTimestamp: new Date(),
+      isTyping: true
+    };
+  }
+  
+  // 响应完成后，保持工具状态并触发特殊组件渲染
   if (!newValue && props.agentResponse) {
+    console.log('[AgentInputModal] 响应完成，保持工具状态');
+    currentMessage.value.isTyping = false;
+    
+    // 确保工具状态在响应完成后仍然保持
+    // 如果currentMessage中有contentChunks，保持它们
+    if (currentMessage.value.contentChunks && currentMessage.value.contentChunks.length > 0) {
+      console.log('[AgentInputModal] 保持流式响应中的contentChunks，数量:', currentMessage.value.contentChunks.length);
+      // 将所有工具状态标记为completed
+      currentMessage.value.contentChunks.forEach(chunk => {
+        if (chunk.type === 'tool_status' && chunk.status !== 'completed' && chunk.status !== 'failed') {
+          chunk.status = 'completed';
+        }
+      });
+    }
+    
     nextTick(() => {
       setTimeout(() => {
         renderSpecialComponents();
@@ -302,17 +520,17 @@ onMounted(() => {
   nextTick(() => {
     unifiedInputRef.value?.focus();
   });
-  
-  const handleClickOutside = (event) => {
-    // 可以在这里处理特定的点击外部逻辑，比如关闭下拉菜单等
-    // 但不要自动关闭整个弹框
-  };
-  
-  document.addEventListener('mousedown', handleClickOutside);
-  
-  onUnmounted(() => {
-    document.removeEventListener('mousedown', handleClickOutside);
-  });
+});
+
+// 组件卸载时清理
+onUnmounted(() => {
+  // 清理任何可能的定时器或监听器
+  console.log('AgentInputModal: 组件卸载，清理资源');
+});
+
+// 暴露方法给父组件
+defineExpose({
+  handleToolStatus
 });
 </script>
 
@@ -734,10 +952,23 @@ onMounted(() => {
   margin: 0.5em 0;
 }
 
+/* 文本块样式 - 内联显示 */
+.text-chunk {
+  display: inline;
+  line-height: 1.5;
+}
+
+/* 工具状态块样式 - 独立成行 */
+.tool-chunk {
+  display: block;
+  margin: 8px 0;
+}
+
 .typing-indicator {
   color: #6366f1;
   font-weight: bold;
   animation: blink 1s infinite;
+  margin-left: 0.5em;
 }
 
 @keyframes blink {

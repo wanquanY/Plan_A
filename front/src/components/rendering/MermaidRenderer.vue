@@ -55,16 +55,24 @@ onMounted(() => {
 
 // 在组件卸载时清理observer和定时器
 onUnmounted(() => {
-  if (mermaidObserver) {
-    if (typeof mermaidObserver.disconnect === 'function') {
-      mermaidObserver.disconnect();
-    }
-    mermaidObserver = null;
-  }
+  console.log('MermaidRenderer: 组件卸载，开始清理资源');
   
-  if (errorCheckInterval) {
-    clearInterval(errorCheckInterval);
-    errorCheckInterval = null;
+  try {
+    if (mermaidObserver) {
+      if (typeof mermaidObserver.disconnect === 'function') {
+        mermaidObserver.disconnect();
+      }
+      mermaidObserver = null;
+    }
+    
+    if (errorCheckInterval) {
+      clearInterval(errorCheckInterval);
+      errorCheckInterval = null;
+    }
+    
+    console.log('MermaidRenderer: 资源清理完成');
+  } catch (error) {
+    console.error('MermaidRenderer: 清理资源时出错:', error);
   }
 });
 

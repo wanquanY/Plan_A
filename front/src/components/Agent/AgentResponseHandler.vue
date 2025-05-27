@@ -43,7 +43,7 @@ onUnmounted(() => {
 });
 
 // 事件声明
-const emit = defineEmits(['agent-response', 'agent-response-chunk', 'agent-response-complete', 'agent-response-error']);
+const emit = defineEmits(['agent-response', 'agent-response-chunk', 'agent-response-complete', 'agent-response-error', 'agent-tool-status']);
 
 // 用于存储会话ID和笔记ID
 const conversationId = ref('');
@@ -446,7 +446,7 @@ const triggerChatRequest = async (agentId, userInputContent) => {
       }
     }
 
-    const streamCallback = async (response, isComplete, convId) => {
+    const streamCallback = async (response, isComplete, convId, toolStatus) => {
       if (streamSignaledEnd) {
         console.log('[AgentResponseHandler] streamCallback called after stream already signaled end. Ignoring.');
         return;
@@ -455,6 +455,12 @@ const triggerChatRequest = async (agentId, userInputContent) => {
       try {
         const data = response.data?.data || {};
         let chunkContent = '';
+        
+        // 处理工具状态更新
+        if (toolStatus) {
+          console.log('[AgentResponseHandler] 收到工具状态更新:', toolStatus);
+          emit('agent-tool-status', toolStatus);
+        }
         
         // 检查是否有增量内容字段
         if (data.content) {
