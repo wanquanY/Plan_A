@@ -7,10 +7,17 @@ export function useStreamingResponse() {
   const handleToolStatus = (toolStatus: any, currentMsg: ChatMessage) => {
     console.log('处理工具状态:', toolStatus);
     
+    // 忽略 tools_completed 状态，这是一个总体完成状态，不需要显示
+    if (toolStatus.type === 'tools_completed') {
+      console.log('忽略 tools_completed 状态');
+      return;
+    }
+    
     // 初始化contentChunks数组和lastTextLength
     if (!currentMsg.contentChunks) {
       currentMsg.contentChunks = [];
       currentMsg.lastTextLength = 0;
+      currentMsg.baseTimestamp = new Date(); // 设置基准时间戳
     }
     
     // 当工具调用开始时，将当前文本内容分割
@@ -24,7 +31,7 @@ export function useStreamingResponse() {
           const textChunk: ContentChunk = {
             type: 'text',
             content: newTextContent,
-            timestamp: new Date(Date.now() - 100), // 稍早于工具调用
+            timestamp: new Date((currentMsg.baseTimestamp || new Date()).getTime() + (currentMsg.lastTextLength || 0)), // 基于基准时间和文本位置
             segmentIndex: currentMsg.contentChunks.filter(c => c.type === 'text').length
           };
           currentMsg.contentChunks.push(textChunk);
@@ -34,16 +41,27 @@ export function useStreamingResponse() {
       }
     }
     
+    // 计算工具状态的时间戳，应该在当前文本位置之后
+    const toolTimestamp = new Date((currentMsg.baseTimestamp || new Date()).getTime() + (currentMsg.content?.length || 0) + 1);
+    
     // 添加或更新工具状态块
     const toolChunk: ContentChunk = {
       type: 'tool_status',
       tool_name: toolStatus.tool_name,
       status: toolStatus.status,
       tool_call_id: toolStatus.tool_call_id,
-      timestamp: new Date(),
+      timestamp: toolTimestamp,
       result: toolStatus.result || null,
       error: toolStatus.error || null
     };
+    
+    console.log('创建工具状态块:', {
+      tool_name: toolChunk.tool_name,
+      status: toolChunk.status,
+      tool_call_id: toolChunk.tool_call_id,
+      has_result: !!toolChunk.result,
+      has_error: !!toolChunk.error
+    });
     
     // 检查是否已经有相同tool_call_id的状态
     const existingIndex = currentMsg.contentChunks.findIndex(
@@ -91,12 +109,29 @@ export function useStreamingResponse() {
       const hasToolStatus = currentMsg.contentChunks.some(chunk => chunk.type === 'tool_status');
       
       if (hasToolStatus) {
-        // 如果有工具状态，说明需要创建新的文本段
-        if (newTextContent.trim()) {
+        // 如果有工具状态，检查是否有最后一个文本块可以更新
+        const lastTextChunk = [...currentMsg.contentChunks].reverse().find(chunk => chunk.type === 'text');
+        const lastToolChunk = [...currentMsg.contentChunks].reverse().find(chunk => chunk.type === 'tool_status');
+        
+        // 如果最后一个文本块在最后一个工具状态之后，更新它；否则创建新的文本块
+        if (lastTextChunk && lastToolChunk && lastTextChunk.timestamp > lastToolChunk.timestamp) {
+          // 更新现有的最后文本块
+          const allPreviousTextChunks = currentMsg.contentChunks.filter(chunk => 
+            chunk.type === 'text' && chunk !== lastTextChunk
+          );
+          const previousTextLength = allPreviousTextChunks.reduce((sum, chunk) => sum + (chunk.content?.length || 0), 0);
+          lastTextChunk.content = newResponse.substring(previousTextLength);
+          console.log('更新工具调用后的文本块:', lastTextChunk.content.substring(0, 50));
+        } else if (newTextContent.trim()) {
+          // 创建新的文本段
+          const textTimestamp = lastToolChunk 
+            ? new Date(lastToolChunk.timestamp.getTime() + 1)
+            : new Date((currentMsg.baseTimestamp || new Date()).getTime() + currentTextLength);
+          
           const textChunk: ContentChunk = {
             type: 'text',
             content: newTextContent,
-            timestamp: new Date(), // 使用当前时间，确保在工具状态之后
+            timestamp: textTimestamp,
             segmentIndex: currentMsg.contentChunks.filter(c => c.type === 'text').length
           };
           currentMsg.contentChunks.push(textChunk);
@@ -111,11 +146,16 @@ export function useStreamingResponse() {
           // 更新现有文本块
           firstTextChunk.content = newResponse;
         } else {
+          // 初始化baseTimestamp如果不存在
+          if (!currentMsg.baseTimestamp) {
+            currentMsg.baseTimestamp = new Date();
+          }
+          
           // 创建第一个文本块
           firstTextChunk = {
             type: 'text',
             content: newResponse,
-            timestamp: currentMsg.baseTimestamp || currentMsg.timestamp || new Date(),
+            timestamp: currentMsg.baseTimestamp,
             segmentIndex: 0
           };
           currentMsg.contentChunks.push(firstTextChunk);
@@ -125,8 +165,64 @@ export function useStreamingResponse() {
     }
   };
 
+  // 优化contentChunks结构，合并连续的文本块
+  const optimizeContentChunks = (currentMsg: ChatMessage) => {
+    if (!currentMsg.contentChunks || currentMsg.contentChunks.length === 0) return;
+    
+    console.log('优化前的contentChunks数量:', currentMsg.contentChunks.length);
+    
+    const optimizedChunks: ContentChunk[] = [];
+    let currentTextChunk: ContentChunk | null = null;
+    
+    // 按时间戳排序
+    const sortedChunks = getSortedContentChunks(currentMsg.contentChunks);
+    
+    for (const chunk of sortedChunks) {
+      if (chunk.type === 'text') {
+        if (currentTextChunk) {
+          // 合并连续的文本块
+          currentTextChunk.content += chunk.content || '';
+        } else {
+          // 开始新的文本块
+          currentTextChunk = { ...chunk };
+        }
+      } else {
+        // 遇到工具状态块，先保存当前文本块（如果有）
+        if (currentTextChunk) {
+          optimizedChunks.push(currentTextChunk);
+          currentTextChunk = null;
+        }
+        // 添加工具状态块
+        optimizedChunks.push(chunk);
+      }
+    }
+    
+    // 添加最后的文本块（如果有）
+    if (currentTextChunk) {
+      optimizedChunks.push(currentTextChunk);
+    }
+    
+    console.log('优化后的contentChunks数量:', optimizedChunks.length);
+    currentMsg.contentChunks = optimizedChunks;
+  };
+
   // 处理完整的agent响应（JSON结构）
   const handleCompleteResponse = (response: string, currentMsg: ChatMessage) => {
+    console.log('handleCompleteResponse 被调用，响应长度:', response.length);
+    
+    // 如果消息已经有contentChunks结构，优化结构并更新内容
+    if (currentMsg.contentChunks && currentMsg.contentChunks.length > 0) {
+      console.log('消息已有contentChunks结构，优化结构并更新内容');
+      
+      // 更新最终的content内容
+      currentMsg.content = response;
+      
+      // 优化contentChunks结构，合并连续的文本块
+      optimizeContentChunks(currentMsg);
+      
+      return true; // 表示已处理
+    }
+    
     try {
       const parsedResponse = parseAgentMessage(response);
       

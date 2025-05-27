@@ -115,6 +115,9 @@ const loadToolsList = async () => {
       toolsService.getToolsGroupedByProvider()
     ]);
     
+    console.log('loaded tools:', tools);
+    console.log('loaded grouped tools:', grouped);
+    
     availableTools.value = tools;
     toolsGrouped.value = grouped;
     
@@ -135,8 +138,12 @@ const loadToolsList = async () => {
 
 // 初始化工具配置
 const initializeToolsConfig = () => {
+  console.log('initializeToolsConfig called');
+  console.log('availableTools:', availableTools.value);
+  
   const toolConfig: ToolLevelConfig = {};
   availableTools.value.forEach(tool => {
+    console.log('initializing tool:', tool.name, 'provider:', tool.provider);
     toolConfig[tool.name] = {
       enabled: false,
       name: tool.name,
@@ -144,30 +151,63 @@ const initializeToolsConfig = () => {
       provider: tool.provider
     };
   });
+  
+  console.log('initialized toolConfig:', toolConfig);
   formState.tools_enabled = toolConfig;
 };
 
 // 检测配置格式并转换
 const detectAndConvertConfig = async (config: any) => {
   try {
+    console.log('detectAndConvertConfig called with:', config);
+    
     // 验证配置格式
     const validation = await toolsService.validateToolsConfig(config);
+    console.log('validation result:', validation);
+    
+    let finalConfig: any = {};
     
     if (validation.config_type === 'provider_level') {
       // 如果是提供商级别配置，转换为工具级别配置
       const converted = await toolsService.convertProviderConfigToToolConfig(config);
-      return converted.tool_config;
+      console.log('converted to tool config:', converted.tool_config);
+      finalConfig = converted.tool_config;
     } else if (validation.config_type === 'tool_level') {
-      // 如果已经是工具级别配置，直接返回
-      return config;
+      // 如果已经是工具级别配置，直接使用
+      console.log('already tool level config');
+      finalConfig = config;
     } else {
       // 未知格式，使用默认配置
-      return await toolsService.getDefaultToolConfig();
+      console.log('unknown format, getting default config');
+      const defaultConfig = await toolsService.getDefaultToolConfig();
+      console.log('default config:', defaultConfig);
+      finalConfig = defaultConfig;
     }
+    
+    // 确保所有当前可用的工具都在配置中
+    const mergedConfig = { ...finalConfig };
+    availableTools.value.forEach(tool => {
+      if (!mergedConfig[tool.name]) {
+        console.log('adding missing tool to config:', tool.name);
+        mergedConfig[tool.name] = {
+          enabled: false,
+          name: tool.name,
+          api_key: '',
+          provider: tool.provider
+        };
+      }
+    });
+    
+    console.log('final merged config:', mergedConfig);
+    return mergedConfig;
+    
   } catch (error) {
     console.error('配置格式检测失败:', error);
     // 出错时使用默认配置
-    return await toolsService.getDefaultToolConfig();
+    console.log('error occurred, getting default config');
+    const defaultConfig = await toolsService.getDefaultToolConfig();
+    console.log('default config on error:', defaultConfig);
+    return defaultConfig;
   }
 };
 
@@ -238,14 +278,22 @@ const updateToolApiKey = (toolName: string, apiKey: string) => {
 
 // 批量启用提供商的所有工具
 const toggleProvider = (providerName: string, enabled: boolean) => {
+  console.log('toggleProvider called:', { providerName, enabled });
   const toolConfig = formState.tools_enabled as ToolLevelConfig;
   const providerTools = toolsGrouped.value[providerName] || [];
   
+  console.log('providerTools:', providerTools);
+  console.log('current toolConfig:', toolConfig);
+  
   providerTools.forEach(tool => {
+    console.log('processing tool:', tool.name, 'exists in config:', !!toolConfig[tool.name]);
     if (toolConfig[tool.name]) {
       toolConfig[tool.name].enabled = enabled;
+      console.log('updated tool:', tool.name, 'to enabled:', enabled);
     }
   });
+  
+  console.log('updated toolConfig:', toolConfig);
 };
 
 // 获取提供商的启用状态

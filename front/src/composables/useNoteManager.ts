@@ -64,7 +64,12 @@ export function useNoteManager() {
   const fetchNoteDetail = async (noteId: number) => {
     try {
       console.log(`开始获取笔记详情，ID: ${noteId}`);
+      
+      // 立即设置笔记ID，确保在异步操作期间也能获取到
       currentNoteId.value = noteId;
+      
+      // 同时保存到localStorage作为备份
+      localStorage.setItem('lastNoteId', noteId.toString());
       
       // 加载笔记内容
       const noteRes = await noteService.getNoteDetail(noteId);
@@ -142,6 +147,27 @@ export function useNoteManager() {
     saved.value = true;
   };
 
+  // 获取当前笔记ID的可靠方法
+  const getCurrentNoteId = () => {
+    // 优先使用内存中的值
+    if (currentNoteId.value) {
+      return currentNoteId.value;
+    }
+    
+    // 如果内存中没有，尝试从localStorage获取
+    const lastNoteId = localStorage.getItem('lastNoteId');
+    if (lastNoteId) {
+      const noteId = parseInt(lastNoteId);
+      if (!isNaN(noteId)) {
+        console.log('从localStorage恢复笔记ID:', noteId);
+        currentNoteId.value = noteId;
+        return noteId;
+      }
+    }
+    
+    return null;
+  };
+
   // 更新编辑器第一行标题的函数
   const updateEditorFirstLineTitle = (newTitle: string, editorRef: any) => {
     if (!editorRef || !editorRef.editorRef) return;
@@ -200,6 +226,7 @@ export function useNoteManager() {
     updateContent,
     createNewNote,
     updateEditorFirstLineTitle,
-    debouncedSave
+    debouncedSave,
+    getCurrentNoteId
   };
 } 

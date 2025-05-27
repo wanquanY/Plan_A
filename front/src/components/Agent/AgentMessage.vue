@@ -80,20 +80,27 @@
         <div v-if="message.isTyping" class="typing-content">
           <!-- 如果有contentChunks，使用新的块结构 -->
           <div v-if="message.contentChunks && message.contentChunks.length > 0">
-            <!-- 按时间顺序渲染所有内容块 -->
-            <div v-for="(chunk, index) in getSortedContentChunks(message.contentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`" class="content-chunk">
-              <!-- 文本块 -->
-              <span v-if="chunk.type === 'text'" v-html="formatTextWithBreaks(chunk.content)"></span>
-              <!-- 工具状态块 -->
-              <AgentToolCall 
-                v-else-if="chunk.type === 'tool_status'"
-                :tool-name="chunk.tool_name || ''"
-                :status="chunk.status || ''"
-                :tool-call-id="chunk.tool_call_id || ''"
-                :result="chunk.result"
-                :error="chunk.error"
-              />
+            <!-- 调试信息 -->
+            <div v-if="false" style="font-size: 10px; color: #999; margin-bottom: 8px; border: 1px solid #ddd; padding: 4px;">
+              调试(打字中): 内容块数量: {{ message.contentChunks.length }}, 
+              类型: {{ message.contentChunks.map(c => `${c.type}(${c.tool_name || 'text'})`).join(', ') }}
             </div>
+            <!-- 按时间顺序渲染所有内容块 -->
+            <template v-for="(chunk, index) in getSortedContentChunks(message.contentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
+              <!-- 文本块 - 内联显示 -->
+              <span v-if="chunk.type === 'text'" v-html="formatTextWithBreaks(chunk.content)" class="text-chunk"></span>
+              <!-- 工具状态块 - 独立成行 -->
+              <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
+                <AgentToolCall 
+                  :tool-name="chunk.tool_name || ''"
+                  :status="chunk.status || ''"
+                  :tool-call-id="chunk.tool_call_id || ''"
+                  :result="chunk.result"
+                  :error="chunk.error"
+                  :key="`tool-${chunk.tool_call_id}-${chunk.status}`"
+                />
+              </div>
+            </template>
           </div>
           <!-- 兼容旧的消息格式 -->
           <div v-else>
@@ -106,20 +113,27 @@
         <div v-else class="markdown-content">
           <!-- 如果有contentChunks，使用新的块结构 -->
           <div v-if="message.contentChunks && message.contentChunks.length > 0">
-            <!-- 按时间顺序渲染所有内容块 -->
-            <div v-for="(chunk, index) in getSortedContentChunks(message.contentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`" class="content-chunk">
-              <!-- 文本块 -->
-              <div v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content)"></div>
-              <!-- 工具状态块 -->
-              <AgentToolCall 
-                v-else-if="chunk.type === 'tool_status'"
-                :tool-name="chunk.tool_name || ''"
-                :status="'completed'"
-                :tool-call-id="chunk.tool_call_id || ''"
-                :result="chunk.result"
-                :error="chunk.error"
-              />
+            <!-- 调试信息 -->
+            <div v-if="false" style="font-size: 10px; color: #999; margin-bottom: 8px; border: 1px solid #ddd; padding: 4px;">
+              调试(完成): 内容块数量: {{ message.contentChunks.length }}, 
+              类型: {{ message.contentChunks.map(c => `${c.type}(${c.tool_name || 'text'})`).join(', ') }}
             </div>
+            <!-- 按时间顺序渲染所有内容块 -->
+            <template v-for="(chunk, index) in getSortedContentChunks(message.contentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
+              <!-- 文本块 - 内联显示 -->
+              <span v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content)" class="text-chunk"></span>
+              <!-- 工具状态块 - 独立成行 -->
+              <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
+                <AgentToolCall 
+                  :tool-name="chunk.tool_name || ''"
+                  :status="chunk.status || 'completed'"
+                  :tool-call-id="chunk.tool_call_id || ''"
+                  :result="chunk.result"
+                  :error="chunk.error"
+                  :key="`tool-completed-${chunk.tool_call_id}`"
+                />
+              </div>
+            </template>
           </div>
           <!-- 兼容旧的消息格式（历史消息） -->
           <div v-else v-html="renderMarkdown(message.content)"></div>
@@ -507,20 +521,16 @@ const renderMarkdown = (content?: string) => {
   border-color: #9ca3af;
 }
 
-/* 内容块样式 */
-.content-chunk {
-  display: block;
-  margin: 0;
-}
-
-.content-chunk:not(:last-child) {
-  margin-bottom: 4px;
-}
-
-/* 文本内容块样式 */
-.content-chunk span {
+/* 文本块样式 - 内联显示 */
+.text-chunk {
   display: inline;
   line-height: 1.5;
+}
+
+/* 工具状态块样式 - 独立成行 */
+.tool-chunk {
+  display: block;
+  margin: 8px 0;
 }
 
 /* Markdown内容样式 */

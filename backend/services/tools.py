@@ -282,6 +282,175 @@ class SerperTool:
                 pass
 
 
+class NoteReaderTool:
+    """笔记阅读工具"""
+    
+    def __init__(self, db_session = None, conversation_id: Optional[int] = None):
+        """初始化笔记阅读工具"""
+        self.db_session = db_session
+        self.conversation_id = conversation_id
+        api_logger.info(f"笔记阅读工具初始化，会话ID: {conversation_id}")
+    
+    async def read_note(
+        self,
+        note_id: Optional[int] = None,
+        search_title: Optional[str] = None,
+        start_line: int = 1,
+        line_count: int = -1,
+        include_metadata: bool = True
+    ) -> Dict[str, Any]:
+        """读取笔记内容"""
+        if not self.db_session:
+            api_logger.error("未提供数据库会话，无法读取笔记")
+            return {"error": "数据库连接不可用"}
+        
+        try:
+            from backend.models.note import Note
+            from backend.models.chat import Chat
+            from sqlalchemy import select, or_, and_
+            
+            # 如果有会话ID，先获取会话信息以确定用户权限和关联的笔记
+            user_id = None
+            session_note_id = None
+            if self.conversation_id:
+                chat_stmt = select(Chat).where(Chat.id == self.conversation_id)
+                chat_result = await self.db_session.execute(chat_stmt)
+                chat = chat_result.scalar_one_or_none()
+                if chat:
+                    user_id = chat.user_id
+                    api_logger.info(f"从会话 {self.conversation_id} 获取用户ID: {user_id}")
+                    
+                    # 查找与此会话关联的笔记
+                    note_stmt = select(Note).where(
+                        Note.session_id == self.conversation_id,
+                        Note.user_id == user_id,
+                        Note.is_deleted == False
+                    )
+                    note_result = await self.db_session.execute(note_stmt)
+                    session_note = note_result.scalar_one_or_none()
+                    if session_note:
+                        session_note_id = session_note.id
+                        api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
+            
+            # 构建查询条件
+            query_conditions = [
+                Note.is_deleted == False
+            ]
+            
+            # 如果有用户ID，添加用户权限过滤
+            if user_id:
+                query_conditions.append(Note.user_id == user_id)
+            
+            # 根据参数选择查询方式
+            if note_id:
+                # 通过ID直接查询
+                query_conditions.append(Note.id == note_id)
+                api_logger.info(f"通过指定ID查询笔记: {note_id}")
+            elif session_note_id:
+                # 如果没有指定笔记ID，但有会话关联的笔记，使用会话关联的笔记
+                query_conditions.append(Note.id == session_note_id)
+                api_logger.info(f"使用会话关联的笔记ID: {session_note_id}")
+            elif search_title:
+                # 通过标题模糊搜索
+                query_conditions.append(Note.title.ilike(f"%{search_title}%"))
+                api_logger.info(f"通过标题搜索笔记: {search_title}")
+            else:
+                # 如果都没提供，返回用户最近的笔记
+                api_logger.info("未指定查询条件，返回最近的笔记")
+            
+            # 执行查询
+            stmt = select(Note).where(*query_conditions).order_by(Note.updated_at.desc())
+            
+            if note_id:
+                # 如果是通过ID查询，只取一个
+                result = await self.db_session.execute(stmt)
+                note = result.scalar_one_or_none()
+                notes = [note] if note else []
+            else:
+                # 如果是搜索或获取最近笔记，可能返回多个
+                result = await self.db_session.execute(stmt.limit(10))  # 限制返回数量
+                notes = result.scalars().all()
+            
+            if not notes:
+                return {
+                    "error": "未找到匹配的笔记",
+                    "search_criteria": {
+                        "note_id": note_id,
+                        "search_title": search_title
+                    }
+                }
+            
+            # 处理多个笔记的情况
+            if len(notes) > 1 and not search_title:
+                # 如果没有搜索条件但返回多个，只取最新的一个
+                notes = [notes[0]]
+            
+            results = []
+            for note in notes:
+                # 处理笔记内容
+                content = note.content or ""
+                
+                # 按行分割内容
+                lines = content.split('\n')
+                total_lines = len(lines)
+                
+                # 处理行数范围
+                if start_line < 1:
+                    start_line = 1
+                
+                end_line = total_lines
+                if line_count > 0:
+                    end_line = min(start_line + line_count - 1, total_lines)
+                
+                # 提取指定行数的内容
+                if start_line <= total_lines:
+                    selected_lines = lines[start_line - 1:end_line]
+                    selected_content = '\n'.join(selected_lines)
+                else:
+                    selected_content = ""
+                
+                # 构建结果
+                note_result = {
+                    "note_id": note.id,
+                    "title": note.title,
+                    "content": selected_content,
+                    "content_info": {
+                        "total_lines": total_lines,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "displayed_lines": len(selected_lines) if start_line <= total_lines else 0
+                    }
+                }
+                
+                # 添加元数据信息
+                if include_metadata:
+                    note_result["metadata"] = {
+                        "created_at": note.created_at.isoformat() if note.created_at else None,
+                        "updated_at": note.updated_at.isoformat() if note.updated_at else None,
+                        "session_id": note.session_id,
+                        "is_public": note.is_public,
+                        "last_edited_position": note.last_edited_position
+                    }
+                
+                results.append(note_result)
+            
+            # 如果只有一个结果，直接返回该结果；如果有多个，返回列表
+            if len(results) == 1:
+                api_logger.info(f"成功读取笔记: {results[0]['title']}")
+                return results[0]
+            else:
+                api_logger.info(f"找到 {len(results)} 个匹配的笔记")
+                return {
+                    "multiple_notes": True,
+                    "count": len(results),
+                    "notes": results
+                }
+                
+        except Exception as e:
+            api_logger.error(f"读取笔记异常: {str(e)}", exc_info=True)
+            return {"error": f"读取笔记失败: {str(e)}"}
+
+
 # 工具服务类，管理所有可用工具
 class ToolsService:
     """工具服务，管理所有可用的工具"""
@@ -291,7 +460,8 @@ class ToolsService:
         self.tools = {}
         self.available_tools = {
             "tavily": TavilyTool,
-            "serper": SerperTool
+            "serper": SerperTool,
+            "note_reader": NoteReaderTool
         }
         api_logger.info(f"工具服务初始化，可用工具: {list(self.available_tools.keys())}")
     
@@ -301,8 +471,22 @@ class ToolsService:
             api_logger.warning(f"请求的工具 {tool_name} 不可用")
             return None
         
-        # 检查是否已有缓存的实例
-        cache_key = f"{tool_name}_{json.dumps(config) if config else 'default'}"
+        # 对于笔记阅读工具，不使用缓存，因为每次调用可能有不同的用户ID和数据库会话
+        if tool_name == "note_reader":
+            try:
+                if config:
+                    tool_instance = self.available_tools[tool_name](**config)
+                else:
+                    tool_instance = self.available_tools[tool_name]()
+                
+                api_logger.info(f"创建工具 {tool_name} 实例成功（不缓存）")
+                return tool_instance
+            except Exception as e:
+                api_logger.error(f"创建工具 {tool_name} 实例失败: {str(e)}", exc_info=True)
+                return None
+        
+        # 其他工具使用缓存机制
+        cache_key = f"{tool_name}_{json.dumps(config, sort_keys=True) if config else 'default'}"
         if cache_key in self.tools:
             return self.tools[cache_key]
         

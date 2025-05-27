@@ -37,16 +37,8 @@ const handleLogin = async () => {
     // 显示成功消息
     message.success('登录成功');
     
-    // 检查是否有默认笔记需要打开
-    const defaultNoteId = authService.getDefaultNoteId();
-    
-    if (defaultNoteId) {
-      // 如果有默认笔记，跳转到该笔记页面
-      router.push(`/?note=${defaultNoteId}`);
-    } else {
-      // 否则跳转到首页
-      router.push('/');
-    }
+    // 跳转到首页，路由守卫会自动处理跳转到最新笔记
+    router.push('/');
   } catch (error: any) {
     // 显示错误消息
     if (error.response && error.response.data) {
@@ -136,7 +128,7 @@ const goToRegister = () => {
     </div>
     
     <div class="login-footer">
-      <p>Plan_A &copy; 2024 - 高效写作平台</p>
+      <p>Plan_A &copy; 2025 - 高效写作平台</p>
     </div>
     
     <!-- 装饰性元素 -->

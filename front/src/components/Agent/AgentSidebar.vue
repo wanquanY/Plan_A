@@ -1,5 +1,8 @@
 <template>
-  <div v-if="visible" class="agent-sidebar">
+  <div v-if="visible" class="agent-sidebar" :style="{ width: sidebarWidth + 'px' }">
+    <!-- 可拖动的分隔条 -->
+    <ResizableHandle @resize="handleResize" />
+    
     <!-- 侧边栏头部 -->
     <div class="sidebar-header">
       <h3 class="sidebar-title">AI助手</h3>
@@ -50,6 +53,7 @@ import AgentMessageList from './AgentMessageList.vue';
 import MermaidRenderer from '../rendering/MermaidRenderer.vue';
 import CodeBlock from '../rendering/CodeBlock.vue';
 import MarkMap from '../rendering/MarkMap.vue';
+import ResizableHandle from './ResizableHandle.vue';
 import { useAgentChat } from '../../composables/useAgentChat';
 import { useStreamingResponse } from '../../composables/useStreamingResponse';
 // 注意：移除了 useToolCallsStatus，现在使用 contentChunks 系统
@@ -89,7 +93,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message']);
+const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message', 'resize']);
 
 // 组件引用
 const unifiedInputRef = ref(null);
@@ -127,6 +131,39 @@ const {
 // 当前选择的Agent
 const currentAgent = ref(null);
 
+// 侧边栏宽度管理
+const sidebarWidth = ref(400); // 默认宽度
+
+// 处理侧边栏宽度调整
+const handleResize = (newWidth: number) => {
+  sidebarWidth.value = newWidth;
+  
+  // 向父组件发出resize事件
+  emit('resize', newWidth);
+  
+  // 可选：保存到localStorage
+  try {
+    localStorage.setItem('agent-sidebar-width', newWidth.toString());
+  } catch (error) {
+    console.warn('无法保存侧边栏宽度到localStorage:', error);
+  }
+};
+
+// 从localStorage恢复侧边栏宽度
+const restoreSidebarWidth = () => {
+  try {
+    const savedWidth = localStorage.getItem('agent-sidebar-width');
+    if (savedWidth) {
+      const width = parseInt(savedWidth, 10);
+      if (width >= 300 && width <= 600) {
+        sidebarWidth.value = width;
+      }
+    }
+  } catch (error) {
+    console.warn('无法从localStorage恢复侧边栏宽度:', error);
+  }
+};
+
 // 处理工具状态更新
 const handleToolStatus = (toolStatus: any) => {
   console.log('AgentSidebar 处理工具状态:', toolStatus);
@@ -136,6 +173,151 @@ const handleToolStatus = (toolStatus: any) => {
     const currentMsg = getCurrentTypingMessage();
     if (currentMsg) {
       handleToolStatusUpdate(toolStatus, currentMsg);
+    }
+  });
+};
+
+// 处理文本响应
+const processTextResponse = (textContent: string) => {
+  console.log('处理文本响应:', textContent.length, '字符');
+  
+  // 尝试解析agentResponse，检查是否是JSON结构
+  let parsedResponse = null;
+  let displayContent = textContent;
+  let contentChunks = [];
+  
+  try {
+    // 尝试解析JSON结构
+    parsedResponse = parseAgentMessage(textContent);
+    
+    if (typeof parsedResponse === 'object' && parsedResponse.type === 'agent_response') {
+      console.log('检测到JSON结构的agent响应，interaction_flow长度:', parsedResponse.interaction_flow?.length || 0);
+      
+      // 提取纯文本内容用于显示
+      displayContent = extractTextFromInteractionFlow(parsedResponse.interaction_flow);
+      
+      // 将interaction_flow转换为contentChunks格式，保持时间顺序
+      contentChunks = parsedResponse.interaction_flow.map(segment => {
+        if (segment.type === 'text') {
+          return {
+            type: 'text',
+            content: segment.content,
+            timestamp: new Date(segment.timestamp)
+          };
+        } else if (segment.type === 'tool_call') {
+          return {
+            type: 'tool_status',
+            tool_name: segment.name,
+            status: segment.status,
+            tool_call_id: segment.id,
+            timestamp: new Date(segment.started_at),
+            result: segment.result,
+            error: segment.error
+          };
+        }
+        return segment;
+      });
+      
+      console.log('转换后的contentChunks:', contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
+    } else {
+      // 不是JSON结构，使用原始内容
+      console.log('不是JSON结构，使用原始内容处理');
+      contentChunks = [{
+        type: 'text',
+        content: textContent,
+        timestamp: new Date()
+      }];
+    }
+  } catch (error) {
+    console.log('解析agentResponse失败，使用原始内容:', error.message);
+    // 解析失败，使用原始内容
+    contentChunks = [{
+      type: 'text',
+      content: textContent,
+      timestamp: new Date()
+    }];
+  }
+  
+  // 查找现有的正在进行的AI消息（排除历史消息和编辑消息）
+  const existingAgentMsgIndex = messages.value.findIndex(msg => 
+    msg.type === 'agent' && 
+    msg.isTyping && 
+    (!msg.id || (!msg.id.includes('edit_') && !msg.id.startsWith('history_')))
+  );
+  
+  if (existingAgentMsgIndex !== -1) {
+    // 更新现有消息
+    const currentMsg = messages.value[existingAgentMsgIndex];
+    
+    // 更新消息内容
+    currentMsg.content = displayContent;
+    currentMsg.originalContent = textContent; // 保存原始内容
+    currentMsg.isTyping = props.isAgentResponding;
+    
+    // 如果是JSON结构响应，说明是最终的完整响应，直接替换
+    if (typeof parsedResponse === 'object' && parsedResponse.type === 'agent_response') {
+      console.log('收到最终JSON结构响应，替换为完整的interaction_flow');
+      currentMsg.contentChunks = contentChunks;
+    } else {
+      // 对于非JSON结构响应（流式文本），智能分段处理
+      handleStreamingText(textContent, currentMsg);
+    }
+    
+    console.log('更新现有AI消息，索引:', existingAgentMsgIndex);
+    console.log('显示内容长度:', displayContent.length);
+    console.log('内容块数量:', currentMsg.contentChunks?.length || 0);
+    
+    // 更新最后处理的响应内容
+    lastProcessedResponse.value = textContent;
+  } else {
+    // 检查是否已经有相同内容的消息，避免重复添加
+    const hasSameContent = messages.value.some(msg => 
+      msg.type === 'agent' && 
+      msg.content === displayContent && 
+      !msg.isTyping &&
+      !msg.id?.startsWith('history_') // 排除历史消息
+    );
+    
+    // 检查是否已经有相同时间戳的消息（避免快速重复添加）
+    const currentTime = Date.now();
+    const hasRecentMessage = messages.value.some(msg => 
+      msg.type === 'agent' && 
+      Math.abs(msg.timestamp?.getTime() - currentTime) < 1000 && // 1秒内
+      !msg.id?.startsWith('history_')
+    );
+    
+    if (!hasSameContent && !hasRecentMessage) {
+      // 添加新的AI消息
+      const agentMessage = {
+        id: `agent_${currentTime}_${Math.random().toString(36).substr(2, 9)}`, // 更唯一的ID
+        type: 'agent',
+        content: displayContent,
+        originalContent: textContent, // 保存原始内容
+        timestamp: new Date(),
+        agent: currentAgent.value,
+        isTyping: props.isAgentResponding,
+        contentChunks: contentChunks
+      };
+      messages.value.push(agentMessage);
+      console.log('添加新的AI消息，ID:', agentMessage.id);
+      console.log('显示内容长度:', displayContent.length);
+      console.log('内容块数量:', contentChunks.length);
+      
+      // 更新最后处理的响应内容
+      lastProcessedResponse.value = textContent;
+    } else {
+      console.log('检测到重复内容或时间过近，跳过添加');
+    }
+  }
+  
+  // 滚动到底部
+  nextTick(() => {
+    scrollToBottom();
+    // 如果响应完成，触发特殊组件渲染
+    if (!props.isAgentResponding) {
+      setTimeout(() => {
+        renderSpecialComponents();
+      }, 100);
     }
   });
 };
@@ -697,196 +879,45 @@ watch(() => props.agentResponse, (newResponse) => {
       return;
     }
     
-    // 尝试解析agentResponse，检查是否是JSON结构
-    let parsedResponse = null;
-    let displayContent = newResponse;
-    let contentChunks = [];
-    
+    // 尝试解析是否包含工具状态信息
+    let responseData = null;
     try {
-      // 尝试解析JSON结构
-      parsedResponse = parseAgentMessage(newResponse);
-      
-      if (typeof parsedResponse === 'object' && parsedResponse.type === 'agent_response') {
-        console.log('检测到JSON结构的agent响应，interaction_flow长度:', parsedResponse.interaction_flow?.length || 0);
-        
-        // 提取纯文本内容用于显示
-        displayContent = extractTextFromInteractionFlow(parsedResponse.interaction_flow);
-        
-        // 将interaction_flow转换为contentChunks格式，保持时间顺序
-        contentChunks = parsedResponse.interaction_flow.map(segment => {
-          if (segment.type === 'text') {
-            return {
-              type: 'text',
-              content: segment.content,
-              timestamp: new Date(segment.timestamp)
-            };
-          } else if (segment.type === 'tool_call') {
-            return {
-              type: 'tool_status',
-              tool_name: segment.name,
-              status: segment.status,
-              tool_call_id: segment.id,
-              timestamp: new Date(segment.started_at),
-              result: segment.result,
-              error: segment.error
-            };
-          }
-          return segment;
-        });
-        
-        console.log('转换后的contentChunks:', contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
-      } else {
-        // 不是JSON结构，使用原始内容
-        console.log('不是JSON结构，使用原始内容处理');
-        contentChunks = [{
-          type: 'text',
-          content: newResponse,
-          timestamp: new Date()
-        }];
-      }
+      responseData = JSON.parse(newResponse);
     } catch (error) {
-      console.log('解析agentResponse失败，使用原始内容:', error.message);
-      // 解析失败，使用原始内容
-      contentChunks = [{
-        type: 'text',
-        content: newResponse,
-        timestamp: new Date()
-      }];
+      // 不是JSON格式，继续处理为普通文本
     }
     
-    // 查找现有的正在进行的AI消息（排除历史消息和编辑消息）
-    const existingAgentMsgIndex = messages.value.findIndex(msg => 
-      msg.type === 'agent' && 
-      msg.isTyping && 
-      (!msg.id || (!msg.id.includes('edit_') && !msg.id.startsWith('history_')))
-    );
-
-    if (existingAgentMsgIndex !== -1) {
-      // 更新现有消息
-      const currentMsg = messages.value[existingAgentMsgIndex];
+    // 如果响应包含工具状态，先处理工具状态
+    if (responseData && responseData.data && responseData.data.tool_status) {
+      console.log('检测到工具状态信息:', responseData.data.tool_status);
+      const currentMsg = getCurrentTypingMessage();
+      if (currentMsg) {
+        handleToolStatusUpdate(responseData.data.tool_status, currentMsg);
+      }
       
-      // 更新消息内容
-      currentMsg.content = displayContent;
-      currentMsg.originalContent = newResponse; // 保存原始内容
-      currentMsg.isTyping = props.isAgentResponding;
-      
-      // 如果是JSON结构响应，说明是最终的完整响应，直接替换
-      if (typeof parsedResponse === 'object' && parsedResponse.type === 'agent_response') {
-        console.log('收到最终JSON结构响应，替换为完整的interaction_flow');
-        currentMsg.contentChunks = contentChunks;
-      } else {
-        // 对于非JSON结构响应（流式文本），智能分段处理
-        if (!currentMsg.contentChunks) {
-          currentMsg.contentChunks = [];
-          currentMsg.lastTextLength = 0;
-        }
-        
-        // 更新消息的完整内容
-        currentMsg.content = newResponse;
-        
-        // 检查是否有新的文本内容需要处理
-        const currentTextLength = newResponse.length;
-        
-        // 如果文本长度增加了，需要处理新增的内容
-        if (currentTextLength > currentMsg.lastTextLength) {
-          const newTextContent = newResponse.substring(currentMsg.lastTextLength);
-          
-          // 检查是否有工具状态块
-          const hasToolStatus = currentMsg.contentChunks.some(chunk => chunk.type === 'tool_status');
-          
-          if (hasToolStatus) {
-            // 如果有工具状态，说明需要创建新的文本段
-            if (newTextContent.trim()) {
-              const textChunk = {
-                type: 'text',
-                content: newTextContent,
-                timestamp: new Date(), // 使用当前时间，确保在工具状态之后
-                segmentIndex: currentMsg.contentChunks.filter(c => c.type === 'text').length
-              };
-              currentMsg.contentChunks.push(textChunk);
-              console.log('工具调用后创建新文本段:', newTextContent.substring(0, 50));
-            }
-            currentMsg.lastTextLength = currentTextLength;
-          } else {
-            // 没有工具状态，更新或创建第一个文本块
-            let firstTextChunk = currentMsg.contentChunks.find(chunk => chunk.type === 'text');
-            
-            if (firstTextChunk) {
-              // 更新现有文本块
-              firstTextChunk.content = newResponse;
-            } else {
-              // 创建第一个文本块
-              firstTextChunk = {
-                type: 'text',
-                content: newResponse,
-                timestamp: currentMsg.baseTimestamp || currentMsg.timestamp || new Date(),
-                segmentIndex: 0
-              };
-              currentMsg.contentChunks.push(firstTextChunk);
-            }
-            currentMsg.lastTextLength = currentTextLength;
-          }
+      // 如果还有文本内容，继续处理文本
+      if (responseData.data.message && responseData.data.message.content) {
+        // 处理文本内容，但不重复处理工具状态
+        const textContent = responseData.data.full_content || responseData.data.message.content;
+        if (textContent && textContent !== lastProcessedResponse.value) {
+          // 继续处理文本内容
+          processTextResponse(textContent);
         }
       }
       
-      console.log('更新现有AI消息，索引:', existingAgentMsgIndex);
-      console.log('显示内容长度:', displayContent.length);
-      console.log('内容块数量:', currentMsg.contentChunks.length);
-      console.log('内容块详情:', currentMsg.contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
-      
-      // 更新最后处理的响应内容
+      // 即使没有文本内容，也要更新lastProcessedResponse以避免重复处理
       lastProcessedResponse.value = newResponse;
-    } else {
-      // 检查是否已经有相同内容的消息，避免重复添加
-      const hasSameContent = messages.value.some(msg => 
-        msg.type === 'agent' && 
-        msg.content === displayContent && 
-        !msg.isTyping &&
-        !msg.id?.startsWith('history_') // 排除历史消息
-      );
       
-      // 检查是否已经有相同时间戳的消息（避免快速重复添加）
-      const currentTime = Date.now();
-      const hasRecentMessage = messages.value.some(msg => 
-        msg.type === 'agent' && 
-        Math.abs(msg.timestamp?.getTime() - currentTime) < 1000 && // 1秒内
-        !msg.id?.startsWith('history_')
-      );
+      // 滚动到底部
+      nextTick(() => {
+        scrollToBottom();
+      });
       
-      if (!hasSameContent && !hasRecentMessage) {
-        // 添加新的AI消息
-        const agentMessage = {
-          id: `agent_${currentTime}_${Math.random().toString(36).substr(2, 9)}`, // 更唯一的ID
-          type: 'agent',
-          content: displayContent,
-          originalContent: newResponse, // 保存原始内容
-          timestamp: new Date(),
-          agent: currentAgent.value,
-          isTyping: props.isAgentResponding,
-          contentChunks: contentChunks
-        };
-        messages.value.push(agentMessage);
-        console.log('添加新的AI消息，ID:', agentMessage.id);
-        console.log('显示内容长度:', displayContent.length);
-        console.log('内容块数量:', contentChunks.length);
-        
-        // 更新最后处理的响应内容
-        lastProcessedResponse.value = newResponse;
-      } else {
-        console.log('检测到重复内容或时间过近，跳过添加');
-      }
+      return;
     }
-
-    // 滚动到底部
-    nextTick(() => {
-      scrollToBottom();
-      // 如果响应完成，触发特殊组件渲染
-      if (!props.isAgentResponding) {
-        setTimeout(() => {
-          renderSpecialComponents();
-        }, 100);
-      }
-    });
+    
+    // 处理普通的文本响应
+    processTextResponse(newResponse);
   }
 });
 
@@ -898,7 +929,15 @@ watch(() => props.isAgentResponding, (isResponding) => {
       msg.type === 'agent' && msg.isTyping
     );
     if (typingMsgIndex !== -1) {
-      messages.value[typingMsgIndex].isTyping = false;
+      const typingMsg = messages.value[typingMsgIndex];
+      typingMsg.isTyping = false;
+      
+      // 优化contentChunks结构，合并连续的文本块
+      if (typingMsg.contentChunks && typingMsg.contentChunks.length > 0) {
+        console.log('响应完成，优化contentChunks结构');
+        // 调用handleCompleteResponse来优化结构
+        handleCompleteResponse(typingMsg.content || '', typingMsg);
+      }
     }
     
     // 响应完成后，清理最后处理的响应内容，为下次对话做准备
@@ -1016,6 +1055,9 @@ watch(() => props.conversationHistory, (newHistory, oldHistory) => {
 
 // 组件挂载时初始化
 onMounted(() => {
+  // 恢复侧边栏宽度
+  restoreSidebarWidth();
+  
   // 初始化历史记录（如果有的话）
   if (props.conversationHistory && props.conversationHistory.length > 0) {
     console.log('组件挂载时初始化历史记录');
@@ -1055,7 +1097,6 @@ console.log('AgentSidebar defineExpose:', {
 
 <style scoped>
 .agent-sidebar {
-  width: 400px;
   height: 100%;
   background: #ffffff;
   border-left: 1px solid #e5e7eb;
@@ -1063,9 +1104,12 @@ console.log('AgentSidebar defineExpose:', {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  position: relative;
   /* 确保组件立即显示，避免闪烁 */
   opacity: 1;
   visibility: visible;
+  min-width: 300px;
+  max-width: 600px;
 }
 
 .sidebar-header {

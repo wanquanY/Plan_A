@@ -190,6 +190,7 @@ const getToolDisplayName = (toolName: string): string => {
     'serper_search': 'Serper 搜索',
     'serper_news': 'Serper 新闻',
     'serper_scrape': 'Serper 网页抓取',
+    'note_reader': '笔记阅读',
     'web_search': '网页搜索',
     'web_scrape': '网页抓取',
     'file_read': '文件读取',

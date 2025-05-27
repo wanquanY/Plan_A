@@ -1,6 +1,6 @@
 # FreeWrite
 
-FreeWrite是一个基于FastAPI的后端和VUE前端的全栈项目，提供用户认证和API服务。
+FreeWrite是一个基于FastAPI的后端和React前端的全栈项目，提供用户认证和API服务。
 
 ## 功能特性
 

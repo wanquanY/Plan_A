@@ -33,7 +33,8 @@ class ChatResponseService:
         conversation_id: int,
         db: Optional[AsyncSession] = None,
         message_id: Optional[int] = None,
-        interaction_flow: List[Dict[str, Any]] = None
+        interaction_flow: List[Dict[str, Any]] = None,
+        user_id: Optional[int] = None
     ) -> str:
         """
         处理工具调用并记录到交互流程中（非流式版本）
@@ -59,7 +60,8 @@ class ChatResponseService:
                 agent, 
                 db, 
                 conversation_id,
-                message_id=message_id
+                message_id=message_id,
+                user_id=user_id
             )
             
             # 记录工具调用到交互流程
@@ -361,7 +363,8 @@ class ChatResponseService:
                         conversation_id,
                         db,
                         ai_message.id if ai_message else None,
-                        interaction_flow
+                        interaction_flow,
+                        user_id
                     )
                     
                     # 估算token使用量（因为递归调用可能无法准确获取）

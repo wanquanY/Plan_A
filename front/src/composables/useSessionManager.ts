@@ -138,18 +138,23 @@ export function useSessionManager() {
   // 处理侧边栏发送消息
   const handleSidebarSend = async (data: any, currentNoteId: any, onToolStatus?: (toolStatus: any) => void) => {
     console.log('处理侧边栏发送消息:', data);
+    console.log('当前笔记ID:', currentNoteId?.value);
     
     try {
       sidebarIsAgentResponding.value = true;
       sidebarAgentResponse.value = ''; // 清空之前的响应
       let finalConversationId = currentSessionId?.value;
       
+      // 获取笔记ID的值
+      const noteIdValue = currentNoteId?.value;
+      console.log('发送请求时的笔记ID:', noteIdValue);
+      
       // 使用chatService的streamChat方法
       const abortController = await chatService.streamChat({
         agent_id: data.agent?.id || 1, // 使用agent ID，如果没有则使用默认值1
         content: data.content,
         conversation_id: currentSessionId?.value ? Number(currentSessionId.value) : undefined,
-        note_id: currentNoteId.value
+        note_id: noteIdValue
       }, (response, isComplete, conversationId, toolStatus) => {
         // 流式响应回调
         console.log('收到流式响应:', { response, isComplete, conversationId, toolStatus });

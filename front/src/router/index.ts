@@ -67,7 +67,7 @@ const router = createRouter({
 });
 
 // 全局路由守卫
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const isAuthenticated = authService.isAuthenticated();
   
   // 需要登录的路由
@@ -75,12 +75,44 @@ router.beforeEach((to, from, next) => {
     if (!isAuthenticated) {
       next({ name: 'Login' });
     } else {
+      // 如果用户已登录且访问根路径，且没有指定笔记ID，则自动跳转到最新笔记
+      if (to.name === 'Home' && !to.query.note && !to.query.sessionId) {
+        try {
+          // 动态导入noteService以避免循环依赖
+          const { default: noteService } = await import('../services/note');
+          const { notes } = await noteService.getNotes(1, 1); // 获取第一页的第一条笔记（最新的）
+          
+          if (notes && notes.length > 0) {
+            const latestNote = notes[0];
+            console.log('自动跳转到最新笔记:', latestNote.id);
+            next({ name: 'Home', query: { note: latestNote.id.toString() } });
+            return;
+          }
+        } catch (error) {
+          console.error('获取最新笔记失败:', error);
+          // 如果获取失败，继续正常导航
+        }
+      }
       next();
     }
   } 
   // 游客路由（登录/注册）
   else if (to.matched.some(record => record.meta.guest)) {
     if (isAuthenticated) {
+      // 登录成功后，自动跳转到最新笔记
+      try {
+        const { default: noteService } = await import('../services/note');
+        const { notes } = await noteService.getNotes(1, 1); // 获取第一页的第一条笔记（最新的）
+        
+        if (notes && notes.length > 0) {
+          const latestNote = notes[0];
+          console.log('登录后自动跳转到最新笔记:', latestNote.id);
+          next({ name: 'Home', query: { note: latestNote.id.toString() } });
+          return;
+        }
+      } catch (error) {
+        console.error('获取最新笔记失败:', error);
+      }
       next({ name: 'Home' });
     } else {
       next();

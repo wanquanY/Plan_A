@@ -67,6 +67,7 @@ const getToolDisplayName = (toolName: string) => {
     'serper_search': 'Serper 搜索',
     'serper_news': 'Serper 新闻',
     'serper_scrape': 'Serper 网页抓取',
+    'note_reader': '笔记阅读',
     'web_search': '网页搜索',
     'web_scrape': '网页抓取',
     'file_read': '文件读取',
@@ -105,6 +106,7 @@ const formatToolResult = (result: any) => {
 // 解析搜索结果
 const getSearchResults = (result: any) => {
   try {
+    console.log('解析搜索结果，原始数据:', result);
     let searchData = result;
     
     // 如果是字符串，尝试解析
@@ -112,15 +114,21 @@ const getSearchResults = (result: any) => {
       searchData = JSON.parse(result);
     }
     
+    console.log('解析后的搜索数据:', searchData);
+    
     // 提取搜索结果
     if (searchData.organic_results) {
+      console.log('找到organic_results，数量:', searchData.organic_results.length);
       return searchData.organic_results.slice(0, 5); // 只显示前5个结果
     } else if (searchData.results) {
+      console.log('找到results，数量:', searchData.results.length);
       return searchData.results.slice(0, 5);
     } else if (Array.isArray(searchData)) {
+      console.log('数据是数组，数量:', searchData.length);
       return searchData.slice(0, 5);
     }
     
+    console.log('未找到有效的搜索结果格式');
     return [];
   } catch (error) {
     console.error('解析搜索结果失败:', error);

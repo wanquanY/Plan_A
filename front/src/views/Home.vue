@@ -27,6 +27,29 @@ const editorRef = ref(null);
 const agentSidebarRef = ref(null);
 const wordCount = ref(0);
 
+// 侧边栏宽度管理
+const sidebarWidth = ref(400);
+
+// 处理侧边栏宽度变化
+const handleSidebarResize = (newWidth: number) => {
+  sidebarWidth.value = newWidth;
+};
+
+// 从localStorage恢复侧边栏宽度
+const restoreSidebarWidth = () => {
+  try {
+    const savedWidth = localStorage.getItem('agent-sidebar-width');
+    if (savedWidth) {
+      const width = parseInt(savedWidth, 10);
+      if (width >= 300 && width <= 600) {
+        sidebarWidth.value = width;
+      }
+    }
+  } catch (error) {
+    console.warn('无法从localStorage恢复侧边栏宽度:', error);
+  }
+};
+
 // 初始化路由逻辑
 routeManager.initializeRoute(
   async (noteId: number) => {
@@ -276,6 +299,27 @@ const handleToggleSidebarMode = (data: any) => {
 // 处理侧边栏发送消息
 const handleSidebarSend = async (data: any) => {
   try {
+    // 使用可靠的方法获取当前笔记ID
+    let currentNoteId = noteManager.getCurrentNoteId();
+    
+    // 如果还是没有笔记ID，尝试从URL获取
+    if (!currentNoteId && routeManager.route.query.note) {
+      const noteIdFromUrl = parseInt(routeManager.route.query.note as string);
+      if (!isNaN(noteIdFromUrl)) {
+        console.log('从URL获取笔记ID:', noteIdFromUrl);
+        currentNoteId = noteIdFromUrl;
+        noteManager.currentNoteId.value = noteIdFromUrl;
+        localStorage.setItem('lastNoteId', noteIdFromUrl.toString());
+      }
+    }
+    
+    console.log('发送消息时的笔记ID:', currentNoteId);
+    
+    // 如果仍然没有笔记ID，给出警告但不阻止发送
+    if (!currentNoteId) {
+      console.warn('警告：发送消息时没有找到笔记ID，消息可能无法正确关联到笔记');
+    }
+    
     // 定义工具状态处理回调
     const handleToolStatus = (toolStatus: any) => {
       if (toolStatus && agentSidebarRef.value && agentSidebarRef.value.handleToolStatus) {
@@ -285,7 +329,10 @@ const handleSidebarSend = async (data: any) => {
       }
     };
     
-    await sessionManager.handleSidebarSend(data, noteManager.currentNoteId, handleToolStatus);
+    // 创建一个包装的ref对象，确保传递正确的值
+    const noteIdRef = ref(currentNoteId);
+    
+    await sessionManager.handleSidebarSend(data, noteIdRef, handleToolStatus);
   } catch (error) {
     console.error('发送消息失败:', error);
   }
@@ -355,8 +402,22 @@ watch(noteRenamedEvent, (newEvent) => {
 
 // 组件挂载后初始化
 onMounted(() => {
+  // 恢复侧边栏宽度
+  restoreSidebarWidth();
+  
+  // 确保笔记ID正确初始化
   nextTick(() => {
     sidebarManager.initializeEditorMode(editorRef);
+    
+    // 如果URL中有笔记ID但noteManager中没有，尝试同步
+    if (routeManager.route.query.note && !noteManager.currentNoteId.value) {
+      const noteIdFromUrl = parseInt(routeManager.route.query.note as string);
+      if (!isNaN(noteIdFromUrl)) {
+        console.log('组件挂载时从URL同步笔记ID:', noteIdFromUrl);
+        noteManager.currentNoteId.value = noteIdFromUrl;
+        localStorage.setItem('lastNoteId', noteIdFromUrl.toString());
+      }
+    }
   });
 });
 </script>
@@ -392,7 +453,7 @@ onMounted(() => {
         
         <!-- 侧边栏 -->
         <Transition name="sidebar">
-          <div v-if="sidebarManager.showSidebar.value" class="sidebar-wrapper" key="sidebar">
+          <div v-if="sidebarManager.showSidebar.value" class="sidebar-wrapper" key="sidebar" :style="{ width: sidebarWidth + 'px' }">
             <AgentSidebar
               :visible="sidebarManager.showSidebar.value"
               :agentResponse="sessionManager.sidebarAgentResponse.value" 
@@ -406,6 +467,7 @@ onMounted(() => {
               @request-insert="handleSidebarInsert" 
               @navigate-history="handleSidebarNavigateHistory"
               @edit-message="handleSidebarEditMessage"
+              @resize="handleSidebarResize"
               ref="agentSidebarRef"
             />
           </div>
@@ -488,7 +550,6 @@ onMounted(() => {
 /* 侧边栏样式 */
 .sidebar-wrapper {
   flex-shrink: 0;
-  width: 400px;
   height: 100vh;
   overflow: hidden;
   display: flex;

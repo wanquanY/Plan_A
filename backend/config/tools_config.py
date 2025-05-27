@@ -139,6 +139,43 @@ AVAILABLE_TOOLS = [
                 "required": ["url"]
             }
         }
+    },
+    # 笔记阅读工具
+    {
+        "type": "function",
+        "function": {
+            "name": "note_reader",
+            "description": "阅读用户当前正在编辑的笔记内容。如果在侧边栏聊天中调用，会自动读取当前关联的笔记。也可以通过笔记ID或标题搜索其他笔记，并支持指定阅读的行数范围。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {
+                        "type": "integer",
+                        "description": "要阅读的笔记ID，如果不提供则自动读取当前关联的笔记"
+                    },
+                    "search_title": {
+                        "type": "string",
+                        "description": "通过标题搜索笔记，支持模糊匹配"
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "开始阅读的行数（从1开始计数）",
+                        "default": 1
+                    },
+                    "line_count": {
+                        "type": "integer",
+                        "description": "要阅读的行数，如果不指定则读取全部内容",
+                        "default": -1
+                    },
+                    "include_metadata": {
+                        "type": "boolean",
+                        "description": "是否包含笔记的元数据信息（创建时间、更新时间等）",
+                        "default": True
+                    }
+                },
+                "required": []
+            }
+        }
     }
 ]
 
@@ -146,8 +183,11 @@ AVAILABLE_TOOLS = [
 TOOL_CATEGORIES = {
     "search": ["tavily_search", "tavily_extract", "serper_search", "serper_news"],
     "scrape": ["tavily_extract", "serper_scrape"],
+    "note": ["note_reader"],
+    "document": ["note_reader"],
     "tavily": ["tavily_search", "tavily_extract"],
-    "serper": ["serper_search", "serper_news", "serper_scrape"]
+    "serper": ["serper_search", "serper_news", "serper_scrape"],
+    "local": ["note_reader"]
 }
 
 # 工具提供商配置
@@ -165,6 +205,13 @@ TOOL_PROVIDERS = {
         "tools": ["serper_search", "serper_news", "serper_scrape"],
         "api_key_required": True,
         "website": "https://serper.dev"
+    },
+    "local": {
+        "name": "本地工具",
+        "description": "用户笔记和文档处理工具",
+        "tools": ["note_reader"],
+        "api_key_required": False,
+        "website": ""
     }
 }
 

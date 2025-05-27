@@ -263,6 +263,17 @@ watch(() => props.modelValue, (newValue, oldValue) => {
       
       console.log('更新编辑器DOM内容');
       editorContentRef.value.editorRef.innerHTML = newValue;
+      
+      // 内容更新后，触发markdown渲染
+      nextTick(async () => {
+        try {
+          console.log('内容更新后触发markdown渲染');
+          const { renderContentComponents } = await import('../../services/renderService');
+          renderContentComponents(true);
+        } catch (error) {
+          console.error('渲染markdown内容失败:', error);
+        }
+      });
     }
   }
 }, { immediate: true });
@@ -826,7 +837,7 @@ const handleHistoryNavigation = (payload: { direction: 'prev' | 'next' }) => {
 };
 
 // Handler for inserting content from modal into editor
-const handleInsertResponse = (responseText: string) => {
+const handleInsertResponse = async (responseText: string) => {
   // 如果当前是侧边栏模式，发射事件给父组件
   if (interactionMode.value === 'sidebar') {
     emit('sidebar-insert', responseText);
@@ -834,11 +845,11 @@ const handleInsertResponse = (responseText: string) => {
   }
   
   // 弹窗模式下的原有逻辑
-  insertContentAtCursor(responseText);
+  await insertContentAtCursor(responseText);
 };
 
 // 新增专门的插入方法，供外部直接调用，避免递归
-const insertContentAtCursor = (responseText: string) => {
+const insertContentAtCursor = async (responseText: string) => {
   console.log('[Editor.vue] Request to insert:', responseText);
   console.log('[Editor.vue] Current cursor range exists:', !!currentCursorRange.value);
   
@@ -957,8 +968,33 @@ const insertContentAtCursor = (responseText: string) => {
 
     console.log('[Editor.vue] 最终插入位置 - 容器:', range.startContainer.nodeName, '偏移:', range.startOffset);
 
-    // 清理响应文本并转换为HTML
-    const cleanText = responseText.trim();
+    // 检查内容是否包含markdown语法，如果是则先转换为HTML
+    let processedContent = responseText.trim();
+    let isMarkdownContent = false;
+    
+    // 检查是否包含markdown语法
+    const hasMarkdownSyntax = responseText.includes('```') || 
+                             responseText.includes('# ') || 
+                             responseText.includes('## ') || 
+                             responseText.includes('**') || 
+                             responseText.includes('*') ||
+                             responseText.includes('`') ||
+                             (responseText.includes('[') && responseText.includes(']('));
+    
+    if (hasMarkdownSyntax) {
+      try {
+        console.log('[Editor.vue] 检测到markdown语法，转换为HTML');
+        const { markdownToHtml } = await import('../../services/markdownService');
+        processedContent = markdownToHtml(responseText);
+        isMarkdownContent = true;
+        console.log('[Editor.vue] Markdown转换完成，HTML长度:', processedContent.length);
+      } catch (error) {
+        console.error('[Editor.vue] Markdown转换失败:', error);
+        // 转换失败时使用原始文本
+        processedContent = responseText.trim();
+        isMarkdownContent = false;
+      }
+    }
     
     // 删除选择的内容（如果有）
     if (!range.collapsed) {
@@ -982,16 +1018,31 @@ const insertContentAtCursor = (responseText: string) => {
       const newParagraph = document.createElement('p');
       
       // 处理响应文本
-      const paragraphs = cleanText.split(/\n\s*\n/).filter(p => p.trim());
-      if (paragraphs.length > 0) {
-        // 第一个段落继续当前行
-        const firstParagraph = paragraphs[0].trim().split('\n');
-        firstParagraph.forEach((line, lineIndex) => {
-          if (lineIndex > 0) {
-            newParagraph.appendChild(document.createElement('br'));
-          }
-          newParagraph.appendChild(document.createTextNode(line));
-        });
+      if (isMarkdownContent) {
+        // 如果是HTML内容，直接解析并插入
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = processedContent;
+        
+        // 将HTML内容的第一个元素作为新段落
+        if (tempDiv.firstElementChild) {
+          const firstElement = tempDiv.firstElementChild;
+          newParagraph.innerHTML = firstElement.innerHTML;
+        } else {
+          newParagraph.innerHTML = processedContent;
+        }
+      } else {
+        // 纯文本处理
+        const paragraphs = processedContent.split(/\n\s*\n/).filter(p => p.trim());
+        if (paragraphs.length > 0) {
+          // 第一个段落继续当前行
+          const firstParagraph = paragraphs[0].trim().split('\n');
+          firstParagraph.forEach((line, lineIndex) => {
+            if (lineIndex > 0) {
+              newParagraph.appendChild(document.createElement('br'));
+            }
+            newParagraph.appendChild(document.createTextNode(line));
+          });
+        }
       }
       
       // 更新当前文本节点为前半部分
@@ -1009,28 +1060,47 @@ const insertContentAtCursor = (responseText: string) => {
         currentParagraph.parentNode.insertBefore(newParagraph, currentParagraph.nextSibling);
         
         // 如果有后续文本，创建新段落
+        let afterParagraph = null;
         if (textAfter.trim()) {
-          const afterParagraph = document.createElement('p');
+          afterParagraph = document.createElement('p');
           afterParagraph.appendChild(afterTextNode);
           currentParagraph.parentNode.insertBefore(afterParagraph, newParagraph.nextSibling);
         }
         
         // 处理剩余段落
-        if (paragraphs.length > 1) {
-          let insertAfter = textAfter.trim() ? afterParagraph : newParagraph;
+        if (isMarkdownContent) {
+          // HTML内容处理剩余元素
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = processedContent;
           
-          for (let i = 1; i < paragraphs.length; i++) {
-            const p = document.createElement('p');
-            const lines = paragraphs[i].trim().split('\n');
-            lines.forEach((line, lineIndex) => {
-              if (lineIndex > 0) {
-                p.appendChild(document.createElement('br'));
-              }
-              p.appendChild(document.createTextNode(line));
-            });
+          let insertAfter = textAfter.trim() ? (afterParagraph || newParagraph) : newParagraph;
+          
+          // 跳过第一个元素（已经处理），插入剩余元素
+          const elements = Array.from(tempDiv.children);
+          for (let i = 1; i < elements.length; i++) {
+            const element = elements[i].cloneNode(true);
+            insertAfter.parentNode.insertBefore(element, insertAfter.nextSibling);
+            insertAfter = element;
+          }
+        } else {
+          // 纯文本处理剩余段落
+          const paragraphs = processedContent.split(/\n\s*\n/).filter(p => p.trim());
+          if (paragraphs.length > 1) {
+            let insertAfter = textAfter.trim() ? (afterParagraph || newParagraph) : newParagraph;
             
-            insertAfter.parentNode.insertBefore(p, insertAfter.nextSibling);
-            insertAfter = p;
+            for (let i = 1; i < paragraphs.length; i++) {
+              const p = document.createElement('p');
+              const lines = paragraphs[i].trim().split('\n');
+              lines.forEach((line, lineIndex) => {
+                if (lineIndex > 0) {
+                  p.appendChild(document.createElement('br'));
+                }
+                p.appendChild(document.createTextNode(line));
+              });
+              
+              insertAfter.parentNode.insertBefore(p, insertAfter.nextSibling);
+              insertAfter = p;
+            }
           }
         }
         
@@ -1043,29 +1113,41 @@ const insertContentAtCursor = (responseText: string) => {
       // 光标在段落开始或结束，使用原有逻辑
       const fragment = document.createDocumentFragment();
       
-      // 将响应文本按段落分割
-      const paragraphs = cleanText.split(/\n\s*\n/).filter(p => p.trim());
-      
-      if (paragraphs.length === 0) {
-        // 如果没有段落，插入一个空段落
-        const emptyP = document.createElement('p');
-        emptyP.innerHTML = '<br>';
-        fragment.appendChild(emptyP);
-        console.log('[Editor.vue] 插入空段落');
+      if (isMarkdownContent) {
+        // HTML内容处理
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = processedContent;
+        
+        // 将所有HTML元素添加到fragment中
+        while (tempDiv.firstChild) {
+          fragment.appendChild(tempDiv.firstChild);
+        }
+        console.log('[Editor.vue] 创建HTML内容片段');
       } else {
-        console.log('[Editor.vue] 创建', paragraphs.length, '个段落');
-        paragraphs.forEach((paragraph, index) => {
-          const p = document.createElement('p');
-          // 处理段落内的换行
-          const lines = paragraph.trim().split('\n');
-          lines.forEach((line, lineIndex) => {
-            if (lineIndex > 0) {
-              p.appendChild(document.createElement('br'));
-            }
-            p.appendChild(document.createTextNode(line));
+        // 纯文本处理 - 将响应文本按段落分割
+        const paragraphs = processedContent.split(/\n\s*\n/).filter(p => p.trim());
+        
+        if (paragraphs.length === 0) {
+          // 如果没有段落，插入一个空段落
+          const emptyP = document.createElement('p');
+          emptyP.innerHTML = '<br>';
+          fragment.appendChild(emptyP);
+          console.log('[Editor.vue] 插入空段落');
+        } else {
+          console.log('[Editor.vue] 创建', paragraphs.length, '个段落');
+          paragraphs.forEach((paragraph, index) => {
+            const p = document.createElement('p');
+            // 处理段落内的换行
+            const lines = paragraph.trim().split('\n');
+            lines.forEach((line, lineIndex) => {
+              if (lineIndex > 0) {
+                p.appendChild(document.createElement('br'));
+              }
+              p.appendChild(document.createTextNode(line));
+            });
+            fragment.appendChild(p);
           });
-          fragment.appendChild(p);
-        });
+        }
       }
 
       // 插入内容
@@ -1088,6 +1170,88 @@ const insertContentAtCursor = (responseText: string) => {
     editorElement.dispatchEvent(inputEvent);
 
     console.log('[Editor.vue] Content inserted successfully at cursor position');
+    
+    // 插入内容后，先检查是否需要转换markdown，然后触发渲染
+    nextTick(async () => {
+      try {
+        console.log('插入内容后处理markdown');
+        
+        // 检查插入的内容是否包含markdown语法
+        const hasMarkdownSyntax = responseText.includes('```') || 
+                                 responseText.includes('# ') || 
+                                 responseText.includes('## ') || 
+                                 responseText.includes('**') || 
+                                 responseText.includes('*') ||
+                                 responseText.includes('`') ||
+                                 (responseText.includes('[') && responseText.includes(']('));
+        
+        if (hasMarkdownSyntax) {
+          console.log('检测到markdown语法，需要转换和渲染');
+          
+          // 导入markdown服务
+          const { markdownToHtml } = await import('../../services/markdownService');
+          
+          // 找到刚插入的内容并转换
+          const editorElement = editorContentRef.value.editorRef;
+          if (editorElement) {
+            // 获取当前编辑器的HTML内容
+            const currentHtml = editorElement.innerHTML;
+            
+            // 查找包含纯文本markdown的段落
+            const paragraphs = editorElement.querySelectorAll('p');
+            let needsUpdate = false;
+            
+            paragraphs.forEach(p => {
+              const textContent = p.textContent || '';
+              
+              // 检查段落是否包含markdown语法且还没有被渲染
+              if (textContent.includes('```') || textContent.includes('# ') || textContent.includes('## ')) {
+                try {
+                  // 转换markdown为HTML
+                  const htmlContent = markdownToHtml(textContent);
+                  
+                  // 如果转换后的内容不同，替换段落内容
+                  if (htmlContent !== textContent && htmlContent.trim() !== '') {
+                    console.log('转换段落markdown:', textContent.substring(0, 50) + '...');
+                    
+                    // 创建临时容器
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = htmlContent;
+                    
+                    // 替换段落内容
+                    while (p.firstChild) {
+                      p.removeChild(p.firstChild);
+                    }
+                    
+                    // 插入转换后的内容
+                    while (tempDiv.firstChild) {
+                      p.appendChild(tempDiv.firstChild);
+                    }
+                    
+                    needsUpdate = true;
+                  }
+                } catch (error) {
+                  console.error('转换段落markdown失败:', error);
+                }
+              }
+            });
+            
+            // 如果有更新，触发输入事件
+            if (needsUpdate) {
+              const inputEvent = new Event('input', { bubbles: true });
+              editorElement.dispatchEvent(inputEvent);
+            }
+          }
+        }
+        
+        // 最后触发渲染组件
+        console.log('触发markdown渲染');
+        const { renderContentComponents } = await import('../../services/renderService');
+        renderContentComponents(true);
+      } catch (error) {
+        console.error('处理插入的markdown内容失败:', error);
+      }
+    });
 
   } catch (error) {
     console.error('[Editor.vue] Error inserting content:', error);
@@ -1205,9 +1369,9 @@ defineExpose({
     conversationHistory: conversationHistory.value // 添加完整的会话历史记录
   }),
   // 修改为使用新的方法，避免递归调用
-  handleInsertResponse: (responseText: string) => {
+  handleInsertResponse: async (responseText: string) => {
     console.log('[Editor.vue] 外部调用handleInsertResponse:', responseText);
-    insertContentAtCursor(responseText);
+    await insertContentAtCursor(responseText);
   },
   closeModal: () => {
     // 关闭弹窗

@@ -30,7 +30,8 @@ class ChatToolHandler:
         agent, 
         db: Optional[AsyncSession] = None, 
         conversation_id: Optional[int] = None, 
-        message_id: Optional[int] = None
+        message_id: Optional[int] = None,
+        user_id: Optional[int] = None
     ):
         """处理工具调用请求并返回结果"""
         results = []
@@ -124,6 +125,30 @@ class ChatToolHandler:
                         },
                         config={"api_key": api_key} if api_key else None
                     )
+                
+                elif function_name == "note_reader":
+                    # 笔记阅读工具需要特殊处理，因为需要数据库会话
+                    if not db:
+                        tool_result = {"error": "数据库连接不可用"}
+                    else:
+                        # 创建笔记阅读工具实例
+                        note_reader = tools_service.get_tool(
+                            "note_reader", 
+                            config={"db_session": db, "conversation_id": conversation_id}
+                        )
+                        
+                        if note_reader:
+                            api_logger.info("笔记阅读工具开始执行")
+                            # 执行笔记读取
+                            tool_result = await note_reader.read_note(
+                                note_id=function_args.get("note_id"),
+                                search_title=function_args.get("search_title"),
+                                start_line=function_args.get("start_line", 1),
+                                line_count=function_args.get("line_count", -1),
+                                include_metadata=function_args.get("include_metadata", True)
+                            )
+                        else:
+                            tool_result = {"error": "无法创建笔记阅读工具实例"}
                 
                 # 更新状态为完成
                 tool_call_data["status"] = "completed"
