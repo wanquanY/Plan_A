@@ -70,6 +70,7 @@ COPY --from=backend-build /usr/local/lib/python3.11/site-packages /usr/local/lib
 COPY --from=backend-build /usr/local/bin /usr/local/bin
 
 # 复制应用代码
+COPY .env ./
 COPY backend/ ./backend/
 COPY pyproject.toml alembic.ini ./
 
