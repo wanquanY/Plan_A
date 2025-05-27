@@ -145,17 +145,17 @@ AVAILABLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "note_reader",
-            "description": "阅读用户当前正在编辑的笔记内容。如果在侧边栏聊天中调用，会自动读取当前关联的笔记。也可以通过笔记ID或标题搜索其他笔记，并支持指定阅读的行数范围。",
+            "description": "阅读用户的笔记内容。在侧边栏聊天中，会自动读取当前关联的笔记；在其他情况下，建议明确指定要读取的笔记。支持通过笔记ID或标题搜索笔记，并可指定阅读的行数范围。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "note_id": {
                         "type": "integer",
-                        "description": "要阅读的笔记ID，如果不提供则自动读取当前关联的笔记"
+                        "description": "要阅读的笔记ID。在侧边栏聊天中可以不提供（会自动读取关联笔记），但在其他场景建议明确指定"
                     },
                     "search_title": {
                         "type": "string",
-                        "description": "通过标题搜索笔记，支持模糊匹配"
+                        "description": "通过标题搜索笔记，支持模糊匹配。当不知道具体笔记ID时可以使用"
                     },
                     "start_line": {
                         "type": "integer",

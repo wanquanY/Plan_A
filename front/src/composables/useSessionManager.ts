@@ -199,21 +199,6 @@ export function useSessionManager() {
           
           // 注意：不再在末尾插入工具状态HTML，现在使用 contentChunks 系统
           
-          // 延迟一小段时间后将当前对话添加到历史记录中，确保响应状态完全更新
-          setTimeout(() => {
-            if (sidebarAgentResponse.value) {
-              sidebarConversationHistory.value.push({
-                user: data.content,
-                agent: sidebarAgentResponse.value,
-                userMessageId: undefined, // 新消息暂时没有ID
-                agentMessageId: undefined // 新消息暂时没有ID
-              });
-              sidebarHistoryIndex.value = sidebarConversationHistory.value.length - 1;
-              sidebarHistoryLength.value = sidebarConversationHistory.value.length;
-              console.log('添加到会话历史记录，总条数:', sidebarConversationHistory.value.length);
-            }
-          }, 500);
-          
           // 如果返回了新的会话ID，更新当前会话ID
           if (finalConversationId && currentSessionId && finalConversationId !== currentSessionId.value) {
             currentSessionId.value = finalConversationId;
@@ -226,6 +211,51 @@ export function useSessionManager() {
             });
             console.log('更新URL会话ID:', finalConversationId);
           }
+          
+          // 延迟一小段时间后刷新会话历史记录，确保服务器端消息已保存并获取到正确的消息ID
+          setTimeout(async () => {
+            if (sidebarAgentResponse.value && (finalConversationId || currentSessionId?.value)) {
+                             const sessionIdToUse = finalConversationId || currentSessionId?.value;
+              console.log('流式输出完成，刷新会话历史记录以获取消息ID，会话ID:', sessionIdToUse);
+              
+              try {
+                // 重新获取会话历史记录，包含正确的消息ID
+                const agentHistory = await chatService.getSessionAgentHistory(Number(sessionIdToUse));
+                console.log('重新获取到的会话历史记录:', agentHistory);
+                
+                if (agentHistory && agentHistory.length > 0) {
+                  sidebarConversationHistory.value = [...agentHistory];
+                  sidebarHistoryLength.value = agentHistory.length;
+                  sidebarHistoryIndex.value = agentHistory.length - 1;
+                  console.log(`流式输出完成后刷新会话历史记录成功，条数: ${agentHistory.length}`);
+                } else {
+                  // 如果获取失败，回退到原来的逻辑
+                  console.log('获取会话历史记录失败，使用本地添加方式');
+                  sidebarConversationHistory.value.push({
+                    user: data.content,
+                    agent: sidebarAgentResponse.value,
+                    userMessageId: undefined, // 新消息暂时没有ID
+                    agentMessageId: undefined // 新消息暂时没有ID
+                  });
+                  sidebarHistoryIndex.value = sidebarConversationHistory.value.length - 1;
+                  sidebarHistoryLength.value = sidebarConversationHistory.value.length;
+                  console.log('添加到会话历史记录，总条数:', sidebarConversationHistory.value.length);
+                }
+              } catch (error) {
+                console.error('刷新会话历史记录失败，使用本地添加方式:', error);
+                // 如果刷新失败，回退到原来的逻辑
+                sidebarConversationHistory.value.push({
+                  user: data.content,
+                  agent: sidebarAgentResponse.value,
+                  userMessageId: undefined, // 新消息暂时没有ID
+                  agentMessageId: undefined // 新消息暂时没有ID
+                });
+                sidebarHistoryIndex.value = sidebarConversationHistory.value.length - 1;
+                sidebarHistoryLength.value = sidebarConversationHistory.value.length;
+                console.log('添加到会话历史记录，总条数:', sidebarConversationHistory.value.length);
+              }
+            }
+          }, 800); // 增加延迟时间，确保服务器端消息已完全保存
         }
         
         return { toolStatus }; // 返回工具状态供外部处理

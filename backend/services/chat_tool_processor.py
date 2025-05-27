@@ -199,14 +199,25 @@ class ChatToolProcessor:
                     continue
                 
                 # 检查参数是否有效
-                if tc['function']['arguments'].strip():
+                arguments_str = tc['function']['arguments'].strip()
+                
+                # 对于某些工具（如note_reader），空参数是合法的
+                if arguments_str or tc['function']['name'] in ['note_reader']:
                     try:
-                        # 验证JSON格式
-                        json.loads(tc['function']['arguments'])
+                        # 验证JSON格式，空字符串默认为空对象
+                        if not arguments_str:
+                            arguments_str = '{}'
+                            tc['function']['arguments'] = arguments_str
+                        
+                        json.loads(arguments_str)
                         valid_tool_calls.append(tc)
-                        api_logger.info(f"工具调用 {tc['function']['name']} 参数完整: {tc['function']['arguments']}")
+                        
+                        if arguments_str == '{}':
+                            api_logger.info(f"工具调用 {tc['function']['name']} 使用默认参数（空参数）")
+                        else:
+                            api_logger.info(f"工具调用 {tc['function']['name']} 参数完整: {arguments_str}")
                     except json.JSONDecodeError as e:
-                        api_logger.error(f"工具调用 {tc['function']['name']} 参数JSON格式错误: {tc['function']['arguments']}, 错误: {e}")
+                        api_logger.error(f"工具调用 {tc['function']['name']} 参数JSON格式错误: {arguments_str}, 错误: {e}")
                 else:
                     api_logger.warning(f"工具调用 {tc['function']['name']} 参数为空，跳过")
             
