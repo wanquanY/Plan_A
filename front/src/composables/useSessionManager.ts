@@ -149,13 +149,23 @@ export function useSessionManager() {
       const noteIdValue = currentNoteId?.value;
       console.log('发送请求时的笔记ID:', noteIdValue);
       
-      // 使用chatService的streamChat方法
-      const abortController = await chatService.streamChat({
-        agent_id: data.agent?.id || 1, // 使用agent ID，如果没有则使用默认值1
+      // 构建聊天请求对象
+      const chatRequest: any = {
+        agent_id: data.agentId || data.agent?.id || 1, // 使用agentId或agent.id
         content: data.content,
         conversation_id: currentSessionId?.value ? Number(currentSessionId.value) : undefined,
         note_id: noteIdValue
-      }, (response, isComplete, conversationId, toolStatus, reasoningContent) => {
+      };
+      
+      // 如果有图片数据，添加到请求中
+      if (data.images && data.images.length > 0) {
+        chatRequest.images = data.images;
+        console.log('发送聊天请求包含图片:', data.images.length, '张');
+        console.log('图片URL列表:', data.images.map((img: any) => img.url));
+      }
+      
+      // 使用chatService的streamChat方法
+      const abortController = await chatService.streamChat(chatRequest, (response, isComplete, conversationId, toolStatus, reasoningContent) => {
         // 流式响应回调
         console.log('收到流式响应:', { response, isComplete, conversationId, toolStatus, reasoningContent });
         

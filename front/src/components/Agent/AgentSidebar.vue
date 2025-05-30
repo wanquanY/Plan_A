@@ -662,7 +662,7 @@ const handleSendMessage = (messageData: any) => {
   }
   
   // 添加用户消息和AI消息
-  addUserMessage(messageData.content, messageData.agent);
+  addUserMessage(messageData.content, messageData.agent, messageData.images);
   addAgentMessage(messageData.agent);
 
   // 滚动到底部
@@ -701,7 +701,7 @@ const cancelEditMessage = (messageObj: any) => {
 };
 
 // 保存编辑消息并重新执行
-const saveEditMessage = async (messageObj: any) => {
+const saveEditMessage = async (messageObj: any, editImages?: any[]) => {
   if (!messageObj.editContent?.trim()) {
     message.warning('请输入消息内容');
     return;
@@ -713,7 +713,7 @@ const saveEditMessage = async (messageObj: any) => {
   }
   
   try {
-    console.log('保存并重新执行消息:', messageObj);
+    console.log('保存并重新执行消息:', messageObj, '编辑后的图片:', editImages);
     
     const messageIndex = getMessageIndexInHistoryLocal(messageObj);
     if (messageIndex === -1) {
@@ -725,8 +725,28 @@ const saveEditMessage = async (messageObj: any) => {
     messageObj.isEditing = false;
     isEditingMessage.value = false;
     
-    // 更新消息内容
-    messageObj.content = messageObj.editContent.trim();
+    // 更新消息内容 - 处理包含图片的消息
+    let updatedContent = messageObj.editContent.trim();
+    if (messageObj.type === 'user') {
+      try {
+        const parsed = JSON.parse(messageObj.content);
+        if (parsed.type === 'user_message') {
+          // 包含图片的消息，更新文本内容和图片列表
+          parsed.text_content = updatedContent;
+          parsed.images = editImages || [];  // 使用编辑后的图片列表
+          updatedContent = JSON.stringify(parsed);
+          console.log('更新包含图片的消息:', {
+            textContent: parsed.text_content,
+            imagesCount: parsed.images.length,
+            updatedContent
+          });
+        }
+      } catch (error) {
+        // 如果解析失败，说明是纯文本消息，直接使用编辑内容
+        console.log('纯文本消息，直接更新内容');
+      }
+    }
+    messageObj.content = updatedContent;
     
     // 找到消息在历史记录中的索引
     const currentMessageIndex = messages.value.findIndex(msg => msg.id === messageObj.id);
@@ -752,7 +772,7 @@ const saveEditMessage = async (messageObj: any) => {
     // 调用编辑接口（流式响应）
     const editRequest = {
       message_index: messageIndex,
-      content: messageObj.editContent.trim(),
+      content: updatedContent,  // 使用更新后的完整内容
       stream: true,
       agent_id: currentAgent.value?.id,
       is_user_message: true,
@@ -853,7 +873,7 @@ const saveEditMessage = async (messageObj: any) => {
 };
 
 // 仅保存编辑消息
-const saveEditMessageOnly = async (messageObj: any) => {
+const saveEditMessageOnly = async (messageObj: any, editImages?: any[]) => {
   if (!messageObj.editContent?.trim()) {
     message.warning('请输入消息内容');
     return;
@@ -869,6 +889,7 @@ const saveEditMessageOnly = async (messageObj: any) => {
       messageId: messageObj.id,
       originalContent: messageObj.content,
       newContent: messageObj.editContent,
+      editImages: editImages,
       conversationId: props.conversationId
     });
     
@@ -882,7 +903,7 @@ const saveEditMessageOnly = async (messageObj: any) => {
     // 调用编辑接口（非流式，仅编辑）
     const editRequest = {
       message_index: messageIndex,
-      content: messageObj.editContent.trim(),
+      content: messageObj.editContent.trim(),  // 这里先发送纯文本内容，因为图片处理在成功后
       stream: false,
       agent_id: currentAgent.value?.id,
       is_user_message: true,
@@ -892,8 +913,28 @@ const saveEditMessageOnly = async (messageObj: any) => {
     const result = await chatService.editMessage(props.conversationId, editRequest);
     
     if (result.success) {
-      // 更新消息内容
-      messageObj.content = messageObj.editContent.trim();
+      // 更新消息内容 - 处理包含图片的消息
+      let updatedContent = messageObj.editContent.trim();
+      if (messageObj.type === 'user') {
+        try {
+          const parsed = JSON.parse(messageObj.content);
+          if (parsed.type === 'user_message') {
+            // 包含图片的消息，更新文本内容和图片列表
+            parsed.text_content = updatedContent;
+            parsed.images = editImages || [];  // 使用编辑后的图片列表
+            updatedContent = JSON.stringify(parsed);
+            console.log('仅保存模式：更新包含图片的消息:', {
+              textContent: parsed.text_content,
+              imagesCount: parsed.images.length,
+              updatedContent
+            });
+          }
+        } catch (error) {
+          // 如果解析失败，说明是纯文本消息，直接使用编辑内容
+          console.log('仅保存模式：纯文本消息，直接更新内容');
+        }
+      }
+      messageObj.content = updatedContent;
       messageObj.isEditing = false;
       isEditingMessage.value = false;
       

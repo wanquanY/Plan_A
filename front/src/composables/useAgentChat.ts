@@ -54,16 +54,34 @@ export function useAgentChat() {
   };
 
   // 添加用户消息
-  const addUserMessage = (content: string, agent: any) => {
+  const addUserMessage = (content: string, agent: any, images?: any[]) => {
     const currentTime = Date.now();
+    
+    // 构建消息内容，支持图片数据
+    let messageContent = content;
+    if (images && images.length > 0) {
+      // 构建包含图片和文本的完整消息结构
+      const fullMessageContent = {
+        "type": "user_message",
+        "text_content": content,
+        "images": images.map(image => ({
+          "url": image.url,
+          "name": image.name,
+          "size": image.size
+        }))
+      };
+      messageContent = JSON.stringify(fullMessageContent);
+    }
+    
     const userMessage: ChatMessage = {
       id: `user_${currentTime}_${Math.random().toString(36).substr(2, 9)}`,
       type: 'user',
-      content,
+      content: messageContent,
       timestamp: new Date(),
       agent
     };
     messages.value.push(userMessage);
+    console.log('添加用户消息，ID:', userMessage.id, '包含图片:', images?.length || 0);
     return userMessage;
   };
 
@@ -97,13 +115,34 @@ export function useAgentChat() {
   // 开始编辑消息
   const startEditMessage = (messageObj: ChatMessage) => {
     if (isEditingMessage.value) {
-      message.warning('请先完成当前消息的编辑');
+      console.warn('请先完成当前消息的编辑');
       return;
     }
     
     console.log('开始编辑消息:', messageObj);
     messageObj.isEditing = true;
-    messageObj.editContent = messageObj.content;
+    
+    // 如果是包含图片的用户消息，只编辑文本内容
+    if (messageObj.type === 'user') {
+      try {
+        const parsed = JSON.parse(messageObj.content);
+        if (parsed.type === 'user_message') {
+          // 包含图片的消息，只编辑文本内容
+          messageObj.editContent = parsed.text_content || '';
+          console.log('检测到包含图片的消息，仅编辑文本内容:', parsed.text_content);
+        } else {
+          // 纯文本消息
+          messageObj.editContent = messageObj.content;
+        }
+      } catch (error) {
+        // 如果解析失败，说明是纯文本消息
+        messageObj.editContent = messageObj.content;
+      }
+    } else {
+      // 非用户消息，直接使用原内容
+      messageObj.editContent = messageObj.content;
+    }
+    
     isEditingMessage.value = true;
     
     // 聚焦到编辑框

@@ -51,6 +51,11 @@ export type StreamCallback = (
 export interface ChatRequest {
   agent_id: number;
   content: string;
+  images?: Array<{
+    url: string;
+    name?: string;
+    size?: number;
+  }>;
   conversation_id?: number;
   note_id?: number;
 }
@@ -64,6 +69,23 @@ export interface ChatSession {
   updated_at: string;
   message_count: number;
   last_message: string;
+}
+
+// 聊天消息接口
+export interface ChatMessage {
+  id: number;
+  role: string;
+  content: string;
+  conversation_id: number;
+  created_at: string;
+  agent_id?: number;
+  agent_info?: {
+    id: number;
+    name: string;
+    avatar_url?: string;
+    model?: string;
+  };
+  tool_calls?: any[];
 }
 
 // 添加分页响应模型
@@ -168,7 +190,8 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
     conversation_id: request.conversation_id,
     agent_id: request.agent_id,
     content_length: request.content.length,
-    note_id: request.note_id
+    note_id: request.note_id,
+    images_count: request.images?.length || 0
   });
   
   (async () => {
@@ -179,20 +202,39 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
         throw new Error('需要登录');
       }
       
-      // 构造请求体
-      const body = JSON.stringify({
+      // 构造请求体 - 添加图片支持
+      const requestBody: {
+        content: string;
+        conversation_id: number;
+        agent_id: number;
+        note_id?: number;
+        images?: Array<{
+          url: string;
+          name?: string;
+          size?: number;
+        }>;
+      } = {
         content: request.content,
         conversation_id: request.conversation_id ?? 0,
         agent_id: request.agent_id,
         note_id: request.note_id
-      });
+      };
+      
+      // 如果有图片数据，添加到请求体中
+      if (request.images && request.images.length > 0) {
+        requestBody.images = request.images;
+      }
+      
+      const body = JSON.stringify(requestBody);
       
       // 打印完整请求信息用于调试
       console.log('发送聊天请求完整信息:', {
         content_length: request.content.length,
         conversation_id: request.conversation_id ?? 0,
         agent_id: request.agent_id,
-        note_id: request.note_id || '未提供'
+        note_id: request.note_id || '未提供',
+        images_count: request.images?.length || 0,
+        images_urls: request.images?.map(img => img.url) || []
       });
       
       // 发送请求
@@ -221,30 +263,15 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
       
       // 处理文本流
       const finalId = await processTextStream(response.body.getReader(), onProgress, request.conversation_id);
+      console.log('流式聊天完成，最终conversation_id:', finalId);
       
-      // 如果获取到了新的会话ID，刷新会话列表
-      if (finalId && finalId !== request.conversation_id) {
-        console.log(`聊天完成，新会话ID: ${finalId}，自动刷新会话列表`);
-        try {
-          // 使用全局刷新方法更新侧边栏
-          if (typeof window !== 'undefined' && window.refreshSessions) {
-            window.refreshSessions();
-          } else {
-            // 如果全局方法不可用，则使用本地getSessions只获取数据
-            await getSessions();
-          }
-          console.log('会话列表已刷新');
-        } catch (error) {
-          console.error('刷新会话列表失败:', error);
-        }
-      }
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.log('用户取消了请求');
-        onProgress('用户取消了请求', true, request.conversation_id || 0);
+        console.log('用户取消了聊天请求');
+        onProgress('用户取消了聊天请求', true, request.conversation_id || 0);
       } else {
-        console.error('处理聊天请求时出错:', error);
-        onProgress(`发生错误: ${error.message}`, true, request.conversation_id || 0);
+        console.error('聊天时出错:', error);
+        onProgress(`聊天失败: ${error.message}`, true, request.conversation_id || 0);
       }
     }
   })();

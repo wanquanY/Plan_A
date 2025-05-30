@@ -14,19 +14,47 @@
         <textarea 
           v-model="message.editContent"
           class="edit-textarea"
-          :placeholder="message.content"
-          @keydown.ctrl.enter="$emit('save-edit', message)"
+          :placeholder="getEditPlaceholder()"
+          @keydown.ctrl.enter="$emit('save-edit', message, editImages)"
           @keydown.esc="$emit('cancel-edit', message)"
           ref="editTextarea"
         ></textarea>
+        
+        <!-- 编辑时的图片管理 -->
+        <div v-if="editImages && editImages.length > 0" class="edit-images-section">
+          <div class="edit-images-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21,15 16,10 5,21"/>
+            </svg>
+            <span>消息中的图片 ({{ editImages.length }})</span>
+          </div>
+          <div class="edit-images-list">
+            <div v-for="(image, index) in editImages" :key="index" class="edit-image-item">
+              <img :src="image.url" :alt="image.name || '图片'" class="edit-image-preview" />
+              <div class="edit-image-info">
+                <span class="edit-image-name">{{ image.name || `图片 ${index + 1}` }}</span>
+                <span class="edit-image-size">{{ formatFileSize(image.size) }}</span>
+              </div>
+              <button @click="removeEditImage(index)" class="edit-image-remove" title="移除图片">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        
         <div class="edit-actions">
-          <button @click="$emit('save-edit', message)" class="save-btn" :disabled="!message.editContent?.trim()">
+          <button @click="$emit('save-edit', message, editImages)" class="save-btn" :disabled="!message.editContent?.trim()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="20,6 9,17 4,12"></polyline>
             </svg>
             保存并重新执行
           </button>
-          <button @click="$emit('save-edit-only', message)" class="save-only-btn" :disabled="!message.editContent?.trim()">
+          <button @click="$emit('save-edit-only', message, editImages)" class="save-only-btn" :disabled="!message.editContent?.trim()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
               <polyline points="17,21 17,13 7,13 7,21"></polyline>
@@ -42,11 +70,38 @@
             取消
           </button>
         </div>
+        
+        <!-- 更新后的图片提示信息 -->
+        <div v-if="editImages && editImages.length > 0" class="edit-image-notice">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 6v6l4 2"/>
+          </svg>
+          <span>编辑后消息将包含 {{ editImages.length }} 张图片</span>
+        </div>
       </div>
       
       <!-- 正常显示状态 -->
       <div v-else class="message-content">
-        {{ message.content }}
+        <!-- 解析用户消息内容，支持图片显示 -->
+        <div v-if="parsedUserContent">
+          <!-- 显示文本内容 -->
+          <div v-if="parsedUserContent.text_content" class="user-text-content">
+            {{ parsedUserContent.text_content }}
+          </div>
+          
+          <!-- 显示图片内容 -->
+          <div v-if="parsedUserContent.images && parsedUserContent.images.length > 0" class="user-images-content">
+            <div v-for="(image, index) in parsedUserContent.images" :key="index" class="user-image-item">
+              <img :src="image.url" :alt="image.name || '用户上传的图片'" class="user-image" />
+            </div>
+          </div>
+        </div>
+        
+        <!-- 兼容原始文本格式 -->
+        <div v-else class="user-text-content">
+          {{ message.content }}
+        </div>
         
         <!-- 用户消息操作按钮 -->
         <div class="message-actions">
@@ -56,7 +111,7 @@
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
           </button>
-          <button @click="$emit('copy-message', message.content)" class="action-btn" title="复制">
+          <button @click="$emit('copy-message', getMessageTextContent())" class="action-btn" title="复制">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -198,6 +253,68 @@ const emit = defineEmits([
 ]);
 
 const { getSortedContentChunks } = useStreamingResponse();
+
+// 编辑时的图片管理
+const editImages = ref<any[]>([]);
+
+// 监听消息编辑状态，初始化编辑图片
+watch(() => props.message.isEditing, (isEditing) => {
+  if (isEditing && props.message.type === 'user') {
+    // 初始化编辑图片列表
+    if (parsedUserContent.value && parsedUserContent.value.images) {
+      editImages.value = [...parsedUserContent.value.images];
+    } else {
+      editImages.value = [];
+    }
+    console.log('初始化编辑图片列表:', editImages.value);
+  } else {
+    // 清空编辑图片列表
+    editImages.value = [];
+  }
+});
+
+// 移除编辑中的图片
+const removeEditImage = (index: number) => {
+  if (index >= 0 && index < editImages.value.length) {
+    const removedImage = editImages.value.splice(index, 1)[0];
+    console.log('移除图片:', removedImage.name || `图片 ${index + 1}`);
+  }
+};
+
+// 格式化文件大小
+const formatFileSize = (bytes: number) => {
+  if (!bytes) return '未知大小';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+};
+
+// 解析用户消息内容
+const parsedUserContent = computed(() => {
+  if (props.message.type !== 'user') return null;
+  
+  try {
+    const parsed = JSON.parse(props.message.content);
+    if (parsed.type === 'user_message') {
+      return parsed;
+    }
+  } catch (error) {
+    // 如果解析失败，返回null，使用兼容模式
+  }
+  
+  return null;
+});
+
+// 获取消息的文本内容（用于复制）
+const getMessageTextContent = () => {
+  if (props.message.type === 'user') {
+    if (parsedUserContent.value) {
+      return parsedUserContent.value.text_content || '';
+    }
+    return props.message.content;
+  }
+  return props.message.content;
+};
 
 // 全局展开状态管理 - 使用单例模式
 const globalExpandedState = (() => {
@@ -442,6 +559,14 @@ const renderMarkdown = (content?: string) => {
     return content.replace(/\n/g, '<br>');
   }
 };
+
+// 获取编辑时的占位符
+const getEditPlaceholder = () => {
+  if (parsedUserContent.value) {
+    return parsedUserContent.value.text_content || '';
+  }
+  return '';
+};
 </script>
 
 <style scoped>
@@ -508,6 +633,39 @@ const renderMarkdown = (content?: string) => {
   word-wrap: break-word;
   margin-bottom: 4px;
   font-weight: 500;
+}
+
+.user-message .user-text-content {
+  margin-bottom: 8px;
+}
+
+.user-message .user-images-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.user-message .user-image-item {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.user-message .user-image {
+  max-width: 200px;
+  max-height: 200px;
+  width: auto;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.user-message .user-image:hover {
+  transform: scale(1.02);
 }
 
 .user-message .message-time {
@@ -662,6 +820,127 @@ const renderMarkdown = (content?: string) => {
 .edit-textarea:focus {
   border-color: #3b82f6;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.edit-image-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #0369a1;
+}
+
+.edit-image-notice svg {
+  color: #0ea5e9;
+  flex-shrink: 0;
+}
+
+.edit-images-section {
+  margin-top: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.edit-images-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 6px 6px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.edit-images-header svg {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.edit-images-list {
+  padding: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.edit-image-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #ffffff;
+  margin-bottom: 4px;
+  transition: all 0.2s ease;
+}
+
+.edit-image-item:hover {
+  border-color: #d1d5db;
+  background: #f9fafb;
+}
+
+.edit-image-item:last-child {
+  margin-bottom: 0;
+}
+
+.edit-image-preview {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.edit-image-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-image-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edit-image-size {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.edit-image-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #dc2626;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.edit-image-remove:hover {
+  background: #fecaca;
+  color: #b91c1c;
 }
 
 .edit-actions {

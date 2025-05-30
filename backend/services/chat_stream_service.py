@@ -3,6 +3,8 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 from datetime import datetime
+import aiohttp
+import base64
 
 from backend.schemas.chat import ChatRequest
 from backend.utils.logging import api_logger
@@ -447,20 +449,148 @@ class ChatStreamService:
             # 获取用户发送的内容
             user_content = chat_request.content
             
-            # 将用户消息添加到记忆中
-            memory_service.add_user_message(conversation_id, user_content, user_id)
+            # 处理图片消息 - 构建包含图片的消息格式
+            user_message_content = []
             
-            # 保存用户消息到数据库
+            # 添加文本内容
+            if user_content and user_content.strip():
+                user_message_content.append({
+                    "type": "text",
+                    "text": user_content
+                })
+            
+            # 添加图片内容
+            if hasattr(chat_request, 'images') and chat_request.images:
+                api_logger.info(f"流式聊天用户消息包含 {len(chat_request.images)} 张图片，已尝试转换为base64格式")
+                for image in chat_request.images:
+                    try:
+                        # 尝试下载图片并转换为base64
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(image.url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                                if response.status == 200:
+                                    image_data = await response.read()
+                                    # 检测图片格式
+                                    content_type = response.headers.get('content-type', 'image/png')
+                                    if 'image/' in content_type:
+                                        image_format = content_type.split('/')[-1]
+                                    else:
+                                        image_format = 'png'  # 默认格式
+                                    
+                                    # 转换为base64
+                                    base64_image = base64.b64encode(image_data).decode('utf-8')
+                                    data_url = f"data:{content_type};base64,{base64_image}"
+                                    
+                                    user_message_content.append({
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": data_url,
+                                            "detail": "high"  # 使用高细节模式
+                                        }
+                                    })
+                                else:
+                                    # 如果下载失败，仍然尝试使用原URL
+                                    user_message_content.append({
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": image.url,
+                                            "detail": "high"
+                                        }
+                                    })
+                    except Exception as download_error:
+                        # 如果转换失败，回退到原URL
+                        user_message_content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image.url,
+                                "detail": "high"
+                            }
+                        })
+                
+                api_logger.info(f"流式聊天用户消息包含 {len(chat_request.images)} 张图片，已尝试转换为base64格式")
+            
+            # 构建最终的用户消息
+            if len(user_message_content) > 1:  # 有图片或多个内容元素
+                final_user_message = user_message_content
+                # 用于记忆和数据库的纯文本内容
+                content_for_memory = user_content
+                if hasattr(chat_request, 'images') and chat_request.images:
+                    image_info = f" [包含{len(chat_request.images)}张图片]"
+                    content_for_memory = (user_content + image_info) if user_content else f"发送了{len(chat_request.images)}张图片"
+            else:  # 只有文本
+                final_user_message = user_content
+                content_for_memory = user_content
+            
+            # 将用户消息添加到记忆中（使用纯文本格式）
+            memory_service.add_user_message(conversation_id, content_for_memory, user_id)
+            
+            # 保存用户消息到数据库（保存完整的图片信息）
             if db and user_id and conversation_id:
-                await add_message(
-                    db=db,
-                    conversation_id=conversation_id,
-                    role="user",
-                    content=user_content
-                )
+                # 构建完整的消息内容，包含图片信息
+                if hasattr(chat_request, 'images') and chat_request.images:
+                    # 构建包含图片和文本的完整消息结构
+                    full_message_content = {
+                        "type": "user_message",
+                        "text_content": user_content,
+                        "images": [
+                            {
+                                "url": image.url,
+                                "name": image.name,
+                                "size": image.size
+                            } for image in chat_request.images
+                        ]
+                    }
+                    # 保存JSON格式的完整消息
+                    await add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="user",
+                        content=json.dumps(full_message_content, ensure_ascii=False)
+                    )
+                    api_logger.info(f"保存包含{len(chat_request.images)}张图片的用户消息到数据库")
+                else:
+                    # 纯文本消息，直接保存
+                    await add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="user",
+                        content=content_for_memory
+                    )
             
             # 从记忆服务获取完整的消息记录
             messages = memory_service.get_messages(conversation_id)
+            
+            # 如果当前请求包含图片，需要替换最后一条用户消息为包含图片的格式
+            if hasattr(chat_request, 'images') and chat_request.images and len(user_message_content) > 1:
+                api_logger.info(f"检测到图片消息，准备替换最后一条用户消息格式")
+                
+                # 找到最后一条用户消息并替换为包含图片的格式
+                for i in range(len(messages) - 1, -1, -1):
+                    if messages[i].get("role") == "user":
+                        api_logger.info(f"替换用户消息索引 {i}，原内容: {str(messages[i]['content'])[:50]}...")
+                        messages[i]["content"] = final_user_message
+                        api_logger.info(f"替换后的消息格式: {json.dumps(final_user_message, ensure_ascii=False)[:200]}...")
+                        break
+                else:
+                    api_logger.warning("未找到用户消息进行图片格式替换")
+            else:
+                api_logger.info("当前请求不包含图片或图片数据为空")
+                
+            # 记录最终发送给AI模型的消息格式
+            if hasattr(chat_request, 'images') and chat_request.images:
+                # 安全地记录消息格式，避免过长的日志
+                api_logger.info(f"准备发送给AI模型的消息数量: {len(messages)}")
+                for idx, msg in enumerate(messages):
+                    if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+                        api_logger.info(f"消息 {idx} (用户): 复杂格式，包含 {len(msg['content'])} 个元素")
+                        for elem_idx, elem in enumerate(msg["content"]):
+                            if isinstance(elem, dict):
+                                if elem.get("type") == "text":
+                                    api_logger.info(f"  元素 {elem_idx}: 文本 - {elem.get('text', '')[:50]}...")
+                                elif elem.get("type") == "image_url":
+                                    api_logger.info(f"  元素 {elem_idx}: 图片 - URL: {elem.get('image_url', {}).get('url', 'unknown')}")
+                    else:
+                        content_preview = str(msg.get("content", ""))[:50]
+                        api_logger.info(f"消息 {idx} ({msg.get('role', 'unknown')}): {content_preview}...")
             
             # 添加Agent的系统提示词
             if current_agent and current_agent.system_prompt:
