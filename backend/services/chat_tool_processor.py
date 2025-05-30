@@ -130,6 +130,8 @@ class ChatToolProcessor:
             assistant_message = next_response.choices[0].message
             current_content = assistant_message.content or ""
             
+            api_logger.info(f"[工具调用响应] 第 {iteration} 轮响应内容长度: {len(current_content)}")
+            
             # 检查是否有新的工具调用
             new_tool_calls = assistant_message.tool_calls if hasattr(assistant_message, 'tool_calls') else None
             
@@ -316,7 +318,6 @@ class ChatToolProcessor:
             
             async for chunk in next_response:
                 next_chunk_count += 1
-                api_logger.debug(f"第 {iteration} 轮流式响应块 #{next_chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
                 
                 if hasattr(chunk, 'choices') and chunk.choices:
                     delta = chunk.choices[0].delta

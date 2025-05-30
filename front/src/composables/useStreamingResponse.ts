@@ -105,27 +105,31 @@ export function useStreamingResponse() {
     if (currentTextLength > (currentMsg.lastTextLength || 0)) {
       const newTextContent = newResponse.substring(currentMsg.lastTextLength || 0);
       
-      // 检查是否有工具状态块
-      const hasToolStatus = currentMsg.contentChunks.some(chunk => chunk.type === 'tool_status');
+      // 检查是否有任何非文本块（包括reasoning和tool_status）
+      const hasNonTextBlocks = currentMsg.contentChunks.some(chunk => 
+        chunk.type === 'tool_status' || chunk.type === 'reasoning'
+      );
       
-      if (hasToolStatus) {
-        // 如果有工具状态，检查是否有最后一个文本块可以更新
+      if (hasNonTextBlocks) {
+        // 如果有非文本块，检查最后一个文本块的位置
         const lastTextChunk = [...currentMsg.contentChunks].reverse().find(chunk => chunk.type === 'text');
-        const lastToolChunk = [...currentMsg.contentChunks].reverse().find(chunk => chunk.type === 'tool_status');
+        const lastNonTextChunk = [...currentMsg.contentChunks].reverse().find(chunk => 
+          chunk.type === 'tool_status' || chunk.type === 'reasoning'
+        );
         
-        // 如果最后一个文本块在最后一个工具状态之后，更新它；否则创建新的文本块
-        if (lastTextChunk && lastToolChunk && lastTextChunk.timestamp > lastToolChunk.timestamp) {
+        // 如果最后一个文本块在最后一个非文本块之后，更新它；否则创建新的文本块
+        if (lastTextChunk && lastNonTextChunk && lastTextChunk.timestamp > lastNonTextChunk.timestamp) {
           // 更新现有的最后文本块
           const allPreviousTextChunks = currentMsg.contentChunks.filter(chunk => 
             chunk.type === 'text' && chunk !== lastTextChunk
           );
           const previousTextLength = allPreviousTextChunks.reduce((sum, chunk) => sum + (chunk.content?.length || 0), 0);
           lastTextChunk.content = newResponse.substring(previousTextLength);
-          console.log('更新工具调用后的文本块:', lastTextChunk.content.substring(0, 50));
+          console.log('更新非文本块后的文本块:', lastTextChunk.content.substring(0, 50));
         } else if (newTextContent.trim()) {
-          // 创建新的文本段
-          const textTimestamp = lastToolChunk 
-            ? new Date(lastToolChunk.timestamp.getTime() + 1)
+          // 创建新的文本段，时间戳要在最后一个块之后
+          const textTimestamp = lastNonTextChunk 
+            ? new Date(lastNonTextChunk.timestamp.getTime() + 1)
             : new Date((currentMsg.baseTimestamp || new Date()).getTime() + currentTextLength);
           
           const textChunk: ContentChunk = {
@@ -135,11 +139,11 @@ export function useStreamingResponse() {
             segmentIndex: currentMsg.contentChunks.filter(c => c.type === 'text').length
           };
           currentMsg.contentChunks.push(textChunk);
-          console.log('工具调用后创建新文本段:', newTextContent.substring(0, 50));
+          console.log('非文本块后创建新文本段:', newTextContent.substring(0, 50));
         }
         currentMsg.lastTextLength = currentTextLength;
       } else {
-        // 没有工具状态，更新或创建第一个文本块
+        // 没有非文本块，更新或创建第一个文本块
         let firstTextChunk = currentMsg.contentChunks.find(chunk => chunk.type === 'text');
         
         if (firstTextChunk) {
@@ -187,12 +191,12 @@ export function useStreamingResponse() {
           currentTextChunk = { ...chunk };
         }
       } else {
-        // 遇到工具状态块，先保存当前文本块（如果有）
+        // 遇到非文本块（reasoning或tool_status），先保存当前文本块（如果有）
         if (currentTextChunk) {
           optimizedChunks.push(currentTextChunk);
           currentTextChunk = null;
         }
-        // 添加工具状态块
+        // 添加非文本块（reasoning或tool_status）
         optimizedChunks.push(chunk);
       }
     }
@@ -250,9 +254,16 @@ export function useStreamingResponse() {
               result: segment.result,
               error: segment.error
             };
+          } else if (segment.type === 'reasoning') {
+            return {
+              type: 'reasoning',
+              content: segment.content,
+              timestamp: new Date(segment.timestamp)
+            };
           }
-          return segment as ContentChunk;
-        });
+          // 对于其他未知类型，返回null并过滤掉
+          return null;
+        }).filter(chunk => chunk !== null) as ContentChunk[];
         
         // 更新消息内容
         currentMsg.content = displayContent;

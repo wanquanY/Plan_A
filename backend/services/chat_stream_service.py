@@ -198,6 +198,7 @@ class ChatStreamService:
                     
                     # 处理基于工具结果的流式响应
                     current_text_segment = ""
+                    current_reasoning_segment = ""  # 添加思考内容收集
                     new_tool_calls = []
                     
                     async for chunk in next_response:
@@ -244,16 +245,36 @@ class ChatStreamService:
                                             new_tool_calls.append(new_call)
                             
                             content_chunk = delta.content or ""
-                            if content_chunk:
+                            reasoning_chunk = ""
+                            # 确保reasoning_chunk只包含真正的思考内容，并且是字符串类型
+                            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                                reasoning_content = delta.reasoning_content
+                                # 只有当reasoning_content是字符串时才使用，避免对象类型的混淆
+                                if isinstance(reasoning_content, str):
+                                    reasoning_chunk = reasoning_content
+                                else:
+                                    api_logger.warning(f"检测到非字符串类型的reasoning_content: {type(reasoning_content)}, 忽略")
+                                    
+                            if content_chunk or reasoning_chunk:
                                 current_text_segment += content_chunk
+                                current_reasoning_segment += reasoning_chunk
                                 current_content += content_chunk
-                                yield content_chunk
+                                # 只传递真正的思考内容，确保是字符串
+                                yield (content_chunk, reasoning_chunk)
                     
                     # 如果有新的文本内容，记录到交互流程
                     if current_text_segment.strip():
                         interaction_flow.append({
                             "type": "text",
                             "content": current_text_segment,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    
+                    # 如果有新的思考内容，记录到交互流程
+                    if current_reasoning_segment.strip():
+                        interaction_flow.append({
+                            "type": "reasoning",
+                            "content": current_reasoning_segment,
                             "timestamp": datetime.now().isoformat()
                         })
                     
@@ -498,72 +519,73 @@ class ChatStreamService:
                     api_params["tools"] = tools
                     api_logger.info(f"流式响应中添加工具配置: {len(tools)} 个工具")
                 
+                # 记录请求参数详情
+                api_logger.info(f"[流式请求] API调用参数详情: model={use_model}, max_tokens={max_tokens}, temperature={temperature}, 消息数量={len(messages)}, 启用工具={has_tools}")
+                
                 # 直接使用异步客户端，但开启流式响应
                 response = await openai_client_service.async_client.chat.completions.create(**api_params)
                 
-                api_logger.debug(f"获取到流式响应: {type(response)}")
+                api_logger.info(f"[流式响应] 获取到流式响应: {type(response)}")
                 
                 # 这里response是一个异步迭代器，需要使用async for遍历每个部分
                 collected_content = ""
+                collected_reasoning_content = ""  # 添加思考内容收集
                 collected_tool_calls = []
                 is_first_chunk = True
                 chunk_count = 0
                 current_text_segment = ""  # 当前文本片段
+                current_reasoning_segment = ""  # 当前思考片段
                 
                 async for chunk in response:
-                    # 记录流式响应的每个块的原始内容
                     chunk_count += 1
-                    api_logger.debug(f"流式响应块 #{chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
                     
                     if hasattr(chunk, 'choices') and chunk.choices:
                         delta = chunk.choices[0].delta
                         
                         # 检查是否有工具调用
                         if hasattr(delta, 'tool_calls') and delta.tool_calls:
-                            api_logger.debug(f"流式响应中检测到工具调用: {len(delta.tool_calls)} 个")
-                            
-                            # 如果当前有文本内容，先保存到交互流程中
+                            # 如果当前有累积的文本内容，先保存到交互流程中
                             if current_text_segment.strip():
                                 interaction_flow.append({
                                     "type": "text",
                                     "content": current_text_segment,
                                     "timestamp": datetime.now().isoformat()
                                 })
-                                current_text_segment = ""  # 重置文本片段
+                                current_text_segment = ""
                             
-                            # 收集工具调用信息
+                            # 如果当前有累积的思考内容，先保存到交互流程中
+                            if current_reasoning_segment.strip():
+                                interaction_flow.append({
+                                    "type": "reasoning",
+                                    "content": current_reasoning_segment,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                current_reasoning_segment = ""
+                            
+                            api_logger.info(f"流式响应中检测到工具调用: {len(delta.tool_calls)} 个")
+                            
+                            # 收集工具调用信息（与上面相同的逻辑）
                             for tool_call in delta.tool_calls:
-                                # 获取工具调用的索引（如果有）
                                 tool_index = getattr(tool_call, 'index', None)
-                                
-                                # 查找是否已存在相同索引的工具调用
                                 existing_call = None
+                                
                                 if tool_index is not None:
-                                    # 使用索引查找
                                     if tool_index < len(collected_tool_calls):
                                         existing_call = collected_tool_calls[tool_index]
                                 else:
-                                    # 使用ID查找
                                     for existing in collected_tool_calls:
                                         if existing.get('id') == tool_call.id:
                                             existing_call = existing
                                             break
                                 
                                 if existing_call:
-                                    # 更新现有的工具调用
                                     if tool_call.function and tool_call.function.arguments:
                                         existing_call['function']['arguments'] += tool_call.function.arguments
-                                        api_logger.debug(f"累积工具调用参数: {existing_call['id']}, 当前参数: {existing_call['function']['arguments']}")
-                                    
-                                    # 更新函数名（如果提供）
                                     if tool_call.function and tool_call.function.name:
                                         existing_call['function']['name'] = tool_call.function.name
-                                    
-                                    # 更新ID（如果提供）
                                     if tool_call.id:
                                         existing_call['id'] = tool_call.id
                                 else:
-                                    # 添加新的工具调用
                                     new_call = {
                                         'id': tool_call.id if tool_call.id else f"call_{len(collected_tool_calls)}",
                                         'type': tool_call.type if tool_call.type else 'function',
@@ -573,42 +595,62 @@ class ChatStreamService:
                                         }
                                     }
                                     
-                                    # 如果有索引，确保列表足够大
                                     if tool_index is not None:
                                         while len(collected_tool_calls) <= tool_index:
                                             collected_tool_calls.append(None)
                                         collected_tool_calls[tool_index] = new_call
                                     else:
                                         collected_tool_calls.append(new_call)
-                                    
-                                    api_logger.debug(f"新增工具调用: {new_call['id']}, 名称: {new_call['function']['name']}, 初始参数: {new_call['function']['arguments']}")
-                                    
-                                    # 发送工具调用开始的状态信息
-                                    tool_status = {
-                                        "type": "tool_call_start",
-                                        "tool_call_id": new_call['id'],
-                                        "tool_name": new_call['function']['name'],
-                                        "status": "preparing"
-                                    }
-                                    yield ("", conversation_id, tool_status)
                         
-                        # 提取当前块的内容
-                        content = delta.content or ""
+                        content_chunk = delta.content or ""
+                        reasoning_chunk = ""
+                        # 确保reasoning_chunk只包含真正的思考内容，并且是字符串类型
+                        if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                            reasoning_content = delta.reasoning_content
+                            # 只有当reasoning_content是字符串时才使用，避免对象类型的混淆
+                            if isinstance(reasoning_content, str):
+                                reasoning_chunk = reasoning_content
+                            else:
+                                api_logger.warning(f"检测到非字符串类型的reasoning_content: {type(reasoning_content)}, 忽略")
                         
-                        # 累加内容
-                        collected_content += content
-                        current_text_segment += content
+                        # 累加总内容（用于记忆和token计算）
+                        collected_content += content_chunk
+                        collected_reasoning_content += reasoning_chunk
                         
-                        # 对第一个有内容的块特殊处理
-                        if is_first_chunk and content:
+                        # 如果有思考内容，立即保存到交互流程
+                        if reasoning_chunk:
+                            # 如果当前有累积的正式内容，先保存
+                            if current_text_segment.strip():
+                                interaction_flow.append({
+                                    "type": "text",
+                                    "content": current_text_segment,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                current_text_segment = ""
+                            
+                            # 累积思考内容，而不是立即保存
+                            current_reasoning_segment += reasoning_chunk
+                        
+                        # 如果有正式内容，累积到当前段落
+                        if content_chunk:
+                            # 如果当前有累积的思考内容，先保存
+                            if current_reasoning_segment.strip():
+                                interaction_flow.append({
+                                    "type": "reasoning",
+                                    "content": current_reasoning_segment,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                current_reasoning_segment = ""
+                            
+                            current_text_segment += content_chunk
+                        
+                        if is_first_chunk and (content_chunk or reasoning_chunk):
                             is_first_chunk = False
-                            # 对第一个块，我们总是返回会话ID，不管是否是新会话
-                            yield (content, conversation_id)
-                        elif content:
-                            # 后续块只返回内容
-                            yield content
+                            yield (content_chunk, conversation_id, reasoning_chunk)
+                        elif content_chunk or reasoning_chunk:
+                            yield (content_chunk, reasoning_chunk)
                 
-                # 如果最后还有文本内容，保存到交互流程中
+                # 如果最后还有未保存的文本内容，保存到交互流程中
                 if current_text_segment.strip():
                     interaction_flow.append({
                         "type": "text",
@@ -616,9 +658,18 @@ class ChatStreamService:
                         "timestamp": datetime.now().isoformat()
                     })
                 
+                # 如果最后还有未保存的思考内容，保存到交互流程中
+                if current_reasoning_segment.strip():
+                    interaction_flow.append({
+                        "type": "reasoning",
+                        "content": current_reasoning_segment,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                
                 # 流式响应结束，检查是否有工具调用需要处理
                 api_logger.info(f"流式响应完成，共接收 {chunk_count} 个块")
-                api_logger.info(f"流式响应完整内容: {collected_content}")
+                api_logger.info(f"流式响应内容长度: {len(collected_content)}")
+                api_logger.info(f"流式响应思考内容长度: {len(collected_reasoning_content)}")
                 api_logger.info(f"收集到的工具调用: {len(collected_tool_calls)} 个")
                 
                 # 先保存AI消息（即使内容为空，也要保存以便后续更新）
@@ -694,25 +745,25 @@ class ChatStreamService:
                         memory_service.add_assistant_message(conversation_id, final_content, user_id)
                         api_logger.info(f"流式聊天完成，最终内容长度: {len(final_content)}")
                 else:
-                    # 没有工具调用，构建简单的JSON结构
+                    # 没有工具调用，检查是否有交互流程
                     if interaction_flow:
                         final_json_content = {
-                            "type": "agent_response", 
+                            "type": "agent_response",
                             "interaction_flow": interaction_flow
                         }
                         
                         # 更新AI消息内容
                         if ai_message:
                             ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
-                            # 不需要重新计算tokens，使用创建时的值
                             await db.commit()
                             await db.refresh(ai_message)
+                        
+                        api_logger.info("fallback模式：没有工具调用，保存包含交互流程的JSON结构")
                     
-                    api_logger.info("没有工具调用，直接保存初始内容")
-                    # 没有工具调用，直接保存到记忆
+                    # 保存纯文本内容到记忆（用于对话上下文）
                     if collected_content:
                         memory_service.add_assistant_message(conversation_id, collected_content, user_id)
-                        api_logger.info(f"流式聊天完成，内容长度: {len(collected_content)}")
+                        api_logger.info(f"fallback模式：流式聊天完成，内容长度: {len(collected_content)}")
                 
                 # 检查是否需要自动生成标题
                 if db and conversation_id and user_content:
@@ -742,18 +793,19 @@ class ChatStreamService:
                         # 使用默认模型重试
                         response = await openai_client_service.async_client.chat.completions.create(**fallback_api_params)
                         
-                        api_logger.debug(f"使用默认模型获取到流式响应: {type(response)}")
+                        api_logger.info(f"使用默认模型获取到流式响应: {type(response)}")
                         
                         # 处理流式响应（与上面相同的逻辑）
                         collected_content = ""
+                        collected_reasoning_content = ""  # 添加思考内容收集
                         collected_tool_calls = []
                         is_first_chunk = True
                         chunk_count = 0
                         current_text_segment = ""  # 当前文本片段
+                        current_reasoning_segment = ""  # 当前思考片段
                         
                         async for chunk in response:
                             chunk_count += 1
-                            api_logger.debug(f"流式响应块 #{chunk_count}: {json.dumps(chunk.model_dump(), ensure_ascii=False)}")
                             
                             if hasattr(chunk, 'choices') and chunk.choices:
                                 delta = chunk.choices[0].delta
@@ -800,21 +852,67 @@ class ChatStreamService:
                                             else:
                                                 collected_tool_calls.append(new_call)
                                 
-                                content = delta.content or ""
-                                collected_content += content
-                                current_text_segment += content
+                                content_chunk = delta.content or ""
+                                reasoning_chunk = ""
+                                # 确保reasoning_chunk只包含真正的思考内容，并且是字符串类型
+                                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                                    reasoning_content = delta.reasoning_content
+                                    # 只有当reasoning_content是字符串时才使用，避免对象类型的混淆
+                                    if isinstance(reasoning_content, str):
+                                        reasoning_chunk = reasoning_content
+                                    else:
+                                        api_logger.warning(f"检测到非字符串类型的reasoning_content: {type(reasoning_content)}, 忽略")
                                 
-                                if is_first_chunk and content:
+                                # 累加总内容（用于记忆和token计算）
+                                collected_content += content_chunk
+                                collected_reasoning_content += reasoning_chunk
+                                
+                                # 如果有思考内容，立即保存到交互流程
+                                if reasoning_chunk:
+                                    # 如果当前有累积的正式内容，先保存
+                                    if current_text_segment.strip():
+                                        interaction_flow.append({
+                                            "type": "text",
+                                            "content": current_text_segment,
+                                            "timestamp": datetime.now().isoformat()
+                                        })
+                                        current_text_segment = ""
+                                    
+                                    # 累积思考内容，而不是立即保存
+                                    current_reasoning_segment += reasoning_chunk
+                                
+                                # 如果有正式内容，累积到当前段落
+                                if content_chunk:
+                                    # 如果当前有累积的思考内容，先保存
+                                    if current_reasoning_segment.strip():
+                                        interaction_flow.append({
+                                            "type": "reasoning",
+                                            "content": current_reasoning_segment,
+                                            "timestamp": datetime.now().isoformat()
+                                        })
+                                        current_reasoning_segment = ""
+                                    
+                                    current_text_segment += content_chunk
+                                
+                                if is_first_chunk and (content_chunk or reasoning_chunk):
                                     is_first_chunk = False
-                                    yield (content, conversation_id)
-                                elif content:
-                                    yield content
+                                    yield (content_chunk, conversation_id, reasoning_chunk)
+                                elif content_chunk or reasoning_chunk:
+                                    yield (content_chunk, reasoning_chunk)
                         
                         # 如果最后还有文本内容，保存到交互流程中
                         if current_text_segment.strip():
                             interaction_flow.append({
                                 "type": "text",
                                 "content": current_text_segment,
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        
+                        # 如果最后还有思考内容，保存到交互流程中
+                        if current_reasoning_segment.strip():
+                            interaction_flow.append({
+                                "type": "reasoning",
+                                "content": current_reasoning_segment,
                                 "timestamp": datetime.now().isoformat()
                             })
                         
@@ -886,10 +984,25 @@ class ChatStreamService:
                                 memory_service.add_assistant_message(conversation_id, final_content, user_id)
                                 api_logger.info(f"流式聊天完成，最终内容长度: {len(final_content)}")
                         else:
-                            # 没有工具调用，保存初始内容到记忆
+                            # 没有工具调用，检查是否有交互流程
+                            if interaction_flow:
+                                final_json_content = {
+                                    "type": "agent_response",
+                                    "interaction_flow": interaction_flow
+                                }
+                                
+                                # 更新AI消息内容
+                                if ai_message:
+                                    ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
+                                    await db.commit()
+                                    await db.refresh(ai_message)
+                                
+                                api_logger.info("fallback模式：没有工具调用，保存包含交互流程的JSON结构")
+                            
+                            # 保存纯文本内容到记忆（用于对话上下文）
                             if collected_content:
                                 memory_service.add_assistant_message(conversation_id, collected_content, user_id)
-                                api_logger.info(f"流式聊天完成，内容长度: {len(collected_content)}")
+                                api_logger.info(f"fallback模式：流式聊天完成，内容长度: {len(collected_content)}")
                         
                         # 检查是否需要自动生成标题
                         if db and conversation_id and user_content:

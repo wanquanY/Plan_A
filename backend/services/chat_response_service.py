@@ -314,12 +314,13 @@ class ChatResponseService:
                 if has_tools:
                     api_params["tools"] = tools
                 
+                # 记录请求参数详情
+                api_logger.info(f"[大模型请求] API调用参数详情: model={use_model}, max_tokens={max_tokens}, temperature={temperature}, 消息数量={len(messages)}, 启用工具={has_tools}")
+                
                 # 调用API
                 response = await openai_client_service.async_client.chat.completions.create(**api_params)
                 
-                api_logger.debug(f"API原始响应类型: {type(response)}")
-                # 记录原始响应内容
-                api_logger.info(f"API原始响应内容: {json.dumps(response.model_dump(), ensure_ascii=False)}")
+                api_logger.info(f"[大模型响应] API响应类型: {type(response)}")
                 
                 # 检查响应类型
                 if isinstance(response, str):

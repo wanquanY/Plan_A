@@ -21,6 +21,15 @@
     <!-- 工具调用状态显示 -->
     <ToolCallsStatus :tool-calls="toolCallsStatus" />
     
+    <!-- 思考内容显示 -->
+    <ReasoningContent 
+      v-if="hasReasoningContent"
+      :reasoning-content="reasoningState.content"
+      :is-streaming="reasoningState.isStreaming"
+      :start-time="reasoningState.startTime"
+      :end-time="reasoningState.endTime"
+    />
+    
     <div v-if="chatState.loading" class="agent-response loading">
       <div class="avatar">
         <img :src="agent.avatar_url" alt="Agent Avatar" />
@@ -45,7 +54,9 @@ import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
 import type { Agent } from '../../services/agent';
 import chatService from '../../services/chat';
 import ToolCallsStatus from './ToolCallsStatus.vue';
+import ReasoningContent from './ReasoningContent.vue';
 import { useToolCallsStatus } from '../../composables/useToolCallsStatus';
+import { useReasoningContent } from '../../composables/useReasoningContent';
 
 const props = defineProps({
   agent: {
@@ -71,6 +82,16 @@ const {
   clearToolCalls
 } = useToolCallsStatus();
 
+// 使用思考内容状态管理
+const {
+  reasoningState,
+  reasoningTime,
+  hasReasoningContent,
+  resetReasoning,
+  handleReasoningContent,
+  finishReasoning
+} = useReasoningContent();
+
 const chatState = reactive({
   loading: false,
   response: '',
@@ -92,8 +113,9 @@ const sendMessage = async () => {
     emit('chat-start');
     chatState.loading = true;
     
-    // 清空之前的工具调用状态
+    // 清空之前的工具调用状态和思考内容
     clearToolCalls();
+    resetReasoning();
     
     // 保存用户输入的文本并清空输入框
     const userMessage = messageText.value.trim();
@@ -109,10 +131,15 @@ const sendMessage = async () => {
         agent_id: props.agent.id,
         conversation_id: chatState.conversationId || undefined
       },
-      (content, done, conversationId, toolStatus) => {
+      (content, done, conversationId, toolStatus, reasoningContent) => {
         // 处理工具状态更新
         if (toolStatus) {
           handleToolStatus(toolStatus);
+        }
+        
+        // 处理思考内容
+        if (reasoningContent) {
+          handleReasoningContent(reasoningContent, done);
         }
         
         // 更新聊天状态
@@ -122,6 +149,8 @@ const sendMessage = async () => {
         if (done) {
           chatState.loading = false;
           chatController.value = null;
+          // 完成思考内容的流式显示
+          finishReasoning();
           emit('chat-complete', {
             response: content,
             conversationId: conversationId
@@ -133,6 +162,7 @@ const sendMessage = async () => {
     console.error('发送消息失败:', error);
     chatState.loading = false;
     clearToolCalls();
+    resetReasoning();
   }
 };
 
@@ -154,6 +184,7 @@ const cancelChat = () => {
     chatController.value.abort();
     chatController.value = null;
     chatState.loading = false;
+    finishReasoning();
   }
 };
 

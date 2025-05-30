@@ -15,6 +15,7 @@ export interface ChatStreamMessage {
   data: {
     message: {
       content: string;
+      reasoning_content?: string;
     };
     full_content: string;
     conversation_id: number;
@@ -37,8 +38,14 @@ export interface ChatStreamMessage {
   request_id: string;
 }
 
-// 流式回调类型
-export type StreamCallback = (response: any, isComplete: boolean, conversationId: number, toolStatus?: any) => void;
+// 流式回调类型 - 修改为支持思考内容
+export type StreamCallback = (
+  response: any, 
+  isComplete: boolean, 
+  conversationId: number, 
+  toolStatus?: any,
+  reasoningContent?: string
+) => void;
 
 // 与Agent聊天的请求
 export interface ChatRequest {
@@ -356,6 +363,7 @@ const processTextStream = async (
           has_message: !!data.data.message,
           has_full_content: !!data.data.full_content,
           has_tool_status: !!data.data.tool_status,
+          has_reasoning_content: !!(data.data.message && data.data.message.reasoning_content),
           conversation_id: data.data.conversation_id,
           done: data.data.done,
           tool_status_content: data.data.tool_status
@@ -364,6 +372,15 @@ const processTextStream = async (
         // 优先使用full_content字段
         const content = data.data.full_content || 
                         (data.data.message ? data.data.message.content : '') || '';
+        
+        // 提取思考内容
+        const reasoningContent = data.data.message && data.data.message.reasoning_content ? 
+                                data.data.message.reasoning_content : '';
+        
+        // 记录思考内容信息
+        if (reasoningContent) {
+          console.log(`处理思考内容: 长度=${reasoningContent.length}, 会话ID=${currentConversationId || 'null'}`);
+        }
         
         // 判断是否完成
         const isComplete = data.data.done || false;
@@ -401,13 +418,13 @@ const processTextStream = async (
           console.log('chat.ts 没有工具状态信息，data.data keys:', Object.keys(data.data));
         }
         
-        console.log(`处理流式数据: 内容长度=${content.length}, 是否完成=${isComplete}, 会话ID=${currentConversationId || 'null'}, 有工具状态=${!!toolStatus}`);
+        console.log(`处理流式数据: 内容长度=${content.length}, 思考内容长度=${reasoningContent.length}, 是否完成=${isComplete}, 会话ID=${currentConversationId || 'null'}, 有工具状态=${!!toolStatus}`);
         
         // 确保有效会话ID
         const idToSend = currentConversationId ?? conversationId ?? 0;
         
-        // 回调UI更新，传递工具状态
-        callback(response, isComplete, idToSend, toolStatus);
+        // 回调UI更新，传递工具状态和思考内容
+        callback(response, isComplete, idToSend, toolStatus, reasoningContent);
         
         // 保存上一个内容以防下一次回调为空
         if (content) {

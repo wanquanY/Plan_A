@@ -5,6 +5,12 @@ export interface TextSegment {
   timestamp: string;
 }
 
+export interface ReasoningSegment {
+  type: 'reasoning';
+  content: string;
+  timestamp: string;
+}
+
 export interface ToolCallSegment {
   type: 'tool_call';
   id: string;
@@ -17,7 +23,7 @@ export interface ToolCallSegment {
   completed_at?: string;
 }
 
-export type InteractionSegment = TextSegment | ToolCallSegment;
+export type InteractionSegment = TextSegment | ReasoningSegment | ToolCallSegment;
 
 export interface AgentResponseData {
   type: 'agent_response';
@@ -62,12 +68,33 @@ export function extractTextFromInteractionFlow(interactionFlow: InteractionSegme
 }
 
 /**
+ * 从交互流程中提取思考内容
+ * @param interactionFlow 交互流程数组
+ * @returns 拼接的思考内容
+ */
+export function extractReasoningFromInteractionFlow(interactionFlow: InteractionSegment[]): string {
+  return interactionFlow
+    .filter(segment => segment.type === 'reasoning')
+    .map(segment => (segment as ReasoningSegment).content)
+    .join('');
+}
+
+/**
  * 检查消息是否包含工具调用
  * @param data 解析后的agent响应数据
  * @returns 是否包含工具调用
  */
 export function hasToolCalls(data: AgentResponseData): boolean {
   return data.interaction_flow.some(segment => segment.type === 'tool_call');
+}
+
+/**
+ * 检查消息是否包含思考内容
+ * @param data 解析后的agent响应数据
+ * @returns 是否包含思考内容
+ */
+export function hasReasoningContent(data: AgentResponseData): boolean {
+  return data.interaction_flow.some(segment => segment.type === 'reasoning');
 }
 
 /**
@@ -86,4 +113,13 @@ export function getToolCalls(data: AgentResponseData): ToolCallSegment[] {
  */
 export function getTextSegments(data: AgentResponseData): TextSegment[] {
   return data.interaction_flow.filter(segment => segment.type === 'text') as TextSegment[];
+}
+
+/**
+ * 获取思考片段列表
+ * @param data 解析后的agent响应数据
+ * @returns 思考片段列表
+ */
+export function getReasoningSegments(data: AgentResponseData): ReasoningSegment[] {
+  return data.interaction_flow.filter(segment => segment.type === 'reasoning') as ReasoningSegment[];
 } 

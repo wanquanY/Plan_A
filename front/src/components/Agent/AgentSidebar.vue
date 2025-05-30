@@ -56,8 +56,7 @@ import MarkMap from '../rendering/MarkMap.vue';
 import ResizableHandle from './ResizableHandle.vue';
 import { useAgentChat } from '../../composables/useAgentChat';
 import { useStreamingResponse } from '../../composables/useStreamingResponse';
-// 注意：移除了 useToolCallsStatus，现在使用 contentChunks 系统
-import { parseAgentMessage, extractTextFromInteractionFlow } from '../../utils/messageParser';
+import { parseAgentMessage, extractTextFromInteractionFlow, extractReasoningFromInteractionFlow, hasReasoningContent } from '../../utils/messageParser';
 import { renderMermaidDynamically, renderCodeBlocks, renderMarkMaps } from '../../services/renderService';
 import { markdownToHtml } from '../../services/markdownService';
 import chatService from '../../services/chat';
@@ -168,6 +167,49 @@ const restoreSidebarWidth = () => {
 const handleToolStatus = (toolStatus: any) => {
   console.log('AgentSidebar 处理工具状态:', toolStatus);
   
+  // 检查是否是思考内容
+  if (toolStatus.type === 'reasoning_content') {
+    console.log('AgentSidebar 检测到思考内容:', toolStatus.reasoning_content);
+    
+    // 将思考内容添加到当前正在进行的AI消息的contentChunks中
+    const currentMsg = getCurrentTypingMessage();
+    if (currentMsg) {
+      // 初始化contentChunks（如果还没有）
+      if (!currentMsg.contentChunks) {
+        currentMsg.contentChunks = [];
+      }
+      
+      // 查找最后一个chunk，如果是reasoning类型，则合并内容
+      const lastChunk = currentMsg.contentChunks[currentMsg.contentChunks.length - 1];
+      if (lastChunk && lastChunk.type === 'reasoning') {
+        // 合并到现有的思考内容中
+        lastChunk.content += toolStatus.reasoning_content;
+        lastChunk.timestamp = new Date(); // 更新时间戳
+        
+        console.log('已合并思考内容到现有chunk:', {
+          totalReasoningLength: lastChunk.content.length,
+          newContentLength: toolStatus.reasoning_content.length
+        });
+      } else {
+        // 创建新的思考内容chunk
+        const reasoningChunk = {
+          type: 'reasoning',
+          content: toolStatus.reasoning_content,
+          timestamp: new Date()
+        };
+        
+        currentMsg.contentChunks.push(reasoningChunk);
+        
+        console.log('已创建新的思考内容chunk:', {
+          reasoningLength: toolStatus.reasoning_content.length,
+          totalChunks: currentMsg.contentChunks.length
+        });
+      }
+    }
+    
+    return; // 思考内容不需要进一步处理
+  }
+  
   // 检查是否是笔记编辑工具的完成状态
   if (toolStatus.tool_name === 'note_editor' && toolStatus.status === 'completed' && toolStatus.result) {
     console.log('[AgentSidebar] 检测到笔记编辑工具完成，处理结果');
@@ -260,8 +302,8 @@ const processTextResponse = (textContent: string) => {
       // 提取纯文本内容用于显示
       displayContent = extractTextFromInteractionFlow(parsedResponse.interaction_flow);
       
-      // 将interaction_flow转换为contentChunks格式，保持时间顺序
-      contentChunks = parsedResponse.interaction_flow.map(segment => {
+      // 将交互流程转换为contentChunks格式
+      contentChunks = parsedResponse.interaction_flow.map((segment: any) => {
         if (segment.type === 'text') {
           return {
             type: 'text',
@@ -278,9 +320,16 @@ const processTextResponse = (textContent: string) => {
             result: segment.result,
             error: segment.error
           };
+        } else if (segment.type === 'reasoning') {
+          // 思考内容也添加到contentChunks中，用于时序渲染
+          return {
+            type: 'reasoning',
+            content: segment.content,
+            timestamp: new Date(segment.timestamp)
+          };
         }
         return segment;
-      });
+      }).filter(chunk => chunk !== null);
       
       console.log('转换后的contentChunks:', contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
     } else {
@@ -489,9 +538,16 @@ const initializeFromHistory = (forceUpdate = false) => {
               result: segment.result,
               error: segment.error
             };
+          } else if (segment.type === 'reasoning') {
+            // 思考内容也添加到contentChunks中，用于时序渲染
+            return {
+              type: 'reasoning',
+              content: segment.content,
+              timestamp: new Date(segment.timestamp)
+            };
           }
           return segment;
-        });
+        }).filter(chunk => chunk !== null);
       } else {
         // 旧格式，创建简单的文本块
         contentChunks = [{
@@ -517,7 +573,51 @@ const initializeFromHistory = (forceUpdate = false) => {
   
   // 更新消息列表
   if (forceUpdate) {
-    messages.value = deduplicateMessages(newMessages);
+    // 在强制更新时，也要保留当前正在进行的消息状态
+    const currentActiveMessages = messages.value.filter(msg => 
+      msg.type === 'agent' && 
+      !msg.id?.startsWith('history_') &&
+      (msg.isTyping || (!msg.isTyping && Math.abs(msg.timestamp?.getTime() - Date.now()) < 10000)) // 10秒内的消息
+    );
+    
+    // 如果有当前活动消息，检查是否应该替换为历史记录中的对应消息
+    if (currentActiveMessages.length > 0) {
+      console.log('检测到当前活动消息，尝试保留其状态');
+      
+      // 检查最新的历史记录是否与当前活动消息对应
+      const lastHistoryAgent = newMessages.filter(msg => msg.type === 'agent').pop();
+      const currentActiveMsg = currentActiveMessages[currentActiveMessages.length - 1];
+      
+      if (lastHistoryAgent && currentActiveMsg) {
+        // 比较内容是否相似（去除空白和标点后比较）
+        const normalizeText = (text: string) => text.replace(/[\s\n\r\t.,!?;:]/g, '').toLowerCase();
+        const historyContent = normalizeText(lastHistoryAgent.content || '');
+        const currentContent = normalizeText(currentActiveMsg.content || '');
+        
+        // 如果内容相似度高，说明这是同一条消息，保留当前消息状态
+        if (historyContent.includes(currentContent) || currentContent.includes(historyContent)) {
+          console.log('检测到历史记录与当前消息对应，保留当前消息状态');
+          
+          // 移除历史记录中的对应消息，保留当前消息
+          const filteredNewMessages = newMessages.filter(msg => msg.id !== lastHistoryAgent.id);
+          
+          // 更新当前消息的ID为历史记录格式，但保留其他状态
+          currentActiveMsg.id = lastHistoryAgent.id;
+          currentActiveMsg.originalContent = lastHistoryAgent.originalContent;
+          
+          messages.value = deduplicateMessages([...filteredNewMessages, currentActiveMsg]);
+        } else {
+          // 内容不匹配，正常替换
+          messages.value = deduplicateMessages(newMessages);
+        }
+      } else {
+        // 没有对应关系，正常替换
+        messages.value = deduplicateMessages(newMessages);
+      }
+    } else {
+      // 没有当前活动消息，正常替换
+      messages.value = deduplicateMessages(newMessages);
+    }
   } else {
     const activeMessages = messages.value.filter(msg => 
       msg.type === 'agent' && msg.isTyping && msg.content !== '' && 
@@ -674,6 +774,20 @@ const saveEditMessage = async (messageObj: any) => {
           handleToolStatus(toolStatus);
         }
         
+        // 从响应中提取reasoning_content并作为toolStatus处理
+        if (response && response.data && response.data.data && response.data.data.message) {
+          const messageData = response.data.data.message;
+          
+          // 如果有思考内容，创建reasoning_content类型的toolStatus
+          if (messageData.reasoning_content) {
+            const reasoningToolStatus = {
+              type: 'reasoning_content',
+              reasoning_content: messageData.reasoning_content
+            };
+            handleToolStatus(reasoningToolStatus);
+          }
+        }
+        
         // 解析响应内容
         let content = '';
         if (response && response.data && response.data.data) {
@@ -705,6 +819,13 @@ const saveEditMessage = async (messageObj: any) => {
         if (isComplete) {
           editingController.value = null;
           isEditingRerun = false;
+          
+          // 确保AI消息的isTyping状态被正确设置为false
+          const editAgentMsg = getCurrentTypingMessage();
+          if (editAgentMsg) {
+            console.log('重新回答完成，设置isTyping为false');
+            editAgentMsg.isTyping = false;
+          }
           
           setTimeout(() => {
             console.log('编辑重新执行完成，请求刷新会话历史记录');
@@ -919,8 +1040,6 @@ const renderMarkdown = (content) => {
   }
 };
 
-// 注意：lastProcessedResponse 已在 composable 中定义，这里不需要重复声明
-
 // 监听AI响应变化
 watch(() => props.agentResponse, (newResponse) => {
   if (newResponse) {
@@ -949,6 +1068,55 @@ watch(() => props.agentResponse, (newResponse) => {
       responseData = JSON.parse(newResponse);
     } catch (error) {
       // 不是JSON格式，继续处理为普通文本
+    }
+    
+    // 检查是否包含思考内容
+    if (responseData && responseData.data && responseData.data.message && responseData.data.message.reasoning_content) {
+      console.log('检测到思考内容:', responseData.data.message.reasoning_content.length, '字符');
+      console.log('思考内容片段:', `"${responseData.data.message.reasoning_content}"`);
+      const reasoningContent = responseData.data.message.reasoning_content;
+      
+      // 处理思考内容
+      if (reasoningContent) {
+        // 将思考内容添加到当前正在进行的AI消息的contentChunks中
+        const currentMsg = getCurrentTypingMessage();
+        if (currentMsg) {
+          // 初始化contentChunks（如果还没有）
+          if (!currentMsg.contentChunks) {
+            currentMsg.contentChunks = [];
+          }
+          
+          // 查找最后一个chunk，如果是reasoning类型，则合并内容
+          const lastChunk = currentMsg.contentChunks[currentMsg.contentChunks.length - 1];
+          if (lastChunk && lastChunk.type === 'reasoning') {
+            // 合并到现有的思考内容中
+            lastChunk.content += reasoningContent;
+            lastChunk.timestamp = new Date(); // 更新时间戳
+            
+            console.log('已合并思考内容到现有chunk:', {
+              totalReasoningLength: lastChunk.content.length,
+              newContentLength: reasoningContent.length
+            });
+          } else {
+            // 创建新的思考内容chunk
+            const reasoningChunk = {
+              type: 'reasoning',
+              content: reasoningContent,
+              timestamp: new Date()
+            };
+            
+            currentMsg.contentChunks.push(reasoningChunk);
+            
+            console.log('已创建新的思考内容chunk:', {
+              reasoningLength: reasoningContent.length,
+              totalChunks: currentMsg.contentChunks.length
+            });
+          }
+        }
+      }
+    } else if (responseData && responseData.data && responseData.data.message && responseData.data.message.content) {
+      // 当开始有正式内容输出时，不需要特殊处理
+      console.log('检测到正式内容开始');
     }
     
     // 如果响应包含工具状态，先处理工具状态
@@ -1112,7 +1280,7 @@ watch(() => props.conversationHistory, (newHistory, oldHistory) => {
     setTimeout(() => {
       if (!props.isAgentResponding) {
         initializeFromHistory(false);
-  }
+      }
     }, 100);
   }
 }, { deep: true, immediate: false }); // 移除immediate，避免组件初始化时的重复调用

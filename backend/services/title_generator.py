@@ -2,6 +2,7 @@ from openai import AsyncOpenAI
 from typing import Optional
 from backend.core.config import settings
 from backend.utils.logging import api_logger
+import json
 
 # 获取配置
 api_key = settings.OPENAI_API_KEY
@@ -49,6 +50,8 @@ async def generate_title_with_ai(conversation_id: int, user_message: str) -> str
         
         # 获取生成的标题
         title = response.choices[0].message.content.strip()
+        
+        api_logger.info(f"[标题生成响应] 生成标题长度: {len(title)}")
         
         # 如果标题太长，截断
         if len(title) > 20:

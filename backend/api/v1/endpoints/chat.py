@@ -177,7 +177,7 @@ async def test_openai_api(
         result["content"] = content
         result["response_type"] = str(type(response))
         
-        api_logger.info(f"OpenAI API测试成功: {content}")
+        api_logger.info(f"[测试API响应] OpenAI API测试成功，返回内容长度: {len(content)}")
         
     except Exception as e:
         error_msg = f"OpenAI API测试失败: {str(e)}"
@@ -296,22 +296,70 @@ async def stream_chat(
             ):
                 # 处理不同格式的响应数据
                 content = ""
+                reasoning_content = ""
                 tool_status = None
                 
                 if isinstance(chunk_data, tuple):
-                    if len(chunk_data) == 3:
-                        # 三元组：(content, conversation_id, tool_status)
-                        content, stream_conversation_id, tool_status = chunk_data
+                    if len(chunk_data) == 4:
+                        # 四元组：(content, conversation_id, reasoning_content, tool_status)
+                        content, stream_conversation_id, reasoning_content, tool_status = chunk_data
                         if stream_conversation_id and conversation_id is None:
                             conversation_id = stream_conversation_id
+                    elif len(chunk_data) == 3:
+                        # 三元组处理
+                        first, second, third = chunk_data
+                        if isinstance(second, int):
+                            # (content, conversation_id, reasoning_content) 或 (content, conversation_id, tool_status)
+                            if isinstance(third, str):
+                                # (content, conversation_id, reasoning_content)
+                                content, stream_conversation_id, reasoning_content = first, second, third
+                            elif isinstance(third, dict) and third.get("type") in ["tool_call_executing", "tool_call_completed", "tool_call_error", "tools_completed"]:
+                                # (content, conversation_id, tool_status)
+                                content, stream_conversation_id, tool_status = first, second, third
+                            else:
+                                # 默认处理为 (content, conversation_id, tool_status)
+                                content, stream_conversation_id, tool_status = first, second, third
+                            
+                            if stream_conversation_id and conversation_id is None:
+                                conversation_id = stream_conversation_id
+                        else:
+                            # 如果第二个参数不是int，那很可能是错误的数据格式
+                            # 记录警告并按照原来的逻辑处理
+                            api_logger.warning(f"检测到异常的三元组格式: first={type(first)}, second={type(second)}, third={type(third)}")
+                            # 保守处理：只取第一个作为content
+                            content = first
                     elif len(chunk_data) == 2:
-                        # 二元组：(content, conversation_id)
-                        content, stream_conversation_id = chunk_data
-                        if stream_conversation_id and conversation_id is None:
-                            conversation_id = stream_conversation_id
+                        # 二元组：可能是 (content, conversation_id) 或 (content, reasoning_content)
+                        first, second = chunk_data
+                        if isinstance(second, int):
+                            # (content, conversation_id)
+                            content, stream_conversation_id = first, second
+                            if stream_conversation_id and conversation_id is None:
+                                conversation_id = stream_conversation_id
+                        elif isinstance(second, str):
+                            # (content, reasoning_content) - reasoning_content应该是字符串
+                            content, reasoning_content = first, second
+                        elif isinstance(second, dict) and second.get("type") in ["tool_call_executing", "tool_call_completed", "tool_call_error", "tools_completed"]:
+                            # 这应该是工具状态被错误地当作reasoning_content的情况
+                            # 实际上应该是 (content, tool_status)，但这种格式不应该存在
+                            # 记录日志并将其当作tool_status处理
+                            api_logger.warning(f"检测到可能的数据格式错误：工具状态被放在二元组的第二位: {second}")
+                            content = first
+                            tool_status = second
+                        else:
+                            # 其他情况，当作reasoning_content处理，但转换为字符串
+                            content, reasoning_content = first, str(second)
                 else:
                     # 单个内容
                     content = chunk_data
+                
+                # 累积内容
+                if content:
+                    full_content += content
+                if reasoning_content:
+                    # 可以选择是否将思考内容也累积到完整内容中
+                    # 这里单独记录但不加入到最终显示内容中
+                    pass
                 
                 # 如果有工具状态信息，发送工具状态事件
                 if tool_status:
@@ -336,8 +384,11 @@ async def stream_chat(
                     yield f"data: {json.dumps(tool_response_data, ensure_ascii=False)}\n\n"
                 
                 # 如果有内容，发送内容事件
-                if content:
-                    full_content += content
+                if content or reasoning_content:
+                    # 确保reasoning_content是字符串类型
+                    if reasoning_content and not isinstance(reasoning_content, str):
+                        api_logger.warning(f"reasoning_content不是字符串类型: {type(reasoning_content)}, 内容: {reasoning_content}")
+                        reasoning_content = ""  # 重置为空字符串
                     
                     # 构造响应数据
                     response_data = {
@@ -345,7 +396,8 @@ async def stream_chat(
                         "msg": "成功",
                         "data": {
                             "message": {
-                                "content": content
+                                "content": content,
+                                "reasoning_content": reasoning_content  # 添加思考内容字段
                             },
                             "full_content": full_content,
                             "conversation_id": conversation_id or 0,

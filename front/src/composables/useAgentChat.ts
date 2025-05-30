@@ -15,10 +15,14 @@ export interface ChatMessage {
   editContent?: string;
   contentChunks?: ContentChunk[];
   lastTextLength?: number;
+  reasoningContent?: string;
+  reasoningStartTime?: number;
+  reasoningEndTime?: number;
+  reasoningCompleted?: boolean;
 }
 
 export interface ContentChunk {
-  type: 'text' | 'tool_status';
+  type: 'text' | 'tool_status' | 'reasoning';
   content?: string;
   tool_name?: string;
   status?: string;

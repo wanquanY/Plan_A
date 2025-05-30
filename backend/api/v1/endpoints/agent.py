@@ -53,6 +53,7 @@ async def list_models(
         "claude-3-5-sonnet-20240620",
         "claude-3-7-sonnet-20250219",
         'anthropic/claude-sonnet-4',
+        'deepseek-r1-vol',
         # 添加默认模型
         settings.OPENAI_MODEL
     ]

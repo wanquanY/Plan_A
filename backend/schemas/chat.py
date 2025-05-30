@@ -6,6 +6,7 @@ from datetime import datetime
 class Message(BaseModel):
     """聊天消息"""
     content: str = Field(..., description="消息内容")
+    reasoning_content: Optional[str] = Field(None, description="模型思考推理内容")
 
 
 class ChatRequest(BaseModel):

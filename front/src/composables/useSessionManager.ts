@@ -155,9 +155,9 @@ export function useSessionManager() {
         content: data.content,
         conversation_id: currentSessionId?.value ? Number(currentSessionId.value) : undefined,
         note_id: noteIdValue
-      }, (response, isComplete, conversationId, toolStatus) => {
+      }, (response, isComplete, conversationId, toolStatus, reasoningContent) => {
         // 流式响应回调
-        console.log('收到流式响应:', { response, isComplete, conversationId, toolStatus });
+        console.log('收到流式响应:', { response, isComplete, conversationId, toolStatus, reasoningContent });
         
         let content = '';
         
@@ -169,6 +169,21 @@ export function useSessionManager() {
         } else if (typeof response === 'string') {
           // 兼容处理：如果直接是字符串
           content = response;
+        }
+        
+        // 处理思考内容
+        if (reasoningContent) {
+          console.log('useSessionManager 收到思考内容:', reasoningContent);
+          
+          // 通过onToolStatus回调传递思考内容信息（可以扩展这个回调来处理思考内容）
+          if (onToolStatus) {
+            // 使用特殊的工具状态格式来传递思考内容
+            onToolStatus({
+              type: 'reasoning_content',
+              reasoning_content: reasoningContent,
+              status: isComplete ? 'completed' : 'streaming'
+            });
+          }
         }
         
         // 处理工具状态更新

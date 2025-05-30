@@ -76,8 +76,8 @@
       </div>
       
       <div class="message-content">
-        <!-- 渲染混合内容（文本 + 工具状态按流式顺序） -->
-        <div v-if="message.isTyping" class="typing-content">
+        <!-- 统一的内容容器，减少状态切换时的布局变化 -->
+        <div class="content-container" :class="{ typing: message.isTyping, completed: !message.isTyping }">
           <!-- 如果有contentChunks，使用新的块结构 -->
           <div v-if="message.contentChunks && message.contentChunks.length > 0">
             <!-- 调试信息 -->
@@ -88,55 +88,64 @@
             <!-- 按时间顺序渲染所有内容块 -->
             <template v-for="(chunk, index) in getSortedContentChunks(message.contentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
               <!-- 文本块 - 内联显示 -->
-              <span v-if="chunk.type === 'text'" v-html="formatTextWithBreaks(chunk.content)" class="text-chunk"></span>
+              <span 
+                v-if="chunk.type === 'text'" 
+                v-html="message.isTyping ? formatTextWithBreaks(chunk.content) : renderMarkdown(chunk.content)" 
+                class="text-chunk"
+              ></span>
+              <!-- 思考内容块 - 统一结构，根据状态显示不同内容 -->
+              <div v-else-if="chunk.type === 'reasoning'" class="reasoning-chunk" :class="{ completed: !message.isTyping }">
+                <div 
+                  class="reasoning-header" 
+                  :class="{ clickable: !message.isTyping }"
+                  @click="!message.isTyping && toggleReasoningExpanded(index)"
+                >
+                  <svg class="thinking-icon" viewBox="0 0 24 24" width="14" height="14">
+                    <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.58L19 8l-9 9z"/>
+                  </svg>
+                  <span>{{ message.isTyping ? '思考中...' : '深度思考过程' }}</span>
+                  <!-- 只在完成状态显示展开图标 -->
+                  <svg 
+                    v-if="!message.isTyping"
+                    class="expand-icon" 
+                    :class="{ expanded: expandedChunks[getReasoningChunkId(chunk, index)] }" 
+                    width="14" height="14" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    stroke-width="2"
+                  >
+                    <polyline points="6,9 12,15 18,9"></polyline>
+                  </svg>
+                </div>
+                <!-- 思考内容：流式输出时直接显示，完成后根据展开状态显示 -->
+                <div 
+                  v-if="message.isTyping || expandedChunks[getReasoningChunkId(chunk, index)]" 
+                  class="reasoning-content-inline"
+                >
+                  {{ chunk.content }}
+                </div>
+              </div>
               <!-- 工具状态块 - 独立成行 -->
               <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
                 <AgentToolCall 
                   :tool-name="chunk.tool_name || ''"
-                  :status="chunk.status || ''"
+                  :status="chunk.status || (message.isTyping ? '' : 'completed')"
                   :tool-call-id="chunk.tool_call_id || ''"
                   :result="chunk.result"
                   :error="chunk.error"
-                  :key="`tool-${chunk.tool_call_id}-${chunk.status}`"
+                  :key="`tool-${chunk.tool_call_id}-${chunk.status || 'default'}`"
                 />
               </div>
             </template>
+            <!-- 打字指示器 -->
+            <span v-if="message.isTyping" class="typing-indicator">|</span>
           </div>
           <!-- 兼容旧的消息格式 -->
           <div v-else>
-            <span v-html="formatTextWithBreaks(message.content)"></span>
+            <span v-html="message.isTyping ? formatTextWithBreaks(message.content) : renderMarkdown(message.content)"></span>
+            <span v-if="message.isTyping" class="typing-indicator">|</span>
           </div>
-          <span v-if="message.isTyping" class="typing-indicator">|</span>
-        </div>
-        
-        <!-- 完成后显示最终内容 -->
-        <div v-else class="markdown-content">
-          <!-- 如果有contentChunks，使用新的块结构 -->
-          <div v-if="message.contentChunks && message.contentChunks.length > 0">
-            <!-- 调试信息 -->
-            <div v-if="false" style="font-size: 10px; color: #999; margin-bottom: 8px; border: 1px solid #ddd; padding: 4px;">
-              调试(完成): 内容块数量: {{ message.contentChunks.length }}, 
-              类型: {{ message.contentChunks.map(c => `${c.type}(${c.tool_name || 'text'})`).join(', ') }}
-            </div>
-            <!-- 按时间顺序渲染所有内容块 -->
-            <template v-for="(chunk, index) in getSortedContentChunks(message.contentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
-              <!-- 文本块 - 内联显示 -->
-              <span v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content)" class="text-chunk"></span>
-              <!-- 工具状态块 - 独立成行 -->
-              <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
-                <AgentToolCall 
-                  :tool-name="chunk.tool_name || ''"
-                  :status="chunk.status || 'completed'"
-                  :tool-call-id="chunk.tool_call_id || ''"
-                  :result="chunk.result"
-                  :error="chunk.error"
-                  :key="`tool-completed-${chunk.tool_call_id}`"
-                />
-              </div>
-            </template>
-          </div>
-          <!-- 兼容旧的消息格式（历史消息） -->
-          <div v-else v-html="renderMarkdown(message.content)"></div>
         </div>
       </div>
       
@@ -167,7 +176,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick } from 'vue';
+import { nextTick, ref, computed, watch, reactive } from 'vue';
 import AgentToolCall from './AgentToolCall.vue';
 import { markdownToHtml } from '../../services/markdownService';
 import { useStreamingResponse } from '../../composables/useStreamingResponse';
@@ -189,6 +198,201 @@ const emit = defineEmits([
 ]);
 
 const { getSortedContentChunks } = useStreamingResponse();
+
+// 全局展开状态管理 - 使用单例模式
+const globalExpandedState = (() => {
+  if (!window.__reasoningExpandedState) {
+    window.__reasoningExpandedState = reactive({});
+  }
+  return window.__reasoningExpandedState;
+})();
+
+// 生成消息的唯一键值
+const getMessageKey = () => {
+  if (props.message.id) {
+    return props.message.id;
+  }
+  // 对于当前消息，使用更唯一的键值，包含时间戳避免冲突
+  const timestamp = props.message.timestamp?.getTime() || Date.now();
+  return `current_${timestamp}`;
+};
+
+// 思考内容展开状态 - 使用全局状态
+const expandedChunks = computed({
+  get: () => {
+    const messageKey = getMessageKey();
+    return globalExpandedState[messageKey] || {};
+  },
+  set: (value) => {
+    const messageKey = getMessageKey();
+    globalExpandedState[messageKey] = value;
+  }
+});
+
+// 判断是否是历史记录
+const isHistoryMessage = computed(() => {
+  return props.message.id && props.message.id.startsWith('history_');
+});
+
+// 生成思考内容的唯一标识
+const getReasoningChunkId = (chunk: any, index: number) => {
+  // 使用内容的哈希值+索引作为更稳定的标识
+  // 这样即使消息对象重新创建，只要内容相同，ID就相同
+  const contentHash = chunk.content ? 
+    chunk.content.substring(0, 50).replace(/\s/g, '').substring(0, 20) : 
+    '';
+  return `reasoning_${index}_${contentHash}`;
+};
+
+// 防抖器
+let initializationTimeout: number | null = null;
+
+// 清理过时的状态
+const cleanupOldStates = () => {
+  const now = Date.now();
+  const oneHourAgo = now - 60 * 60 * 1000; // 1小时前
+  
+  Object.keys(globalExpandedState).forEach(key => {
+    // 清理1小时前的临时状态（current_开头的）
+    if (key.startsWith('current_')) {
+      const timestamp = parseInt(key.split('_')[1]);
+      if (timestamp && timestamp < oneHourAgo) {
+        delete globalExpandedState[key];
+        console.log('[AgentMessage] 清理过时状态:', key);
+      }
+    }
+  });
+};
+
+// 初始化思考内容的展开状态
+const initializeExpandedState = () => {
+  // 使用防抖，避免频繁调用
+  if (initializationTimeout) {
+    clearTimeout(initializationTimeout);
+  }
+  
+  initializationTimeout = setTimeout(() => {
+    const messageKey = getMessageKey();
+    console.log('[AgentMessage] initializeExpandedState 被调用', {
+      messageId: props.message.id,
+      messageKey,
+      isTyping: props.message.isTyping,
+      chunksLength: props.message.contentChunks?.length || 0,
+      existingExpandedState: Object.keys(expandedChunks.value),
+      globalStateKeys: Object.keys(globalExpandedState)
+    });
+    
+    // 清理过时的状态
+    cleanupOldStates();
+    
+    if (!props.message.contentChunks) return;
+    
+    const sortedChunks = getSortedContentChunks(props.message.contentChunks);
+    const currentExpandedState = { ...expandedChunks.value };
+    const newExpandedState: Record<string, boolean> = { ...currentExpandedState };
+    
+    // 收集当前所有思考内容的ID，用于判断哪些是新增的
+    const existingReasoningIds = new Set(Object.keys(currentExpandedState));
+    
+    let hasNewReasoning = false;
+    
+    sortedChunks.forEach((chunk, index) => {
+      if (chunk.type === 'reasoning') {
+        const chunkId = getReasoningChunkId(chunk, index);
+        
+        // 如果这个思考内容还没有展开状态，设置默认状态
+        if (!existingReasoningIds.has(chunkId)) {
+          // 新增的思考内容设置默认状态
+          // 历史记录中的思考内容默认展开，当前对话中的默认折叠
+          newExpandedState[chunkId] = isHistoryMessage.value;
+          hasNewReasoning = true;
+          console.log('[AgentMessage] 新增思考内容块', { 
+            chunkId, 
+            defaultExpanded: isHistoryMessage.value,
+            messageKey 
+          });
+        }
+        // 如果已经存在，保持原有状态不变
+      }
+    });
+    
+    // 只有在有新增思考内容时才更新状态
+    if (hasNewReasoning || Object.keys(currentExpandedState).length === 0) {
+      console.log('[AgentMessage] 更新展开状态', { 
+        messageKey,
+        old: Object.keys(currentExpandedState), 
+        new: Object.keys(newExpandedState) 
+      });
+      expandedChunks.value = newExpandedState;
+    } else {
+      console.log('[AgentMessage] 无新增思考内容，保持现有状态', { messageKey });
+    }
+  }, 50); // 50ms防抖
+};
+
+// 监听message的contentChunks变化，重新初始化展开状态
+watch(() => props.message.contentChunks, (newChunks, oldChunks) => {
+  const messageKey = getMessageKey();
+  console.log('[AgentMessage] contentChunks changed', {
+    messageId: props.message.id,
+    messageKey,
+    isTyping: props.message.isTyping,
+    newLength: newChunks?.length || 0,
+    oldLength: oldChunks?.length || 0
+  });
+  
+  // 避免在流式输出完成后的状态变化时重新初始化
+  // 只有在真正有新内容时才初始化
+  const reasoningChunksCount = newChunks?.filter(c => c.type === 'reasoning').length || 0;
+  const oldReasoningChunksCount = oldChunks?.filter(c => c.type === 'reasoning').length || 0;
+  
+  // 获取当前消息的展开状态数量
+  const currentExpandedStateCount = Object.keys(globalExpandedState[messageKey] || {}).length;
+  
+  // 满足以下条件之一才初始化：
+  // 1. 有新的思考内容块
+  // 2. 首次加载且没有展开状态
+  // 3. 思考内容数量与展开状态数量不匹配（可能是状态丢失）
+  if (reasoningChunksCount > oldReasoningChunksCount || 
+      (currentExpandedStateCount === 0 && reasoningChunksCount > 0) ||
+      (reasoningChunksCount > 0 && currentExpandedStateCount !== reasoningChunksCount)) {
+    console.log('[AgentMessage] 检测到需要初始化的情况，触发初始化', {
+      messageKey,
+      reasoningChunksCount,
+      oldReasoningChunksCount,
+      currentExpandedStateCount
+    });
+    initializeExpandedState();
+  } else {
+    console.log('[AgentMessage] 无需初始化，跳过', {
+      messageKey,
+      reasoningChunksCount,
+      oldReasoningChunksCount,
+      currentExpandedStateCount
+    });
+  }
+}, { immediate: true, deep: true });
+
+// 监听message.id变化（切换消息时），重新初始化展开状态
+watch(() => props.message.id, (newId, oldId) => {
+  console.log('[AgentMessage] message.id changed', { newId, oldId });
+  
+  // 只有在ID真正变化时才初始化（避免初始化时的触发）
+  if (oldId && newId !== oldId) {
+    console.log('[AgentMessage] ID变化，触发初始化');
+    initializeExpandedState();
+  }
+}, { immediate: false }); // 移除immediate，避免初始化时触发
+
+// 切换思考内容展开状态
+const toggleReasoningExpanded = (index: number) => {
+  const sortedChunks = getSortedContentChunks(props.message.contentChunks || []);
+  const chunk = sortedChunks[index];
+  if (chunk && chunk.type === 'reasoning') {
+    const chunkId = getReasoningChunkId(chunk, index);
+    expandedChunks.value[chunkId] = !expandedChunks.value[chunkId];
+  }
+};
 
 // 格式化时间
 const formatTime = (timestamp: Date) => {
@@ -372,6 +576,7 @@ const renderMarkdown = (content?: string) => {
   color: #6366f1;
   font-weight: bold;
   animation: blink 1s infinite;
+  margin-left: 2px;
 }
 
 @keyframes blink {
@@ -533,36 +738,50 @@ const renderMarkdown = (content?: string) => {
   margin: 8px 0;
 }
 
-/* Markdown内容样式 */
-.markdown-content {
+/* 统一的内容容器样式 */
+.content-container {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.5;
   color: #1f2937;
-  white-space: normal;
-  max-width: 100%;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  white-space: pre-wrap;
+  max-width: 100%;
+  /* 添加平滑过渡 */
+  transition: none;
+}
+
+.content-container.typing {
+  /* 流式输出时的样式 */
   overflow: hidden;
 }
 
-.markdown-content h1,
-.markdown-content h2,
-.markdown-content h3,
-.markdown-content h4,
-.markdown-content h5,
-.markdown-content h6 {
+.content-container.completed {
+  /* 完成后的样式 - 应用markdown样式 */
+  white-space: normal;
+  overflow: visible;
+}
+
+/* Markdown样式应用到completed状态 */
+.content-container.completed h1,
+.content-container.completed h2,
+.content-container.completed h3,
+.content-container.completed h4,
+.content-container.completed h5,
+.content-container.completed h6 {
   margin: 1em 0 0.5em 0;
   font-weight: 600;
   line-height: 1.25;
   color: #111827;
 }
 
-.markdown-content h1 { font-size: 1.5em; }
-.markdown-content h2 { font-size: 1.3em; }
-.markdown-content h3 { font-size: 1.1em; }
-.markdown-content h4 { font-size: 1em; }
+.content-container.completed h1 { font-size: 1.5em; }
+.content-container.completed h2 { font-size: 1.3em; }
+.content-container.completed h3 { font-size: 1.1em; }
+.content-container.completed h4 { font-size: 1em; }
 
-.markdown-content p {
+.content-container.completed p {
   margin: 0.8em 0;
   line-height: 1.6;
   max-width: 100%;
@@ -570,8 +789,8 @@ const renderMarkdown = (content?: string) => {
   overflow-wrap: break-word;
 }
 
-.markdown-content ul,
-.markdown-content ol {
+.content-container.completed ul,
+.content-container.completed ol {
   margin: 0.8em 0;
   padding-left: 1.5em;
   max-width: 100%;
@@ -579,35 +798,35 @@ const renderMarkdown = (content?: string) => {
   overflow-wrap: break-word;
 }
 
-.markdown-content li {
+.content-container.completed li {
   margin: 0.2em 0;
   line-height: 1.5;
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
 
-.markdown-content a {
+.content-container.completed a {
   color: #3b82f6;
   text-decoration: none;
   border-bottom: 1px solid transparent;
   transition: border-color 0.2s ease;
 }
 
-.markdown-content a:hover {
+.content-container.completed a:hover {
   border-bottom-color: #3b82f6;
 }
 
-.markdown-content strong {
+.content-container.completed strong {
   font-weight: 600;
   color: #111827;
 }
 
-.markdown-content em {
+.content-container.completed em {
   font-style: italic;
   color: #374151;
 }
 
-.markdown-content code:not(pre code) {
+.content-container.completed code:not(pre code) {
   background-color: #f3f4f6;
   color: #e11d48;
   padding: 0.2em 0.4em;
@@ -617,7 +836,7 @@ const renderMarkdown = (content?: string) => {
   border: 1px solid #e5e7eb;
 }
 
-.markdown-content pre {
+.content-container.completed pre {
   background-color: #f8fafc;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
@@ -632,7 +851,7 @@ const renderMarkdown = (content?: string) => {
   overflow-wrap: break-word;
 }
 
-.markdown-content pre code {
+.content-container.completed pre code {
   background: transparent;
   border: none;
   padding: 0;
@@ -640,5 +859,66 @@ const renderMarkdown = (content?: string) => {
   font-size: inherit;
   word-wrap: break-word;
   overflow-wrap: break-word;
+}
+
+/* 思考内容块样式 - 时序渲染版本 */
+.reasoning-chunk {
+  display: block;
+  margin: 8px 0;
+  background: #f8f9ff;
+  border: 1px solid #e0e4ff;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.reasoning-chunk .reasoning-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #f1f3ff;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4f46e5;
+}
+
+.reasoning-chunk.completed .reasoning-header {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  user-select: none;
+  justify-content: space-between;
+}
+
+.reasoning-chunk.completed .reasoning-header:hover {
+  background: #e8ecff;
+}
+
+.reasoning-chunk .thinking-icon {
+  color: #4f46e5;
+  flex-shrink: 0;
+}
+
+.reasoning-chunk.completed .expand-icon {
+  color: #6b7280;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.reasoning-chunk.completed .expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.reasoning-content-inline {
+  padding: 8px 10px;
+  background: #ffffff;
+  border-top: 1px solid #e0e4ff;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #374151;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-height: 200px;
+  overflow-y: auto;
 }
 </style> 
