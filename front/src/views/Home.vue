@@ -349,8 +349,21 @@ const handleSidebarNavigateHistory = (payload: any) => {
 };
 
 // 处理侧边栏编辑消息
-const handleSidebarEditMessage = async (payload: any) => {
-  await sessionManager.handleSidebarEditMessage(payload);
+const handleSidebarEditMessage = (data: any) => {
+  sessionManager.handleSidebarEditMessage(data);
+};
+
+// 处理笔记编辑预览事件（从AgentSidebar传递到Editor）
+const handleNoteEditPreview = (previewData: any) => {
+  console.log('[Home.vue] 收到来自AgentSidebar的笔记编辑预览事件:', previewData);
+  
+  // 检查是否有Editor组件的引用，并将预览事件传递给它
+  if (editorRef.value && typeof editorRef.value.onNoteEditPreview === 'function') {
+    editorRef.value.onNoteEditPreview(previewData);
+    console.log('[Home.vue] 已将预览事件传递给Editor');
+  } else {
+    console.warn('[Home.vue] 无法找到Editor的onNoteEditPreview方法');
+  }
 };
 
 // 关闭侧边栏
@@ -439,6 +452,7 @@ onMounted(() => {
               @sidebar-insert="handleSidebarInsert"
               @sidebar-navigate-history="handleSidebarNavigateHistory"
               @conversation-history-loaded="handleConversationHistoryLoaded"
+              @note-edit-preview="handleNoteEditPreview"
               ref="editorRef"
               :conversation-id="sessionManager.currentSessionId.value"
               :note-id="noteManager.currentNoteId.value"
@@ -468,6 +482,7 @@ onMounted(() => {
               @navigate-history="handleSidebarNavigateHistory"
               @edit-message="handleSidebarEditMessage"
               @resize="handleSidebarResize"
+              @note-edit-preview="handleNoteEditPreview"
               ref="agentSidebarRef"
             />
           </div>

@@ -55,7 +55,7 @@ class ToolsService {
    */
   async getToolsList(): Promise<ToolDetail[]> {
     try {
-      const response = await apiClient.get('/tools/tools');
+      const response = await apiClient.get('/tools');
       return response.data || [];
     } catch (error) {
       console.error('获取工具列表失败:', error);
@@ -68,7 +68,7 @@ class ToolsService {
    */
   async getToolsGroupedByProvider(): Promise<Record<string, ToolDetail[]>> {
     try {
-      const response = await apiClient.get('/tools/tools/grouped');
+      const response = await apiClient.get('/tools/grouped');
       return response.data || {};
     } catch (error) {
       console.error('获取分组工具列表失败:', error);
@@ -81,7 +81,7 @@ class ToolsService {
    */
   async getToolProviders(): Promise<Record<string, any>> {
     try {
-      const response = await apiClient.get('/tools/tools/providers');
+      const response = await apiClient.get('/tools/providers');
       return response.data || {};
     } catch (error) {
       console.error('获取工具提供商信息失败:', error);
@@ -94,7 +94,7 @@ class ToolsService {
    */
   async validateToolsConfig(toolsConfig: ToolLevelConfig | ProviderLevelConfig): Promise<ConfigValidationResult> {
     try {
-      const response = await apiClient.post('/tools/tools/validate', toolsConfig);
+      const response = await apiClient.post('/tools/validate', toolsConfig);
       return response.data;
     } catch (error) {
       console.error('验证工具配置失败:', error);
@@ -111,7 +111,7 @@ class ToolsService {
     original_config: ProviderLevelConfig;
   }> {
     try {
-      const response = await apiClient.post('/tools/tools/convert', providerConfig);
+      const response = await apiClient.post('/tools/convert', providerConfig);
       return response.data;
     } catch (error) {
       console.error('转换配置格式失败:', error);
@@ -125,7 +125,7 @@ class ToolsService {
   async getDefaultToolConfig(enabledTools?: string[]): Promise<ToolLevelConfig> {
     try {
       const params = enabledTools ? { enabled_tools: enabledTools.join(',') } : {};
-      const response = await apiClient.get('/tools/tools/default-config', { params });
+      const response = await apiClient.get('/tools/default-config', { params });
       return response.data || {};
     } catch (error) {
       console.error('获取默认工具配置失败:', error);
@@ -138,7 +138,7 @@ class ToolsService {
    */
   async getToolRecommendations(useCase: string): Promise<string[]> {
     try {
-      const response = await apiClient.get('/tools/tools/recommendations', {
+      const response = await apiClient.get('/tools/recommendations', {
         params: { use_case: useCase }
       });
       return response.data || [];
@@ -153,7 +153,7 @@ class ToolsService {
    */
   async searchTools(query: string): Promise<ToolDetail[]> {
     try {
-      const response = await apiClient.get('/tools/tools/search', {
+      const response = await apiClient.get('/tools/search', {
         params: { query }
       });
       return response.data || [];

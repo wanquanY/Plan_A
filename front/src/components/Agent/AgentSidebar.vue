@@ -93,7 +93,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message', 'resize']);
+const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message', 'resize', 'note-edit-preview']);
 
 // 组件引用
 const unifiedInputRef = ref(null);
@@ -168,6 +168,13 @@ const restoreSidebarWidth = () => {
 const handleToolStatus = (toolStatus: any) => {
   console.log('AgentSidebar 处理工具状态:', toolStatus);
   
+  // 检查是否是笔记编辑工具的完成状态
+  if (toolStatus.tool_name === 'note_editor' && toolStatus.status === 'completed' && toolStatus.result) {
+    console.log('[AgentSidebar] 检测到笔记编辑工具完成，处理结果');
+    console.log('[AgentSidebar] 工具结果原始内容:', toolStatus.result);
+    handleNoteEditorResult(toolStatus.result);
+  }
+  
   // 实时添加工具状态到当前正在进行的AI消息中
   nextTick(() => {
     const currentMsg = getCurrentTypingMessage();
@@ -175,6 +182,63 @@ const handleToolStatus = (toolStatus: any) => {
       handleToolStatusUpdate(toolStatus, currentMsg);
     }
   });
+};
+
+// 处理笔记编辑工具结果的函数（复制自AgentResponseHandler）
+const handleNoteEditorResult = (toolResult) => {
+  console.log('[AgentSidebar] 处理笔记编辑工具结果:', toolResult);
+  console.log('[AgentSidebar] 工具结果类型:', typeof toolResult);
+  console.log('[AgentSidebar] 工具结果内容:', JSON.stringify(toolResult, null, 2));
+  
+  try {
+    let resultData = toolResult;
+    
+    // 如果结果是字符串，尝试解析为JSON
+    if (typeof toolResult === 'string') {
+      try {
+        resultData = JSON.parse(toolResult);
+        console.log('[AgentSidebar] 解析JSON后的结果:', resultData);
+      } catch (e) {
+        console.warn('[AgentSidebar] 无法解析工具结果为JSON:', e);
+        return;
+      }
+    }
+    
+    console.log('[AgentSidebar] 检查编辑结果字段:', {
+      success: resultData?.success,
+      note_id: resultData?.note_id,
+      content_exists: resultData?.content !== undefined,
+      content_length: resultData?.content?.length || 0,
+      is_preview: resultData?.is_preview
+    });
+    
+    // 检查是否是成功的笔记编辑结果
+    if (resultData && resultData.success && resultData.note_id && resultData.content !== undefined) {
+      console.log('[AgentSidebar] 笔记编辑成功，准备发射预览事件');
+      
+      // 发射笔记编辑预览事件
+      emit('note-edit-preview', {
+        noteId: resultData.note_id,
+        title: resultData.title,
+        content: resultData.content,
+        editType: resultData.edit_type,
+        isPreview: resultData.is_preview || false,
+        changes: resultData.changes,
+        updatedAt: resultData.updated_at,
+        contentPreview: resultData.content_preview
+      });
+      
+      console.log('[AgentSidebar] 已发射笔记编辑预览事件');
+    } else {
+      console.log('[AgentSidebar] 笔记编辑结果不符合预期格式:', {
+        has_success: !!resultData?.success,
+        has_note_id: !!resultData?.note_id,
+        has_content: resultData?.content !== undefined
+      });
+    }
+  } catch (error) {
+    console.error('[AgentSidebar] 处理笔记编辑结果时出错:', error);
+  }
 };
 
 // 处理文本响应
@@ -892,7 +956,7 @@ watch(() => props.agentResponse, (newResponse) => {
       console.log('检测到工具状态信息:', responseData.data.tool_status);
       const currentMsg = getCurrentTypingMessage();
       if (currentMsg) {
-        handleToolStatusUpdate(responseData.data.tool_status, currentMsg);
+        handleToolStatus(responseData.data.tool_status);
       }
       
       // 如果还有文本内容，继续处理文本

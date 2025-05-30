@@ -1,0 +1,1990 @@
+<template>
+  <div class="editor-container">
+    <EditorToolbar
+      class="editor-toolbar-fixed"
+      :editor-ref="editorContentRef?.editorRef"
+      :selected-heading="selectedHeading"
+      :interaction-mode="interactionMode"
+      @apply-formatting="applyFormat"
+      @set-heading="setHeading"
+      @set-letter-spacing="setLetterSpacing"
+      @set-line-height="setLineHeight"
+      @set-font-size="setFontSize"
+      @undo="undoAction"
+      @redo="redoAction"
+      @toggle-outline="toggleOutline"
+      @toggle-sidebar-mode="toggleSidebarMode"
+    />
+    
+    <div class="editor-content-wrapper">
+      <DocumentOutline 
+        v-if="showOutline && editorContentRef" 
+        :editorRef="editorContentRef" 
+        class="document-outline"
+        ref="documentOutlineRef"
+      />
+      
+      <div class="editor-main">
+        <EditorContent
+          ref="editorContentRef"
+          :modelValue="modelValue"
+          @update:model-value="$emit('update:modelValue', $event)"
+          :show-agent-selector="showAgentSelector"
+          @word-count="updateWordCount"
+          @key-down="handleKeyDown"
+          @show-agent-selector="showAgentSelectorAt"
+          @show-agent-modal="showAgentModalAt"
+          @send-to-agent="handleSendToAgent"
+          @composition-start="isComposing = true"
+          @composition-end="isComposing = false"
+          @input-update="handleInputUpdate"
+        />
+        
+        <MentionHandler
+          :show-selector="showAgentSelector"
+          :current-range="currentRange"
+          @close="showAgentSelector = false"
+          @agent-selected="onAgentSelected"
+        />
+      </div>
+    </div>
+    
+    <AgentResponseHandler 
+      ref="agentResponseHandlerRef" 
+      @agent-response-chunk="onAgentResponseChunk"
+      @agent-response-complete="onAgentResponseComplete"
+      @agent-response-error="onAgentResponseError"
+      @agent-tool-status="onAgentToolStatus"
+      @note-content-updated="onNoteContentUpdated"
+      @note-edit-preview="onNoteEditPreview"
+    />
+    <AgentInputModal
+      ref="agentInputModalRef"
+      :visible="showAgentModal"
+      :position="modalPosition"
+      :editor-info="editorInfo"
+      :agentResponse="currentAgentResponse" 
+      :isAgentResponding="isAgentResponding"
+      :historyIndex="historyDisplayIndex"
+      :historyLength="conversationHistory.length"
+      @close="showAgentModal = false"
+      @send="handleAgentMessage"
+      @request-insert="handleInsertResponse" 
+      @navigate-history="handleHistoryNavigation"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, onMounted, nextTick, watch, computed } from 'vue';
+import EditorToolbar from './EditorToolbar.vue';
+import EditorContent from './EditorContent.vue';
+import MentionHandler from '../rendering/MentionHandler.vue';
+import AgentResponseHandler from '../Agent/AgentResponseHandler.vue';
+import DocumentOutline from './DocumentOutline.vue';
+import AgentInputModal from '../Agent/AgentInputModal.vue';
+import chatService from '../../services/chat';
+import noteService from '../../services/note';
+
+// Props声明
+const props = defineProps({
+  modelValue: {
+    type: String,
+    default: '<p>开始写作...</p>'
+  },
+  conversationId: {
+    type: [Number, String, null],
+    default: null
+  },
+  noteId: {
+    type: [Number, String, null],
+    default: null
+  }
+});
+
+// 事件声明
+const emit = defineEmits(['update:modelValue', 'word-count', 'update:conversationId', 'toggle-sidebar-mode', 'sidebar-send', 'sidebar-insert', 'sidebar-navigate-history', 'conversation-history-loaded', 'title-updated']);
+
+// 状态变量
+const wordCount = ref(0);
+const isComposing = ref(false);
+const showAgentSelector = ref(false);
+const currentRange = ref(null);
+const selectedHeading = ref('p');
+const showOutline = ref(false); // 默认不显示大纲
+const showAgentModal = ref(false);
+const interactionMode = ref('modal'); // 'modal' | 'sidebar'
+const currentCursorRange = ref(null);
+const modalPosition = ref({ y: 0, x: 0 });
+const editorInfo = ref({ left: 0, right: 0, width: 0, editorOffsetLeft: 0 });
+
+// 新状态变量
+const currentAgentResponse = ref('');
+const isAgentResponding = ref(false);
+const currentSentMessageData = ref(null);
+const conversationHistory = ref([]); // { user: string, agent: string }[]
+const historyDisplayIndex = ref(-1);
+const lastLoadedSessionId = ref(null); // 跟踪最后加载的会话ID，避免重复加载
+const currentToolStatus = ref(null); // 当前工具状态
+
+// 控制状态
+const showTools = ref(false);
+const showHistory = ref(false);
+const showWordCloud = ref(false);
+const loading = ref(false);
+const saving = ref(false);
+
+// 编辑预览相关状态
+const pendingEditData = ref(null);
+const originalContentForPreview = ref('');
+const previewedContent = ref('');
+
+// 组件引用
+const editorContentRef = ref(null);
+const agentResponseHandlerRef = ref(null);
+const documentOutlineRef = ref(null);
+const mentionHandlerRef = ref(null);
+const agentInputModalRef = ref(null);
+
+// 确保 toggleOutline 方法存在且正确
+const toggleOutline = () => {
+  showOutline.value = !showOutline.value;
+};
+
+// 切换侧边栏模式 - 现在只发射事件给父组件
+const toggleSidebarMode = () => {
+  const newMode = interactionMode.value === 'modal' ? 'sidebar' : 'modal';
+  console.log(`切换交互模式: ${interactionMode.value} -> ${newMode}`);
+  
+  emit('toggle-sidebar-mode', {
+    currentMode: interactionMode.value,
+    newMode: newMode,
+    showInterface: true, // 表示要直接显示对应的界面
+    agentResponse: currentAgentResponse.value,
+    isAgentResponding: isAgentResponding.value,
+    historyIndex: historyDisplayIndex.value,
+    historyLength: conversationHistory.value.length
+  });
+};
+
+// 加载会话历史记录
+const loadConversationHistory = async (sessionId: number | string | null) => {
+  // 如果会话ID与上次加载的相同，跳过重复加载
+  if (sessionId && sessionId === lastLoadedSessionId.value) {
+    console.log(`会话ID ${sessionId} 已经加载过，跳过重复加载`);
+    return;
+  }
+  
+  if (!sessionId) {
+    // 没有会话ID，清空历史记录
+    conversationHistory.value = [];
+    historyDisplayIndex.value = -1;
+    currentAgentResponse.value = '';
+    lastLoadedSessionId.value = null;
+    console.log('没有会话ID，清空历史记录');
+    
+    // 即使没有历史记录，也通知Home.vue清空侧边栏
+    emit('conversation-history-loaded', {
+      sessionId: sessionId,
+      history: [],
+      length: 0
+    });
+    return;
+  }
+
+  try {
+    console.log(`开始加载会话 ${sessionId} 的历史记录`);
+    const history = await chatService.getSessionAgentHistory(Number(sessionId));
+    
+    if (history && history.length > 0) {
+      conversationHistory.value = history;
+      historyDisplayIndex.value = history.length - 1; // 默认显示最新的记录
+      currentAgentResponse.value = history[history.length - 1].agent; // 显示最新的AI回复
+      lastLoadedSessionId.value = sessionId; // 记录已加载的会话ID
+      console.log(`加载了 ${history.length} 条历史记录，当前显示索引: ${historyDisplayIndex.value}`);
+      
+      // 通知Home.vue更新侧边栏的会话历史
+      emit('conversation-history-loaded', {
+        sessionId: sessionId,
+        history: history,
+        length: history.length
+      });
+    } else {
+      conversationHistory.value = [];
+      historyDisplayIndex.value = -1;
+      currentAgentResponse.value = '';
+      lastLoadedSessionId.value = sessionId; // 即使没有历史记录，也记录会话ID避免重复请求
+      console.log('没有找到历史记录');
+      
+      // 即使没有历史记录，也通知Home.vue清空侧边栏
+      emit('conversation-history-loaded', {
+        sessionId: sessionId,
+        history: [],
+        length: 0
+      });
+    }
+  } catch (error) {
+    console.error('加载历史记录失败:', error);
+    conversationHistory.value = [];
+    historyDisplayIndex.value = -1;
+    currentAgentResponse.value = '';
+    lastLoadedSessionId.value = sessionId; // 即使失败，也记录会话ID避免重复请求
+    
+    // 加载失败时也通知Home.vue清空侧边栏
+    emit('conversation-history-loaded', {
+      sessionId: sessionId,
+      history: [],
+      length: 0
+    });
+  }
+};
+
+// 监听会话ID变化
+watch(() => props.conversationId, (newId) => {
+  if (agentResponseHandlerRef.value) {
+    console.log(`编辑器接收到会话ID: ${newId || 'null'}，设置到AgentResponseHandler`);
+    // 无论newId是否为null都要设置，确保新建会话时能正确清空
+    agentResponseHandlerRef.value.setConversationId(newId ? String(newId) : null);
+  }
+  
+  // 加载会话的历史记录
+  loadConversationHistory(newId);
+}, { immediate: true });
+
+// 监听笔记ID变化
+watch(() => props.noteId, (newId) => {
+  if (agentResponseHandlerRef.value) {
+    console.log(`编辑器接收到笔记ID: ${newId || 'null'}，设置到AgentResponseHandler`);
+    // 无论newId是否为null都要设置，确保新建笔记时能正确传递ID
+    agentResponseHandlerRef.value.setCurrentNoteId(newId ? String(newId) : null);
+    
+    // 调试输出：确认AgentResponseHandler内部的noteId已被设置
+    setTimeout(() => {
+      console.log('AgentResponseHandler中当前的笔记ID:', agentResponseHandlerRef.value.getCurrentNoteId());
+    }, 100);
+  }
+}, { immediate: true });
+
+// 监听modelValue变化
+watch(() => props.modelValue, (newValue, oldValue) => {
+  console.log('Editor接收到新内容，长度:', newValue.length);
+  
+  // 强制重新渲染内容到编辑器
+  if (editorContentRef.value && editorContentRef.value.editorRef) {
+    // 确保内容不同时才更新，避免光标跳动
+    if (editorContentRef.value.editorRef.innerHTML !== newValue) {
+      // 如果变化是由于处理代码块或渲染操作导致的微小差异，忽略更新
+      if (oldValue && Math.abs(oldValue.length - newValue.length) < 10 && 
+          oldValue.replace(/\s+/g, '') === newValue.replace(/\s+/g, '')) {
+        console.log('内容变化很小，可能是格式化导致，忽略更新');
+        return;
+      }
+      
+      console.log('更新编辑器DOM内容');
+      editorContentRef.value.editorRef.innerHTML = newValue;
+      
+      // 内容更新后，触发markdown渲染
+      nextTick(async () => {
+        try {
+          console.log('内容更新后触发markdown渲染');
+          const { renderContentComponents } = await import('../../services/renderService');
+          renderContentComponents(true);
+        } catch (error) {
+          console.error('渲染markdown内容失败:', error);
+        }
+      });
+    }
+  }
+}, { immediate: true });
+
+// 监听conversationId变化，同步到AgentResponseHandler
+watch(() => props.conversationId, (newConversationId) => {
+  if (agentResponseHandlerRef.value && typeof agentResponseHandlerRef.value.setConversationId === 'function') {
+    agentResponseHandlerRef.value.setConversationId(newConversationId);
+    console.log('[Editor.vue] conversationId changed, updated AgentResponseHandler:', newConversationId);
+  }
+});
+
+// 监听noteId变化，同步到AgentResponseHandler
+watch(() => props.noteId, (newNoteId) => {
+  if (agentResponseHandlerRef.value && typeof agentResponseHandlerRef.value.setCurrentNoteId === 'function') {
+    agentResponseHandlerRef.value.setCurrentNoteId(newNoteId);
+    console.log('[Editor.vue] noteId changed, updated AgentResponseHandler:', newNoteId);
+  }
+});
+
+// 格式化操作
+const applyFormat = ({ command, value }) => {
+  // 应用格式化命令
+  document.execCommand(command, false, value);
+  
+  // 获取应用格式化后的内容
+  const newContent = getFullContent();
+  
+  // 发出内容更新事件
+  emit('update:modelValue', newContent);
+  
+  // 聚焦编辑器以保持光标位置
+  nextTick(() => {
+    editorContentRef.value?.focus();
+  });
+};
+
+// 设置标题
+const setHeading = (heading: string) => {
+  // 保存当前的内容状态（撤销前）
+  const currentContent = editorContentRef.value ? getFullContent() : props.modelValue;
+  
+  // 应用格式化
+  document.execCommand('formatBlock', false, heading);
+  selectedHeading.value = heading;
+  
+  // 获取应用格式化后的内容
+  const newContent = editorContentRef.value ? getFullContent() : props.modelValue;
+  
+  // 发出内容更新事件，确保变化被记录
+  emit('update:modelValue', newContent);
+  
+  // 聚焦编辑器以保持光标位置
+  nextTick(() => {
+    editorContentRef.value?.focus();
+  });
+};
+
+// 获取完整内容的辅助方法
+const getFullContent = () => {
+  if (editorContentRef.value && editorContentRef.value.editorRef) {
+    return editorContentRef.value.editorRef.innerHTML;
+  }
+  return props.modelValue;
+};
+
+// 设置字号
+const setFontSize = (size: string) => {
+  document.execCommand('fontSize', false, '7');
+  const selection = window.getSelection();
+  if (selection && selection.rangeCount > 0) {
+    const fontElements = document.getElementsByTagName('font');
+    for (let i = 0; i < fontElements.length; i++) {
+      if (fontElements[i].getAttribute('size') === '7') {
+        fontElements[i].removeAttribute('size');
+        fontElements[i].style.fontSize = size;
+      }
+    }
+  }
+  
+  // 获取应用格式化后的内容
+  const newContent = getFullContent();
+  
+  // 发出内容更新事件
+  emit('update:modelValue', newContent);
+  
+  nextTick(() => {
+    editorContentRef.value?.focus();
+  });
+};
+
+// 设置字间距
+const setLetterSpacing = (spacing: string) => {
+  const selection = window.getSelection();
+  if (selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    const span = document.createElement('span');
+    span.style.letterSpacing = spacing;
+    range.surroundContents(span);
+    
+    // 获取应用格式化后的内容
+    const newContent = getFullContent();
+    
+    // 发出内容更新事件
+    emit('update:modelValue', newContent);
+  }
+  nextTick(() => {
+    editorContentRef.value?.focus();
+  });
+};
+
+// 设置行高
+const setLineHeight = (height: string) => {
+  const selection = window.getSelection();
+  if (selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    
+    // 检查选择是否包含多个段落或完整段落
+    let containsElement = false;
+    let startNode = range.startContainer;
+    
+    // 查找最近的块级元素
+    while (startNode && startNode !== editorContentRef.value?.editorRef) {
+      if (startNode.nodeType === Node.ELEMENT_NODE && 
+          ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'DIV'].includes(startNode.nodeName)) {
+        containsElement = true;
+        break;
+      }
+      startNode = startNode.parentNode;
+    }
+    
+    if (containsElement && startNode) {
+      // 如果选择包含完整段落，直接设置段落的行高
+      (startNode as HTMLElement).style.lineHeight = height;
+    } else {
+      // 创建一个包含选定内容的 span 元素
+      const span = document.createElement('span');
+      span.style.lineHeight = height;
+      span.style.display = 'inline-block';
+      span.style.width = '100%';
+      
+      try {
+        range.surroundContents(span);
+      } catch (e) {
+        console.error('Cannot surroundContents, selection may cross element boundaries', e);
+        // 备选方案：创建一个新的范围，提取内容，清除范围，插入 span
+        const fragment = range.extractContents();
+        span.appendChild(fragment);
+        range.insertNode(span);
+      }
+    }
+    
+    // 获取应用格式化后的内容
+    const newContent = getFullContent();
+    
+    // 发出内容更新事件
+    emit('update:modelValue', newContent);
+  }
+  nextTick(() => {
+    editorContentRef.value?.focus();
+  });
+};
+
+// 显示AI助手选择器
+const showAgentSelectorAt = (range) => {
+  // 保存当前选区范围
+  currentRange.value = range;
+  
+  // 先显示选择器，然后在下一帧计算位置
+  showAgentSelector.value = true;
+  
+  // 使用nextTick确保选择器DOM已经渲染
+  nextTick(() => {
+    // 选择器已经渲染完成，可以计算位置
+    if (mentionHandlerRef.value) {
+      mentionHandlerRef.value.updateSelectorPosition();
+    }
+  });
+};
+
+// 当选择了AI助手
+const onAgentSelected = (agent) => {
+  showAgentSelector.value = false;
+  
+  // 通过更新编辑器内容触发变更事件
+  setTimeout(() => {
+    const newContent = getFullContent();
+    emit('update:modelValue', newContent);
+    
+    // 给输入框一点时间来渲染，然后确保它获得焦点
+    setTimeout(() => {
+      // 查找刚刚添加的输入框并聚焦
+      const agentInputs = document.querySelectorAll('.agent-input');
+      if (agentInputs.length > 0) {
+        // 获取最后一个输入框（最新添加的）
+        const latestInput = agentInputs[agentInputs.length - 1] as HTMLInputElement;
+        if (latestInput) {
+          latestInput.focus();
+        }
+      }
+    }, 100);
+  }, 0);
+};
+
+// 更新字数计数
+const updateWordCount = (count: number) => {
+  wordCount.value = count;
+  emit('word-count', count);
+};
+
+// 处理输入更新
+const handleInputUpdate = ({ hasAgentMention, hasSendingIndicator, selection, content }) => {
+  // 根据编辑器内容更新UI状态
+  if (content) {
+    // 确保EditorContent组件内容被更新到父组件的modelValue
+    emit('update:modelValue', content);
+    console.log('Editor内容已更新，字符数:', content.length);
+  }
+};
+
+// 处理键盘按键事件
+const handleKeyDown = ({ event, editorRef, selection }) => {
+  // Enter 键按下时处理AI助手交互
+  if (event.key === 'Enter' && !event.shiftKey && !isComposing.value) {
+    const lastMention = agentResponseHandlerRef.value?.findLastMention(editorRef);
+    
+    if (lastMention && agentResponseHandlerRef.value && !agentResponseHandlerRef.value.isProcessing) {
+      // 检查光标是否在包含@提及的行上
+      const isInMentionLine = isCursorInSameLineWithMention(selection, lastMention);
+      
+      if (isInMentionLine) {
+        // 检查提及是否已被处理过
+        if (lastMention.getAttribute('data-processed') === 'true') {
+          console.log('该@提及已被处理过，忽略Enter键操作');
+          return; // 直接返回，不阻止默认换行行为
+        }
+        
+        // 获取用户输入
+        const userInput = agentResponseHandlerRef.value.extractUserInput(editorRef, lastMention);
+        
+        if (userInput && userInput.trim()) {
+          // 获取AI助手ID
+          const agentId = lastMention.getAttribute('data-agent-id');
+          
+          if (agentId) {
+            event.preventDefault(); // 阻止默认的换行行为
+            
+            // 将当前提及标记为已处理，防止重复触发
+            lastMention.setAttribute('data-processed', 'true');
+            
+            // 发送消息给AI助手，它会在当前位置插入响应
+            agentResponseHandlerRef.value.handleChat(agentId, userInput, editorRef);
+          }
+        }
+      }
+    }
+  }
+};
+
+// 检查光标是否在包含@提及的同一行
+const isCursorInSameLineWithMention = (selection, mention) => {
+  if (!selection || !selection.rangeCount || !mention) return false;
+  
+  // 检查提及是否已处理
+  if (mention.getAttribute('data-processed') === 'true') {
+    console.log('忽略已处理的@提及元素');
+    return false;
+  }
+  
+  // 获取当前光标所在的范围
+  const range = selection.getRangeAt(0);
+  const cursorNode = range.startContainer;
+  
+  // 获取光标所在的段落元素
+  let cursorParagraph = cursorNode;
+  while (cursorParagraph && cursorParagraph.nodeType !== Node.ELEMENT_NODE) {
+    cursorParagraph = cursorParagraph.parentNode;
+  }
+  
+  // 获取提及元素所在的段落
+  let mentionParagraph = mention;
+  while (mentionParagraph && mentionParagraph.nodeName !== 'P' && mentionParagraph.nodeName !== 'DIV') {
+    mentionParagraph = mentionParagraph.parentNode;
+  }
+  
+  // 判断光标和提及是否在同一个段落中
+  return cursorParagraph === mentionParagraph;
+};
+
+// 添加撤销和重做操作
+const undoAction = () => {
+  document.execCommand('undo', false);
+  nextTick(() => {
+    editorContentRef.value?.focus();
+  });
+};
+
+const redoAction = () => {
+  document.execCommand('redo', false);
+  nextTick(() => {
+    editorContentRef.value?.focus();
+  });
+};
+
+// 处理发送消息到Agent
+const handleSendToAgent = (data) => {
+  console.log('发送消息到Agent', data);
+  
+  // 获取AgentResponseHandler引用
+  const agentResponseHandler = agentResponseHandlerRef.value;
+  if (!agentResponseHandler) {
+    console.error('无法获取AgentResponseHandler引用');
+    return;
+  }
+  
+  // 调用AgentResponseHandler的handleInputChat方法
+  agentResponseHandler.handleInputChat(
+    data.inputElement,
+    data.agentId,
+    data.content,
+    data.containerElement
+  );
+};
+
+// 显示Agent输入弹窗
+const showAgentModalAt = (data) => {
+  console.log('显示Agent输入界面，接收到的定位数据:', data);
+  console.log('当前交互模式:', interactionMode.value);
+  
+  // 立即保存当前光标范围，避免位置丢失
+  if (data.range) {
+    try {
+      // 验证传入的范围是否有效
+      const container = data.range.startContainer;
+      if (document.contains(container)) {
+        // 克隆并保存当前范围
+        currentCursorRange.value = data.range.cloneRange();
+        console.log('[Editor.vue] 已保存光标位置，容器:', container.nodeName, '偏移:', data.range.startOffset);
+        
+        // 验证保存的范围
+        const testContainer = currentCursorRange.value.startContainer;
+        console.log('[Editor.vue] 验证保存的范围，容器:', testContainer.nodeName, '偏移:', currentCursorRange.value.startOffset);
+        
+        // 添加一个临时标记来验证位置
+        const debugSpan = document.createElement('span');
+        debugSpan.textContent = '🔍';
+        debugSpan.style.color = 'red';
+        debugSpan.style.fontSize = '10px';
+        debugSpan.id = 'debug-cursor-position';
+        
+        try {
+          const debugRange = currentCursorRange.value.cloneRange();
+          debugRange.insertNode(debugSpan);
+          console.log('[Editor.vue] 调试标记已插入，位置验证成功');
+          
+          // 2秒后移除调试标记
+          setTimeout(() => {
+            const debugElement = document.getElementById('debug-cursor-position');
+            if (debugElement && debugElement.parentNode) {
+              debugElement.parentNode.removeChild(debugElement);
+              console.log('[Editor.vue] 调试标记已移除');
+            }
+          }, 2000);
+        } catch (debugError) {
+          console.warn('[Editor.vue] 调试标记插入失败:', debugError);
+        }
+        
+      } else {
+        console.warn('[Editor.vue] 传入的范围容器不在文档中');
+        currentCursorRange.value = null;
+      }
+    } catch (error) {
+      console.warn('[Editor.vue] 无法保存光标位置:', error);
+      currentCursorRange.value = null;
+    }
+  } else {
+    // 如果没有传入范围，尝试获取当前选择
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      try {
+        const currentRange = selection.getRangeAt(0);
+        currentCursorRange.value = currentRange.cloneRange();
+        console.log('[Editor.vue] 从当前选择保存光标位置');
+      } catch (error) {
+        console.warn('[Editor.vue] 无法从当前选择保存光标位置:', error);
+        currentCursorRange.value = null;
+      }
+    } else {
+      console.warn('[Editor.vue] 没有可用的光标位置');
+      currentCursorRange.value = null;
+    }
+  }
+  
+  // 根据当前模式显示对应界面
+  if (interactionMode.value === 'sidebar') {
+    // 侧边栏模式：发射事件给父组件显示侧边栏
+    emit('toggle-sidebar-mode', {
+      currentMode: interactionMode.value,
+      showSidebar: true, // 明确表示要显示侧边栏
+      agentResponse: currentAgentResponse.value,
+      isAgentResponding: isAgentResponding.value,
+      historyIndex: historyDisplayIndex.value,
+      historyLength: conversationHistory.value.length
+    });
+    showAgentModal.value = false;
+    console.log('侧边栏模式：发射事件显示侧边栏');
+  } else {
+    // 弹窗模式：显示弹窗
+    // 设置弹窗位置（使用视口位置）
+    if (data.cursorPosition && data.cursorPosition.viewport) {
+      modalPosition.value = {
+        y: data.cursorPosition.viewport.y,
+        x: data.cursorPosition.viewport.x
+      };
+    }
+    
+    // 保存编辑器信息，用于计算输入框位置
+    if (data.editorInfo) {
+      editorInfo.value = {
+        ...data.editorInfo,
+        // 确保传递所有必要的编辑器信息
+        left: data.editorInfo.left,
+        right: data.editorInfo.right,
+        width: data.editorInfo.width,
+        editorOffsetLeft: data.editorInfo.editorOffsetLeft
+      };
+      
+      console.log('已更新编辑器信息:', editorInfo.value);
+    }
+    
+    // 显示弹窗
+    showAgentModal.value = true;
+    console.log('弹窗模式：显示弹窗');
+  }
+};
+
+// 处理Agent消息发送
+const handleAgentMessage = (data) => {
+  console.log('[Editor.vue] handleAgentMessage, data:', data);
+  console.log('[Editor.vue] Current conversationId:', props.conversationId);
+  
+  // 如果当前是侧边栏模式，发射事件给父组件
+  if (interactionMode.value === 'sidebar') {
+    emit('sidebar-send', {
+      ...data,
+      conversationId: props.conversationId,
+      noteId: props.noteId
+    });
+    return;
+  }
+  
+  // 弹窗模式下的原有逻辑
+  currentSentMessageData.value = data; // Store sent message data
+  isAgentResponding.value = true;
+  currentAgentResponse.value = ''; // Clear previous response
+
+  if (agentResponseHandlerRef.value) {
+    console.log('[Editor.vue] agentResponseHandlerRef.value is:', agentResponseHandlerRef.value);
+    
+    // 设置当前会话ID到AgentResponseHandler
+    if (typeof agentResponseHandlerRef.value.setConversationId === 'function') {
+      agentResponseHandlerRef.value.setConversationId(props.conversationId);
+      console.log('[Editor.vue] Set conversationId to AgentResponseHandler:', props.conversationId);
+    }
+    
+    // 设置当前笔记ID到AgentResponseHandler  
+    if (typeof agentResponseHandlerRef.value.setCurrentNoteId === 'function' && props.noteId) {
+      agentResponseHandlerRef.value.setCurrentNoteId(props.noteId);
+      console.log('[Editor.vue] Set noteId to AgentResponseHandler:', props.noteId);
+    }
+    
+    if (typeof agentResponseHandlerRef.value.triggerChatRequest === 'function') {
+      console.log('[Editor.vue] Calling agentResponseHandlerRef.value.triggerChatRequest');
+      agentResponseHandlerRef.value.triggerChatRequest(
+        data.agentId,
+        data.content
+      );
+    } else {
+      console.error('[Editor.vue] triggerChatRequest is NOT a function on agentResponseHandlerRef.value');
+      isAgentResponding.value = false;
+      currentAgentResponse.value = 'Error: Agent handler function not found.';
+    }
+  } else {
+    console.error('[Editor.vue] AgentResponseHandler ref not available at call time');
+    isAgentResponding.value = false;
+    currentAgentResponse.value = 'Error: Agent handler not ready.';
+  }
+};
+
+// Event Handlers for AgentResponseHandler events
+const onAgentResponseChunk = (chunk: string) => {
+  console.log('[Editor.vue] Received chunk:', chunk);
+  currentAgentResponse.value += chunk;
+};
+
+const onAgentToolStatus = (toolStatus: any) => {
+  console.log('[Editor.vue] Received tool status:', toolStatus);
+  currentToolStatus.value = toolStatus;
+  
+  // 如果弹窗模式下的AgentInputModal有handleToolStatus方法，调用它
+  if (showAgentModal.value && agentInputModalRef.value && typeof agentInputModalRef.value.handleToolStatus === 'function') {
+    agentInputModalRef.value.handleToolStatus(toolStatus);
+  }
+};
+
+// 处理笔记内容更新事件
+const onNoteContentUpdated = (updateData: any) => {
+  console.log('[Editor.vue] 收到笔记内容更新事件:', updateData);
+  
+  // 检查是否是当前笔记的更新
+  if (props.noteId && updateData.noteId && parseInt(props.noteId) === updateData.noteId) {
+    console.log('[Editor.vue] 更新当前笔记内容');
+    
+    // 更新编辑器内容
+    if (updateData.content !== undefined) {
+      emit('update:modelValue', updateData.content);
+      
+      // 如果标题也更新了，可以通过事件通知父组件
+      if (updateData.title) {
+        emit('title-updated', updateData.title);
+      }
+    }
+  }
+};
+
+const onAgentResponseComplete = (data: { responseText: string, conversationId?: string | number }) => {
+  console.log('[Editor.vue] Response complete:', data);
+  currentAgentResponse.value = data.responseText; // Chunk might have already built it
+  isAgentResponding.value = false;
+
+  // Add to history if there was a preceding user message data
+  if (currentSentMessageData.value && currentSentMessageData.value.content) {
+    console.log('[Editor.vue] Storing to history - User:', currentSentMessageData.value.content, 'Agent:', data.responseText);
+    conversationHistory.value.push({
+      user: currentSentMessageData.value.content,
+      agent: data.responseText
+    });
+    historyDisplayIndex.value = conversationHistory.value.length - 1;
+    // 重置加载标记，确保下次能够重新加载更新后的历史记录
+    lastLoadedSessionId.value = null;
+    console.log('[Editor.vue] Added to conversation history. New length:', conversationHistory.value.length, 'Current index:', historyDisplayIndex.value);
+  } else {
+    console.warn('[Editor.vue] No currentSentMessageData found, cannot save to history reliably.');
+    // Handle cases where AI responds without direct user input if necessary, 
+    // or simply update current response without adding to history.
+    // For now, if no user input, we might not want to push to history or reset index.
+  }
+
+  if (data.conversationId && props.conversationId !== data.conversationId) {
+    emit('update:conversationId', data.conversationId);
+    console.log('[Editor.vue] Updated conversationId to:', data.conversationId);
+  }
+  // TODO: Clear input in AgentInputModal if needed
+  // For example, if AgentInputModal has a ref and a clearInput method: agentInputModalRef.value.clearInput();
+};
+
+const onAgentResponseError = (error) => {
+  console.error('[Editor.vue] Agent response error:', error);
+  isAgentResponding.value = false;
+  currentAgentResponse.value = `抱歉，AI助手出错了: ${error.message || '未知错误'}`;
+};
+
+// New method for handling history navigation
+const handleHistoryNavigation = (payload: { direction: 'prev' | 'next' }) => {
+  // 如果当前是侧边栏模式，发射事件给父组件
+  if (interactionMode.value === 'sidebar') {
+    emit('sidebar-navigate-history', payload);
+    return;
+  }
+  
+  // 弹窗模式下的原有逻辑
+  if (!conversationHistory.value || conversationHistory.value.length === 0) return;
+
+  const { direction } = payload;
+  let newIndex = historyDisplayIndex.value;
+
+  if (direction === 'prev' && historyDisplayIndex.value > 0) {
+    newIndex--;
+  } else if (direction === 'next' && historyDisplayIndex.value < conversationHistory.value.length - 1) {
+    newIndex++;
+  }
+
+  if (newIndex !== historyDisplayIndex.value) {
+    historyDisplayIndex.value = newIndex;
+    const historicResponse = conversationHistory.value[newIndex].agent;
+    currentAgentResponse.value = historicResponse;
+    console.log('[Editor.vue] Displaying historic response:', historicResponse);
+    console.log('[Editor.vue] Full history for debugging:', JSON.parse(JSON.stringify(conversationHistory.value)));
+    console.log(`[Editor.vue] Navigated history to index: ${newIndex}. Displaying new agent response.`);
+  }
+};
+
+// Handler for inserting content from modal into editor
+const handleInsertResponse = async (responseText: string) => {
+  // 如果当前是侧边栏模式，发射事件给父组件
+  if (interactionMode.value === 'sidebar') {
+    emit('sidebar-insert', responseText);
+    return;
+  }
+  
+  // 弹窗模式下的原有逻辑
+  await insertContentAtCursor(responseText);
+};
+
+// 新增专门的插入方法，供外部直接调用，避免递归
+const insertContentAtCursor = async (responseText: string) => {
+  console.log('[Editor.vue] Request to insert:', responseText);
+  console.log('[Editor.vue] Current cursor range exists:', !!currentCursorRange.value);
+  
+  if (!editorContentRef.value || !responseText) {
+    console.warn('[Editor.vue] Editor instance or responseText not available for insert.');
+    if (!responseText) console.warn('[Editor.vue] responseText for insert is empty');
+    if (!editorContentRef.value) console.warn('[Editor.vue] editorContentRef.value is null');
+    return;
+  }
+
+  // 获取原生contenteditable元素
+  const editorElement = editorContentRef.value.editorRef;
+  if (!editorElement) {
+    console.warn('[Editor.vue] Editor element not found');
+    return;
+  }
+
+  try {
+    // 聚焦编辑器
+    editorElement.focus();
+
+    // 获取当前选择
+    const selection = window.getSelection();
+    let range = null;
+
+    // 首先检查是否有保存的光标位置
+    if (currentCursorRange.value) {
+      try {
+        // 检查保存的范围是否仍然有效
+        const container = currentCursorRange.value.startContainer;
+        const offset = currentCursorRange.value.startOffset;
+        
+        console.log('[Editor.vue] 检查保存的光标位置，容器:', container.nodeName, '偏移:', offset);
+        
+        // 验证保存的范围是否仍在文档中
+        if (document.contains(container)) {
+          // 验证偏移值是否在有效范围内
+          const maxOffset = container.nodeType === Node.TEXT_NODE 
+            ? container.textContent.length 
+            : container.childNodes.length;
+          
+          const validOffset = Math.min(offset, maxOffset);
+          
+          // 创建新的范围
+          range = document.createRange();
+          range.setStart(container, validOffset);
+          range.setEnd(container, validOffset);
+          
+          // 设置选择
+          selection.removeAllRanges();
+          selection.addRange(range);
+          console.log('[Editor.vue] 成功恢复保存的光标位置，偏移:', validOffset);
+        } else {
+          console.warn('[Editor.vue] 保存的光标位置已失效，容器不在文档中');
+          currentCursorRange.value = null;
+        }
+      } catch (e) {
+        console.warn('[Editor.vue] 保存的光标范围检查失败:', e);
+        currentCursorRange.value = null;
+      }
+    }
+
+    // 如果没有有效的保存范围，尝试使用当前选择
+    if (!range && selection.rangeCount > 0) {
+      range = selection.getRangeAt(0);
+      console.log('[Editor.vue] 使用当前选择位置');
+    }
+
+    // 如果仍然没有有效范围，寻找合适的插入位置
+    if (!range) {
+      console.log('[Editor.vue] 寻找合适的插入位置');
+      range = document.createRange();
+      
+      // 寻找合适的插入位置
+      const editableContent = editorElement.querySelector('.editable-content') || editorElement;
+      
+      // 先尝试找到调试标记的位置
+      const debugMarker = document.getElementById('debug-cursor-position');
+      if (debugMarker) {
+        console.log('[Editor.vue] 找到调试标记，在其位置插入');
+        range.setStartBefore(debugMarker);
+        range.setEndBefore(debugMarker);
+        
+        // 移除调试标记
+        if (debugMarker.parentNode) {
+          debugMarker.parentNode.removeChild(debugMarker);
+        }
+      } else {
+        // 没有调试标记，使用默认逻辑
+        const paragraphs = editableContent.querySelectorAll('p');
+        
+        if (paragraphs.length > 0) {
+          // 找到最后一个段落
+          const lastParagraph = paragraphs[paragraphs.length - 1];
+          
+          // 将光标设置到最后一个段落的末尾
+          if (lastParagraph.lastChild && lastParagraph.lastChild.nodeType === Node.TEXT_NODE) {
+            range.setStart(lastParagraph.lastChild, lastParagraph.lastChild.textContent.length);
+            range.setEnd(lastParagraph.lastChild, lastParagraph.lastChild.textContent.length);
+          } else {
+            range.selectNodeContents(lastParagraph);
+            range.collapse(false); // 移动到末尾
+          }
+          console.log('[Editor.vue] 插入位置设置到最后一个段落末尾');
+        } else {
+          // 如果没有段落，在可编辑区域开始处创建
+          range.selectNodeContents(editableContent);
+          range.collapse(true);
+          console.log('[Editor.vue] 插入位置设置到可编辑区域开始');
+        }
+      }
+      
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    console.log('[Editor.vue] 最终插入位置 - 容器:', range.startContainer.nodeName, '偏移:', range.startOffset);
+
+    // 检查内容是否包含markdown语法，如果是则先转换为HTML
+    let processedContent = responseText.trim();
+    let isMarkdownContent = false;
+    
+    // 检查是否包含markdown语法
+    const hasMarkdownSyntax = responseText.includes('```') || 
+                             responseText.includes('# ') || 
+                             responseText.includes('## ') || 
+                             responseText.includes('**') || 
+                             responseText.includes('*') ||
+                             responseText.includes('`') ||
+                             (responseText.includes('[') && responseText.includes(']('));
+    
+    if (hasMarkdownSyntax) {
+      try {
+        console.log('[Editor.vue] 检测到markdown语法，转换为HTML');
+        const { markdownToHtml } = await import('../../services/markdownService');
+        processedContent = markdownToHtml(responseText);
+        isMarkdownContent = true;
+        console.log('[Editor.vue] Markdown转换完成，HTML长度:', processedContent.length);
+      } catch (error) {
+        console.error('[Editor.vue] Markdown转换失败:', error);
+        // 转换失败时使用原始文本
+        processedContent = responseText.trim();
+        isMarkdownContent = false;
+      }
+    }
+    
+    // 删除选择的内容（如果有）
+    if (!range.collapsed) {
+      range.deleteContents();
+      console.log('[Editor.vue] 删除选中内容');
+    }
+
+    // 处理插入逻辑 - 如果光标在段落中间，需要特殊处理
+    const startContainer = range.startContainer;
+    const startOffset = range.startOffset;
+    
+    // 检查是否在文本节点中间
+    if (startContainer.nodeType === Node.TEXT_NODE && startOffset > 0 && startOffset < startContainer.textContent.length) {
+      console.log('[Editor.vue] 光标在文本节点中间，分割文本节点');
+      
+      // 分割当前文本节点
+      const textBefore = startContainer.textContent.substring(0, startOffset);
+      const textAfter = startContainer.textContent.substring(startOffset);
+      
+      // 创建新的段落来插入内容
+      const newParagraph = document.createElement('p');
+      
+      // 处理响应文本
+      if (isMarkdownContent) {
+        // 如果是HTML内容，直接解析并插入
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = processedContent;
+        
+        // 将HTML内容的第一个元素作为新段落
+        if (tempDiv.firstElementChild) {
+          const firstElement = tempDiv.firstElementChild;
+          newParagraph.innerHTML = firstElement.innerHTML;
+        } else {
+          newParagraph.innerHTML = processedContent;
+        }
+      } else {
+        // 纯文本处理
+        const paragraphs = processedContent.split(/\n\s*\n/).filter(p => p.trim());
+        if (paragraphs.length > 0) {
+          // 第一个段落继续当前行
+          const firstParagraph = paragraphs[0].trim().split('\n');
+          firstParagraph.forEach((line, lineIndex) => {
+            if (lineIndex > 0) {
+              newParagraph.appendChild(document.createElement('br'));
+            }
+            newParagraph.appendChild(document.createTextNode(line));
+          });
+        }
+      }
+      
+      // 更新当前文本节点为前半部分
+      startContainer.textContent = textBefore;
+      
+      // 创建包含后半部分文本的新文本节点
+      const afterTextNode = document.createTextNode(textAfter);
+      
+      // 找到当前段落
+      const currentParagraph = startContainer.parentElement;
+      
+      // 插入新段落
+      if (currentParagraph && currentParagraph.parentNode) {
+        // 在当前段落后插入新内容
+        currentParagraph.parentNode.insertBefore(newParagraph, currentParagraph.nextSibling);
+        
+        // 如果有后续文本，创建新段落
+        let afterParagraph = null;
+        if (textAfter.trim()) {
+          afterParagraph = document.createElement('p');
+          afterParagraph.appendChild(afterTextNode);
+          currentParagraph.parentNode.insertBefore(afterParagraph, newParagraph.nextSibling);
+        }
+        
+        // 处理剩余段落
+        if (isMarkdownContent) {
+          // HTML内容处理剩余元素
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = processedContent;
+          
+          let insertAfter = textAfter.trim() ? (afterParagraph || newParagraph) : newParagraph;
+          
+          // 跳过第一个元素（已经处理），插入剩余元素
+          const elements = Array.from(tempDiv.children);
+          for (let i = 1; i < elements.length; i++) {
+            const element = elements[i].cloneNode(true);
+            insertAfter.parentNode.insertBefore(element, insertAfter.nextSibling);
+            insertAfter = element;
+          }
+        } else {
+          // 纯文本处理剩余段落
+          const paragraphs = processedContent.split(/\n\s*\n/).filter(p => p.trim());
+          if (paragraphs.length > 1) {
+            let insertAfter = textAfter.trim() ? (afterParagraph || newParagraph) : newParagraph;
+            
+            for (let i = 1; i < paragraphs.length; i++) {
+              const p = document.createElement('p');
+              const lines = paragraphs[i].trim().split('\n');
+              lines.forEach((line, lineIndex) => {
+                if (lineIndex > 0) {
+                  p.appendChild(document.createElement('br'));
+                }
+                p.appendChild(document.createTextNode(line));
+              });
+              
+              insertAfter.parentNode.insertBefore(p, insertAfter.nextSibling);
+              insertAfter = p;
+            }
+          }
+        }
+        
+        // 设置光标到新内容的末尾
+        const finalParagraph = textAfter.trim() ? afterParagraph : newParagraph;
+        range.setStartAfter(finalParagraph);
+        range.setEndAfter(finalParagraph);
+      }
+    } else {
+      // 光标在段落开始或结束，使用原有逻辑
+      const fragment = document.createDocumentFragment();
+      
+      if (isMarkdownContent) {
+        // HTML内容处理
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = processedContent;
+        
+        // 将所有HTML元素添加到fragment中
+        while (tempDiv.firstChild) {
+          fragment.appendChild(tempDiv.firstChild);
+        }
+        console.log('[Editor.vue] 创建HTML内容片段');
+      } else {
+        // 纯文本处理 - 将响应文本按段落分割
+        const paragraphs = processedContent.split(/\n\s*\n/).filter(p => p.trim());
+        
+        if (paragraphs.length === 0) {
+          // 如果没有段落，插入一个空段落
+          const emptyP = document.createElement('p');
+          emptyP.innerHTML = '<br>';
+          fragment.appendChild(emptyP);
+          console.log('[Editor.vue] 插入空段落');
+        } else {
+          console.log('[Editor.vue] 创建', paragraphs.length, '个段落');
+          paragraphs.forEach((paragraph, index) => {
+            const p = document.createElement('p');
+            // 处理段落内的换行
+            const lines = paragraph.trim().split('\n');
+            lines.forEach((line, lineIndex) => {
+              if (lineIndex > 0) {
+                p.appendChild(document.createElement('br'));
+              }
+              p.appendChild(document.createTextNode(line));
+            });
+            fragment.appendChild(p);
+          });
+        }
+      }
+
+      // 插入内容
+      range.insertNode(fragment);
+      console.log('[Editor.vue] 内容已插入到DOM');
+
+      // 将光标移动到插入内容的末尾
+      range.collapse(false);
+    }
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+    console.log('[Editor.vue] 光标已移动到插入内容末尾');
+
+    // 清除保存的光标位置，避免后续插入出现问题
+    currentCursorRange.value = null;
+
+    // 触发输入事件以更新modelValue
+    const inputEvent = new Event('input', { bubbles: true });
+    editorElement.dispatchEvent(inputEvent);
+
+    console.log('[Editor.vue] Content inserted successfully at cursor position');
+    
+    // 插入内容后，先检查是否需要转换markdown，然后触发渲染
+    nextTick(async () => {
+      try {
+        console.log('插入内容后处理markdown');
+        
+        // 检查插入的内容是否包含markdown语法
+        const hasMarkdownSyntax = responseText.includes('```') || 
+                                 responseText.includes('# ') || 
+                                 responseText.includes('## ') || 
+                                 responseText.includes('**') || 
+                                 responseText.includes('*') ||
+                                 responseText.includes('`') ||
+                                 (responseText.includes('[') && responseText.includes(']('));
+        
+        if (hasMarkdownSyntax) {
+          console.log('检测到markdown语法，需要转换和渲染');
+          
+          // 导入markdown服务
+          const { markdownToHtml } = await import('../../services/markdownService');
+          
+          // 找到刚插入的内容并转换
+          const editorElement = editorContentRef.value.editorRef;
+          if (editorElement) {
+            // 获取当前编辑器的HTML内容
+            const currentHtml = editorElement.innerHTML;
+            
+            // 查找包含纯文本markdown的段落
+            const paragraphs = editorElement.querySelectorAll('p');
+            let needsUpdate = false;
+            
+            paragraphs.forEach(p => {
+              const textContent = p.textContent || '';
+              
+              // 检查段落是否包含markdown语法且还没有被渲染
+              if (textContent.includes('```') || textContent.includes('# ') || textContent.includes('## ')) {
+                try {
+                  // 转换markdown为HTML
+                  const htmlContent = markdownToHtml(textContent);
+                  
+                  // 如果转换后的内容不同，替换段落内容
+                  if (htmlContent !== textContent && htmlContent.trim() !== '') {
+                    console.log('转换段落markdown:', textContent.substring(0, 50) + '...');
+                    
+                    // 创建临时容器
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = htmlContent;
+                    
+                    // 替换段落内容
+                    while (p.firstChild) {
+                      p.removeChild(p.firstChild);
+                    }
+                    
+                    // 插入转换后的内容
+                    while (tempDiv.firstChild) {
+                      p.appendChild(tempDiv.firstChild);
+                    }
+                    
+                    needsUpdate = true;
+                  }
+                } catch (error) {
+                  console.error('转换段落markdown失败:', error);
+                }
+              }
+            });
+            
+            // 如果有更新，触发输入事件
+            if (needsUpdate) {
+              const inputEvent = new Event('input', { bubbles: true });
+              editorElement.dispatchEvent(inputEvent);
+            }
+          }
+        }
+        
+        // 最后触发渲染组件
+        console.log('触发markdown渲染');
+        const { renderContentComponents } = await import('../../services/renderService');
+        renderContentComponents(true);
+      } catch (error) {
+        console.error('处理插入的markdown内容失败:', error);
+      }
+    });
+
+  } catch (error) {
+    console.error('[Editor.vue] Error inserting content:', error);
+  }
+
+  // currentAgentResponse.value = ''; // Clear response from modal display - 注释掉，让内容插入后仍然保留
+  // showAgentModal.value = false; // Optionally close modal after insert
+};
+
+// 处理笔记编辑预览事件
+const onNoteEditPreview = (previewData: any) => {
+  console.log('[Editor.vue] 收到笔记编辑预览事件:', previewData);
+  
+  // 检查是否是当前笔记的预览
+  if (props.noteId && previewData.noteId && parseInt(props.noteId) === previewData.noteId) {
+    console.log('[Editor.vue] 显示当前笔记的编辑预览');
+    
+    // 保存预览数据
+    pendingEditData.value = previewData;
+    originalContentForPreview.value = props.modelValue || '';
+    
+    // 直接在编辑器中插入高亮的预览内容
+    insertPreviewContentInEditor(previewData);
+  } else {
+    console.log('[Editor.vue] 预览数据不匹配当前笔记，忽略预览');
+  }
+};
+
+// 直接在编辑器中插入高亮预览内容
+const insertPreviewContentInEditor = (previewData: any) => {
+  console.log('[Editor.vue] 在编辑器中插入内联预览内容');
+  
+  const editorElement = editorContentRef.value?.editorRef;
+  if (!editorElement) {
+    console.warn('[Editor.vue] 无法找到编辑器元素');
+    return;
+  }
+  
+  try {
+    // 清除任何现有的预览内容
+    clearExistingPreview();
+    
+    // 保存原始内容
+    const originalContent = editorElement.innerHTML;
+    
+    // 根据编辑类型处理内容
+    if (previewData.editType === 'replace') {
+      // 替换模式：用高亮的新内容替换现有内容
+      showReplacePreview(editorElement, previewData);
+    } else if (previewData.editType === 'append') {
+      // 追加模式：在末尾添加高亮内容
+      showAppendPreview(editorElement, previewData);
+    } else if (previewData.editType === 'prepend') {
+      // 前置模式：在开头添加高亮内容
+      showPrependPreview(editorElement, previewData);
+    } else {
+      // 默认插入模式
+      showInsertPreview(editorElement, previewData);
+    }
+    
+    // 添加操作按钮到编辑器右上角
+    addFloatingActionButtons(previewData, originalContent);
+    
+    console.log('[Editor.vue] 内联预览已显示');
+    
+  } catch (error) {
+    console.error('[Editor.vue] 显示内联预览失败:', error);
+  }
+};
+
+// 显示替换预览
+const showReplacePreview = (editorElement: HTMLElement, previewData: any) => {
+  // 将整个编辑器内容用删除线标记，并在下方显示新内容
+  const currentContent = editorElement.innerHTML;
+  
+  editorElement.innerHTML = `
+    <div class="preview-deleted-content">
+      ${currentContent}
+    </div>
+    <div class="preview-added-content">
+      ${previewData.content}
+    </div>
+  `;
+};
+
+// 显示追加预览
+const showAppendPreview = (editorElement: HTMLElement, previewData: any) => {
+  // 在编辑器末尾添加高亮的新内容
+  const newContentDiv = document.createElement('div');
+  newContentDiv.className = 'preview-added-content';
+  newContentDiv.innerHTML = previewData.content;
+  
+  editorElement.appendChild(newContentDiv);
+};
+
+// 显示前置预览
+const showPrependPreview = (editorElement: HTMLElement, previewData: any) => {
+  // 在编辑器开头添加高亮的新内容
+  const newContentDiv = document.createElement('div');
+  newContentDiv.className = 'preview-added-content';
+  newContentDiv.innerHTML = previewData.content;
+  
+  editorElement.insertBefore(newContentDiv, editorElement.firstChild);
+};
+
+// 显示插入预览
+const showInsertPreview = (editorElement: HTMLElement, previewData: any) => {
+  // 在当前光标位置插入高亮内容
+  const selection = window.getSelection();
+  if (selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    
+    const newContentSpan = document.createElement('span');
+    newContentSpan.className = 'preview-added-content inline';
+    newContentSpan.innerHTML = previewData.content;
+    
+    range.insertNode(newContentSpan);
+  } else {
+    // 如果没有选择，追加到末尾
+    showAppendPreview(editorElement, previewData);
+  }
+};
+
+// 添加浮动操作按钮
+const addFloatingActionButtons = (previewData: any, originalContent: string) => {
+  // 创建浮动按钮容器
+  const buttonContainer = document.createElement('div');
+  buttonContainer.className = 'preview-floating-buttons';
+  buttonContainer.setAttribute('data-preview-buttons', 'true');
+  
+  // 创建按钮组
+  const buttonGroup = document.createElement('div');
+  buttonGroup.className = 'button-group';
+  
+  // 创建接受按钮
+  const acceptButton = document.createElement('button');
+  acceptButton.className = 'preview-action-btn accept';
+  acceptButton.innerHTML = '✓ 接受编辑';
+  acceptButton.onclick = () => handleAcceptInlinePreview(previewData);
+  
+  // 创建拒绝按钮
+  const rejectButton = document.createElement('button');
+  rejectButton.className = 'preview-action-btn reject';
+  rejectButton.innerHTML = '✗ 拒绝编辑';
+  rejectButton.onclick = () => handleRejectInlinePreview(originalContent);
+  
+  buttonGroup.appendChild(acceptButton);
+  buttonGroup.appendChild(rejectButton);
+  buttonContainer.appendChild(buttonGroup);
+  
+  // 添加到编辑器容器
+  const editorContainer = document.querySelector('.editor-main');
+  if (editorContainer) {
+    editorContainer.appendChild(buttonContainer);
+  }
+};
+
+// 清除现有的预览内容
+const clearExistingPreview = () => {
+  // 清除预览内容标记
+  const previewContents = document.querySelectorAll('.preview-added-content, .preview-deleted-content');
+  previewContents.forEach(element => {
+    if (element.parentNode) {
+      // 对于内联元素，用文本内容替换
+      if (element.classList.contains('inline')) {
+        const textNode = document.createTextNode(element.textContent || '');
+        element.parentNode.replaceChild(textNode, element);
+      } else {
+        element.parentNode.removeChild(element);
+      }
+    }
+  });
+  
+  // 清除浮动按钮
+  const buttonContainers = document.querySelectorAll('[data-preview-buttons]');
+  buttonContainers.forEach(container => {
+    if (container.parentNode) {
+      container.parentNode.removeChild(container);
+    }
+  });
+};
+
+// 处理接受预览
+const handleAcceptInlinePreview = async (previewData: any) => {
+  console.log('[Editor.vue] 用户接受内联预览编辑');
+  
+  try {
+    // 清除预览内容
+    clearExistingPreview();
+    
+    // 调用后端API应用预览编辑
+    if (props.noteId) {
+      await noteService.applyEditPreview(parseInt(props.noteId), {
+        content: previewData.content,
+        title: previewData.title
+      });
+      
+      console.log('[Editor.vue] 预览编辑已应用并保存到服务器');
+    }
+    
+    // 更新编辑器内容
+    emit('update:modelValue', previewData.content);
+    
+    // 如果标题也更新了，通知父组件
+    if (previewData.title) {
+      emit('title-updated', previewData.title);
+    }
+    
+    // 清理状态
+    pendingEditData.value = null;
+    originalContentForPreview.value = '';
+    
+    showSuccessMessage('编辑已应用并保存');
+    
+  } catch (error) {
+    console.error('[Editor.vue] 应用编辑失败:', error);
+    showErrorMessage('应用编辑失败，请重试');
+  }
+};
+
+// 处理拒绝预览
+const handleRejectInlinePreview = (originalContent: string) => {
+  console.log('[Editor.vue] 用户拒绝内联预览编辑');
+  
+  // 恢复原始内容
+  const editorElement = editorContentRef.value?.editorRef;
+  if (editorElement) {
+    editorElement.innerHTML = originalContent;
+  }
+  
+  // 清除预览内容
+  clearExistingPreview();
+  
+  // 清理状态
+  pendingEditData.value = null;
+  originalContentForPreview.value = '';
+  
+  showInfoMessage('编辑已取消');
+};
+
+// 显示消息的辅助方法
+const showSuccessMessage = (message: string) => {
+  // TODO: 实现成功消息显示，可以使用现有的通知系统
+  console.log('[Success]', message);
+};
+
+const showErrorMessage = (message: string) => {
+  // TODO: 实现错误消息显示
+  console.error('[Error]', message);
+};
+
+const showInfoMessage = (message: string) => {
+  // TODO: 实现信息消息显示
+  console.log('[Info]', message);
+};
+
+// 组件挂载后聚焦编辑器
+onMounted(() => {
+  nextTick(() => {
+    editorContentRef.value?.focus();
+    
+    // 初始化AgentResponseHandler的会话ID和笔记ID
+    if (agentResponseHandlerRef.value) {
+      if (typeof agentResponseHandlerRef.value.setConversationId === 'function') {
+        agentResponseHandlerRef.value.setConversationId(props.conversationId);
+        console.log('[Editor.vue] onMounted: Set conversationId to AgentResponseHandler:', props.conversationId);
+      }
+      
+      if (typeof agentResponseHandlerRef.value.setCurrentNoteId === 'function' && props.noteId) {
+        agentResponseHandlerRef.value.setCurrentNoteId(props.noteId);
+        console.log('[Editor.vue] onMounted: Set noteId to AgentResponseHandler:', props.noteId);
+      }
+    }
+    
+    // 处理已有的代码块和图表，但延迟执行避免初始化时触发递归更新
+    if (agentResponseHandlerRef.value) {
+      // 延迟更长时间，确保初始渲染完成
+      setTimeout(() => {
+        try {
+          // 先检查是否有需要处理的代码块
+          const hasUnprocessedBlocks = document.querySelectorAll('pre > code:not(.processed-code-block)').length > 0;
+          // 检查是否有markdown代码块(可能是思维导图)
+          const hasMarkdownBlocks = document.querySelectorAll('pre > code.language-markdown, pre > code.language-md').length > 0;
+          
+          if (hasUnprocessedBlocks || hasMarkdownBlocks) {
+            console.log('编辑器加载完成，处理已有代码块和思维导图');
+            
+            // 分别处理各个功能，捕获可能的错误
+            try {
+              // 确保代码块有语言标识
+              agentResponseHandlerRef.value.ensureCodeBlocksHaveLanguage();
+            } catch (e) {
+              console.error('代码语言识别错误:', e);
+            }
+            
+            try {
+              // 使用CodeBlock组件替换代码块
+              agentResponseHandlerRef.value.setupCodeBlocks();
+            } catch (e) {
+              console.error('设置代码块组件错误:', e);
+            }
+            
+            try {
+              // 渲染Mermaid图表
+              agentResponseHandlerRef.value.renderMermaidDiagrams();
+            } catch (e) {
+              console.error('渲染图表错误:', e);
+            }
+          }
+          
+          // 检查是否有符合思维导图格式的段落
+          const paragraphs = document.querySelectorAll('p');
+          let foundMindmap = false;
+          
+          for (const p of paragraphs) {
+            const content = p.textContent || '';
+            if (content.match(/^#\s+.+/m) && content.match(/^#{2,}\s+.+/m)) {
+              foundMindmap = true;
+              break;
+            }
+          }
+          
+          if (foundMindmap) {
+            console.log('检测到思维导图内容，处理思维导图');
+            
+            // 处理可能的思维导图内容
+            const mindmapContent = document.querySelector('.agent-response-paragraph')?.innerHTML;
+            if (mindmapContent) {
+              agentResponseHandlerRef.value.processRenderedHtml(
+                mindmapContent, 
+                document.querySelector('.agent-response-paragraph')
+              );
+            }
+          }
+        } catch (error) {
+          console.error('初始化处理代码块时出错:', error);
+        }
+      }, 1500); // 进一步延长延迟时间，确保初始化完成
+    }
+  });
+});
+
+// 暴露编辑器内容组件方法给父组件
+defineExpose({
+  onNoteEditPreview,
+  focus: () => editorContentRef.value?.focus(),
+  getContent: () => getFullContent(),
+  setContent: (content: string) => emit('update:modelValue', content)
+});
+</script>
+
+<style>
+.editor-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%; /* 改为100%，适应父容器高度 */
+  position: relative;
+  overflow: hidden; /* 改为hidden，避免冲突 */
+}
+
+.editor-toolbar-fixed {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: #f9f9f9;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  flex-shrink: 0; /* 确保工具栏不会收缩 */
+}
+
+.editor-content-wrapper {
+  display: flex;
+  flex: 1;
+  position: relative;
+  overflow: hidden; /* 改为hidden，让父容器控制滚动 */
+  min-width: 0; /* 允许flex子元素收缩 */
+  min-height: 0; /* 允许flex子元素收缩 */
+}
+
+.document-outline {
+  flex-shrink: 0;
+  position: sticky;
+  top: 60px; /* 工具栏高度 */
+  align-self: flex-start;
+  max-height: calc(100vh - 60px); /* 使用max-height而不是固定height */
+  overflow-y: auto; /* 大纲内容如果过长，允许滚动 */
+}
+
+/* 大纲滚动条美化 */
+.document-outline::-webkit-scrollbar {
+  width: 4px;
+}
+
+.document-outline::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 2px;
+}
+
+.document-outline::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  transition: background 0.2s ease;
+}
+
+.document-outline::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Firefox 大纲滚动条样式 */
+.document-outline {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+}
+
+.editor-main {
+  flex: 1;
+  position: relative;
+  overflow-y: auto; /* 改为auto，允许编辑器内容滚动 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* 允许收缩 */
+}
+
+/* 美化滚动条样式 */
+.editor-main::-webkit-scrollbar {
+  width: 6px;
+}
+
+.editor-main::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 3px;
+}
+
+.editor-main::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.editor-main::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.editor-main::-webkit-scrollbar-thumb:active {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+/* Firefox 滚动条样式 */
+.editor-main {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.editor-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 90;
+  background-color: white;
+  border-top: 1px solid #eee;
+  padding: 10px 20px;
+  display: flex;
+  justify-content: space-between;
+  color: #888;
+  font-size: 14px;
+  margin-top: auto;
+  flex-shrink: 0; /* 确保底部栏不会收缩 */
+}
+
+/* 编辑器工具栏样式 */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #e0e0e0;
+  border-radius: 4px 4px 0 0;
+  font-size: 14px;
+}
+
+/* 预览效果样式 */
+:deep(.note-edit-preview-inline) {
+  margin: 16px 0;
+  border: 2px solid #3b82f6;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(147, 197, 253, 0.05) 100%);
+  animation: preview-glow 2s infinite;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+  overflow: hidden;
+}
+
+:deep(.preview-content-highlight) {
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+}
+
+:deep(.preview-label) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #1d4ed8;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+:deep(.preview-icon) {
+  font-size: 16px;
+}
+
+:deep(.preview-text) {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+:deep(.preview-content) {
+  color: #374151;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border-left: 4px solid #3b82f6;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+:deep(.preview-buttons) {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  background: rgba(249, 250, 251, 0.8);
+  border-top: 1px solid rgba(59, 130, 246, 0.2);
+  justify-content: flex-end;
+}
+
+:deep(.preview-btn) {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 80px;
+  justify-content: center;
+}
+
+:deep(.accept-btn) {
+  background: #10b981;
+  color: white;
+}
+
+:deep(.accept-btn:hover) {
+  background: #059669;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(16, 185, 129, 0.3);
+}
+
+:deep(.reject-btn) {
+  background: #ef4444;
+  color: white;
+}
+
+:deep(.reject-btn:hover) {
+  background: #dc2626;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(239, 68, 68, 0.3);
+}
+
+@keyframes preview-glow {
+  0%, 100% { 
+    border-color: #3b82f6;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+  }
+  50% { 
+    border-color: #60a5fa;
+    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.25);
+  }
+}
+
+/* 内联预览效果样式 */
+:deep(.preview-added-content) {
+  background: rgba(34, 197, 94, 0.15);
+  border-left: 3px solid #22c55e;
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 4px;
+  position: relative;
+  animation: preview-highlight 2s ease-in-out infinite;
+}
+
+:deep(.preview-added-content.inline) {
+  display: inline;
+  padding: 2px 6px;
+  margin: 0 2px;
+  background: rgba(34, 197, 94, 0.2);
+  border-radius: 3px;
+  border-left: none;
+}
+
+:deep(.preview-deleted-content) {
+  background: rgba(239, 68, 68, 0.15);
+  border-left: 3px solid #ef4444;
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 4px;
+  text-decoration: line-through;
+  opacity: 0.7;
+  position: relative;
+}
+
+/* 浮动操作按钮 */
+:deep(.preview-floating-buttons) {
+  position: fixed;
+  top: 100px;
+  right: 20px;
+  z-index: 1000;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+:deep(.button-group) {
+  display: flex;
+  gap: 8px;
+}
+
+:deep(.preview-action-btn) {
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 100px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+:deep(.preview-action-btn.accept) {
+  background: #22c55e;
+  color: white;
+}
+
+:deep(.preview-action-btn.accept:hover) {
+  background: #16a34a;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(34, 197, 94, 0.3);
+}
+
+:deep(.preview-action-btn.reject) {
+  background: #ef4444;
+  color: white;
+}
+
+:deep(.preview-action-btn.reject:hover) {
+  background: #dc2626;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(239, 68, 68, 0.3);
+}
+
+@keyframes preview-highlight {
+  0%, 100% { 
+    background: rgba(34, 197, 94, 0.15);
+    border-left-color: #22c55e;
+  }
+  50% { 
+    background: rgba(34, 197, 94, 0.25);
+    border-left-color: #16a34a;
+  }
+}
+</style> 

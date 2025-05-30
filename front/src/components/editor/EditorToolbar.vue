@@ -220,17 +220,17 @@
       class="toolbar-button mode-toggle-button" 
       :class="{ 'clicking': isToggling }"
       @click="handleToggleModeClick" 
-      :title="interactionMode === 'sidebar' ? '切换到弹窗模式' : '切换到侧边栏模式'"
+      :title="props.interactionMode === 'sidebar' ? '切换到弹窗模式' : '切换到侧边栏模式'"
     >
       <Transition name="icon-fade" mode="out-in">
-        <message-outlined v-if="interactionMode === 'modal'" key="modal" />
+        <message-outlined v-if="props.interactionMode === 'modal'" key="modal" />
         <windows-outlined v-else key="sidebar" />
       </Transition>
       
       <!-- 状态提示 -->
       <Transition name="mode-tip">
         <div v-if="showModeTip" class="mode-tip">
-          {{ interactionMode === 'sidebar' ? '侧边栏模式' : '弹窗模式' }}
+          {{ props.interactionMode === 'sidebar' ? '侧边栏模式' : '弹窗模式' }}
         </div>
       </Transition>
     </button>
@@ -267,7 +267,7 @@ import { ref } from 'vue';
 import uploadService from '../../services/uploadService';
 import { message } from 'ant-design-vue';
 
-defineProps({
+const props = defineProps({
   editorRef: {
     type: Object,
     required: false
@@ -556,6 +556,8 @@ const isToggling = ref(false);
 const showModeTip = ref(false);
 
 const handleToggleModeClick = () => {
+  console.log('[EditorToolbar] 按钮被点击，当前模式:', props.interactionMode);
+  
   // 立即开始点击动画
   isToggling.value = true;
   
@@ -565,6 +567,7 @@ const handleToggleModeClick = () => {
   }, 200);
   
   // 发射切换事件
+  console.log('[EditorToolbar] 发射toggle-sidebar-mode事件');
   emit('toggle-sidebar-mode');
   
   // 停止点击动画

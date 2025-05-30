@@ -131,24 +131,63 @@ class ChatToolHandler:
                     if not db:
                         tool_result = {"error": "数据库连接不可用"}
                     else:
-                        # 创建笔记阅读工具实例
-                        note_reader = tools_service.get_tool(
-                            "note_reader", 
-                            config={"db_session": db, "conversation_id": conversation_id}
-                        )
-                        
-                        if note_reader:
-                            api_logger.info("笔记阅读工具开始执行")
-                            # 执行笔记读取
-                            tool_result = await note_reader.read_note(
-                                note_id=function_args.get("note_id"),
-                                search_title=function_args.get("search_title"),
-                                start_line=function_args.get("start_line", 1),
-                                line_count=function_args.get("line_count", -1),
-                                include_metadata=function_args.get("include_metadata", True)
+                        try:
+                            # 创建笔记阅读工具实例
+                            note_reader = tools_service.get_tool(
+                                "note_reader", 
+                                config={"db_session": db, "conversation_id": conversation_id}
                             )
-                        else:
-                            tool_result = {"error": "无法创建笔记阅读工具实例"}
+                            
+                            if note_reader:
+                                api_logger.info("笔记阅读工具开始执行")
+                                # 确保在正确的异步上下文中执行笔记读取
+                                tool_result = await note_reader.read_note(
+                                    note_id=function_args.get("note_id"),
+                                    search_title=function_args.get("search_title"),
+                                    start_line=function_args.get("start_line", 1),
+                                    line_count=function_args.get("line_count", -1),
+                                    include_metadata=function_args.get("include_metadata", True)
+                                )
+                                api_logger.info(f"笔记阅读工具执行完成，结果类型: {type(tool_result)}")
+                            else:
+                                tool_result = {"error": "无法创建笔记阅读工具实例"}
+                        except Exception as e:
+                            api_logger.error(f"笔记阅读工具执行异常: {str(e)}", exc_info=True)
+                            tool_result = {"error": f"笔记阅读失败: {str(e)}"}
+                
+                elif function_name == "note_editor":
+                    # 笔记编辑工具需要特殊处理，因为需要数据库会话
+                    if not db:
+                        tool_result = {"error": "数据库连接不可用"}
+                    else:
+                        try:
+                            # 创建笔记编辑工具实例
+                            note_editor = tools_service.get_tool(
+                                "note_editor", 
+                                config={"db_session": db, "conversation_id": conversation_id}
+                            )
+                            
+                            if note_editor:
+                                api_logger.info("笔记编辑工具开始执行")
+                                # 确保在正确的异步上下文中执行笔记编辑
+                                tool_result = await note_editor.edit_note(
+                                    note_id=function_args.get("note_id"),
+                                    search_title=function_args.get("search_title"),
+                                    edit_type=function_args.get("edit_type", "replace"),
+                                    content=function_args.get("content"),
+                                    title=function_args.get("title"),
+                                    start_line=function_args.get("start_line"),
+                                    end_line=function_args.get("end_line"),
+                                    insert_position=function_args.get("insert_position"),
+                                    search_text=function_args.get("search_text"),
+                                    replace_text=function_args.get("replace_text")
+                                )
+                                api_logger.info(f"笔记编辑工具执行完成，结果类型: {type(tool_result)}")
+                            else:
+                                tool_result = {"error": "无法创建笔记编辑工具实例"}
+                        except Exception as e:
+                            api_logger.error(f"笔记编辑工具执行异常: {str(e)}", exc_info=True)
+                            tool_result = {"error": f"笔记编辑失败: {str(e)}"}
                 
                 # 更新状态为完成
                 tool_call_data["status"] = "completed"

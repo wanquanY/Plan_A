@@ -246,4 +246,200 @@ async def delete_note(
         return SuccessResponse(msg="笔记删除成功")
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"删除笔记时发生错误: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"删除笔记时发生错误: {str(e)}")
+
+
+@router.post("/{note_id}/edit")
+async def edit_note_by_agent(
+    note_id: int,
+    edit_data: dict,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Agent编辑笔记内容的专用端点"""
+    try:
+        # 验证笔记存在且属于当前用户
+        stmt = select(Note).where(
+            Note.id == note_id,
+            Note.user_id == current_user.id,
+            Note.is_deleted == False
+        )
+        note_result = await db.execute(stmt)
+        note = note_result.scalar_one_or_none()
+        
+        if not note:
+            return ErrorResponse(msg="笔记不存在或已删除")
+        
+        # 获取编辑参数
+        edit_type = edit_data.get("edit_type", "replace")
+        content = edit_data.get("content")
+        title = edit_data.get("title")
+        start_line = edit_data.get("start_line")
+        end_line = edit_data.get("end_line")
+        insert_position = edit_data.get("insert_position")
+        search_text = edit_data.get("search_text")
+        replace_text = edit_data.get("replace_text")
+        
+        # 记录编辑前的状态
+        original_content = note.content or ""
+        original_title = note.title or ""
+        
+        # 执行编辑操作
+        new_content = original_content
+        new_title = title if title is not None else original_title
+        
+        if edit_type == "replace":
+            # 完全替换内容
+            if content is not None:
+                new_content = content
+                
+        elif edit_type == "append":
+            # 追加内容
+            if content is not None:
+                new_content = original_content + "\n" + content if original_content else content
+                
+        elif edit_type == "prepend":
+            # 前置内容
+            if content is not None:
+                new_content = content + "\n" + original_content if original_content else content
+                
+        elif edit_type == "insert":
+            # 在指定位置插入内容
+            if content is not None and insert_position:
+                lines = original_content.split('\n')
+                
+                if insert_position == "start":
+                    new_content = content + "\n" + original_content if original_content else content
+                elif insert_position == "end":
+                    new_content = original_content + "\n" + content if original_content else content
+                elif insert_position.startswith("after_line:"):
+                    try:
+                        line_num = int(insert_position.split(":")[1])
+                        if 0 <= line_num <= len(lines):
+                            lines.insert(line_num, content)
+                            new_content = '\n'.join(lines)
+                        else:
+                            return ErrorResponse(msg=f"行号 {line_num} 超出范围")
+                    except ValueError:
+                        return ErrorResponse(msg="无效的行号格式")
+                elif insert_position.startswith("before_line:"):
+                    try:
+                        line_num = int(insert_position.split(":")[1])
+                        if 1 <= line_num <= len(lines) + 1:
+                            lines.insert(line_num - 1, content)
+                            new_content = '\n'.join(lines)
+                        else:
+                            return ErrorResponse(msg=f"行号 {line_num} 超出范围")
+                    except ValueError:
+                        return ErrorResponse(msg="无效的行号格式")
+                else:
+                    return ErrorResponse(msg="无效的插入位置格式")
+                    
+        elif edit_type == "replace_lines":
+            # 替换指定行范围
+            if content is not None and start_line is not None:
+                lines = original_content.split('\n')
+                end_line_actual = end_line if end_line is not None else start_line
+                
+                if 1 <= start_line <= len(lines) and 1 <= end_line_actual <= len(lines):
+                    # 替换指定行范围
+                    new_lines = content.split('\n')
+                    lines[start_line-1:end_line_actual] = new_lines
+                    new_content = '\n'.join(lines)
+                else:
+                    return ErrorResponse(msg=f"行号范围 {start_line}-{end_line_actual} 超出范围")
+                    
+        elif edit_type == "replace_text":
+            # 替换指定文本
+            if search_text is not None and replace_text is not None:
+                if search_text in original_content:
+                    new_content = original_content.replace(search_text, replace_text)
+                else:
+                    return ErrorResponse(msg=f"未找到要替换的文本: {search_text}")
+            else:
+                return ErrorResponse(msg="replace_text 类型需要提供 search_text 和 replace_text 参数")
+        else:
+            return ErrorResponse(msg=f"不支持的编辑类型: {edit_type}")
+        
+        # 更新笔记
+        note.content = new_content
+        note.title = new_title
+        
+        await db.commit()
+        await db.refresh(note)
+        
+        # 计算变化统计
+        original_lines = original_content.split('\n')
+        new_lines = new_content.split('\n')
+        
+        return SuccessResponse(
+            data={
+                "note_id": note.id,
+                "title": note.title,
+                "edit_type": edit_type,
+                "changes": {
+                    "original_length": len(original_content),
+                    "new_length": len(new_content),
+                    "original_lines": len(original_lines),
+                    "new_lines": len(new_lines),
+                    "title_changed": original_title != new_title
+                },
+                "updated_at": note.updated_at.isoformat() if note.updated_at else None,
+                "content": new_content  # 返回完整的新内容供前端更新
+            },
+            msg="笔记编辑成功"
+        )
+        
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"编辑笔记时发生错误: {str(e)}")
+
+
+@router.post("/{note_id}/apply-edit")
+async def apply_edit_preview(
+    note_id: int,
+    edit_data: dict,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user)
+):
+    """应用预览编辑到笔记"""
+    try:
+        # 验证笔记存在且属于当前用户
+        stmt = select(Note).where(
+            Note.id == note_id,
+            Note.user_id == current_user.id,
+            Note.is_deleted == False
+        )
+        note_result = await db.execute(stmt)
+        note = note_result.scalar_one_or_none()
+        
+        if not note:
+            return ErrorResponse(msg="笔记不存在或已删除")
+        
+        # 应用编辑
+        if edit_data.get("content") is not None:
+            note.content = edit_data["content"]
+        
+        if edit_data.get("title") is not None:
+            note.title = edit_data["title"]
+        
+        # 保存更改
+        await db.commit()
+        await db.refresh(note)
+        
+        api_logger.info(f"用户 {current_user.id} 应用预览编辑到笔记 {note_id}")
+        
+        return SuccessResponse(
+            data={
+                "id": note.id,
+                "title": note.title,
+                "content": note.content,
+                "updated_at": note.updated_at.isoformat() if note.updated_at else None
+            },
+            msg="编辑已应用并保存"
+        )
+        
+    except Exception as e:
+        api_logger.error(f"应用预览编辑失败: {str(e)}", exc_info=True)
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"应用编辑时发生错误: {str(e)}") 

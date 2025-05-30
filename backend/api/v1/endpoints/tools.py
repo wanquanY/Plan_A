@@ -126,7 +126,7 @@ async def extract(
     )
 
 
-@router.get("/tools", response_model=List[Dict[str, Any]])
+@router.get("/", response_model=List[Dict[str, Any]])
 async def get_tools_list(
     current_user: User = Depends(get_current_active_user)
 ):
@@ -144,7 +144,7 @@ async def get_tools_list(
             detail="获取工具列表失败"
         )
 
-@router.get("/tools/grouped", response_model=Dict[str, List[Dict[str, Any]]])
+@router.get("/grouped", response_model=Dict[str, List[Dict[str, Any]]])
 async def get_tools_grouped_by_provider(
     current_user: User = Depends(get_current_active_user)
 ):
@@ -162,7 +162,7 @@ async def get_tools_grouped_by_provider(
             detail="获取分组工具列表失败"
         )
 
-@router.get("/tools/providers", response_model=Dict[str, Dict[str, Any]])
+@router.get("/providers", response_model=Dict[str, Dict[str, Any]])
 async def get_tool_providers(
     current_user: User = Depends(get_current_active_user)
 ):
@@ -180,7 +180,7 @@ async def get_tool_providers(
             detail="获取工具提供商信息失败"
         )
 
-@router.post("/tools/validate", response_model=Dict[str, Any])
+@router.post("/validate", response_model=Dict[str, Any])
 async def validate_tools_config(
     tools_config: Dict[str, Any],
     current_user: User = Depends(get_current_active_user)
@@ -199,7 +199,7 @@ async def validate_tools_config(
             detail="验证工具配置失败"
         )
 
-@router.post("/tools/convert", response_model=Dict[str, Any])
+@router.post("/convert", response_model=Dict[str, Any])
 async def convert_provider_config_to_tool_config(
     provider_config: Dict[str, Any],
     current_user: User = Depends(get_current_active_user)
@@ -222,7 +222,7 @@ async def convert_provider_config_to_tool_config(
             detail="转换配置格式失败"
         )
 
-@router.get("/tools/default-config", response_model=Dict[str, Any])
+@router.get("/default-config", response_model=Dict[str, Any])
 async def get_default_tool_config(
     enabled_tools: Optional[str] = None,
     current_user: User = Depends(get_current_active_user)
@@ -248,7 +248,7 @@ async def get_default_tool_config(
             detail="获取默认工具配置失败"
         )
 
-@router.get("/tools/recommendations", response_model=List[str])
+@router.get("/recommendations", response_model=List[str])
 async def get_tool_recommendations(
     use_case: str,
     current_user: User = Depends(get_current_active_user)
@@ -270,7 +270,7 @@ async def get_tool_recommendations(
             detail="获取推荐工具失败"
         )
 
-@router.get("/tools/search", response_model=List[Dict[str, Any]])
+@router.get("/search", response_model=List[Dict[str, Any]])
 async def search_tools(
     query: str,
     current_user: User = Depends(get_current_active_user)
@@ -290,4 +290,4 @@ async def search_tools(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="搜索工具失败"
-    ) 
+        ) 

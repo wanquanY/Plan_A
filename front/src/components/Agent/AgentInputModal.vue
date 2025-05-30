@@ -109,6 +109,44 @@
           </div>
         </div>
         
+        <!-- 当没有当前回复但有历史记录时，显示历史浏览提示 -->
+        <div v-else-if="historyLength > 0 && !isAgentResponding" class="history-hint">
+          <div class="hint-content">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="hint-icon">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12,6 12,12 16,14"></polyline>
+            </svg>
+            <span>此对话有 {{ historyLength }} 条历史回复，使用下方的导航按钮查看</span>
+          </div>
+          
+          <!-- 历史导航按钮 -->
+          <div class="message-actions">
+            <button 
+              @click="emit('navigate-history', { direction: 'prev' })" 
+              :disabled="historyIndex <= 0"
+              class="action-btn"
+              title="上一条回复"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15,18 9,12 15,6"></polyline>
+              </svg>
+            </button>
+            
+            <span class="page-indicator">{{ historyIndex + 1 }}/{{ historyLength }}</span>
+            
+            <button 
+              @click="emit('navigate-history', { direction: 'next' })" 
+              :disabled="historyIndex >= historyLength - 1"
+              class="action-btn"
+              title="下一条回复"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9,18 15,12 9,6"></polyline>
+              </svg>
+            </button>
+          </div>
+        </div>
+        
         <!-- 加载指示器（当正在响应但还没有内容时显示） -->
         <div v-else-if="isAgentResponding" class="loading-indicator">
           <div class="loading-spinner"></div>
@@ -387,22 +425,109 @@ watch(() => props.isAgentResponding, (newValue, oldValue) => {
   }
 });
 
+// 监听历史索引变化，当用户使用历史导航时重置currentMessage状态
+watch(() => props.historyIndex, (newIndex, oldIndex) => {
+  console.log('[AgentInputModal] 历史索引变化:', oldIndex, '->', newIndex);
+  
+  if (newIndex !== oldIndex && newIndex >= 0) {
+    // 历史索引变化时，重置currentMessage以便正确解析历史内容
+    currentMessage.value = {
+      content: '',
+      contentChunks: [],
+      lastTextLength: 0,
+      baseTimestamp: new Date(),
+      isTyping: false
+    };
+    
+    console.log('[AgentInputModal] 历史导航：重置currentMessage状态');
+  }
+});
+
 // 计算弹窗位置样式
 const modalStyle = computed(() => {
+  // 默认屏幕居中
   let calculatedLeft = '50%';
-  let calculatedTransform = 'translateX(-50%)';
+  let calculatedTop = '50%';
+  let calculatedTransform = 'translate(-50%, -50%)';
 
-  if (props.editorInfo && props.editorInfo.left !== undefined && props.editorInfo.width !== undefined) {
-    const textAreaLeft = props.editorInfo.left + PROSEMIRROR_PADDING;
-    const textAreaWidth = props.editorInfo.width - (2 * PROSEMIRROR_PADDING);
-    calculatedLeft = `${textAreaLeft + (textAreaWidth / 2) - (FIXED_MODAL_WIDTH / 2)}px`;
-    calculatedTransform = 'none';
+  try {
+    // 直接查找编辑器元素来计算准确位置
+    const editorElement = document.querySelector('.editor-content') || document.querySelector('.editor-content-wrapper .editor-content');
+    
+    if (editorElement) {
+      const editorRect = editorElement.getBoundingClientRect();
+      console.log('[AgentInputModal] 找到实际编辑器元素，位置信息:', {
+        left: editorRect.left,
+        right: editorRect.right,
+        width: editorRect.width,
+        top: editorRect.top,
+        bottom: editorRect.bottom,
+        height: editorRect.height
+      });
+      
+      // 计算编辑器的中心位置（水平）
+      const editorCenterX = editorRect.left + (editorRect.width / 2);
+      
+      // 计算编辑器底部位置（垂直）
+      const viewportHeight = window.innerHeight;
+      const bottomMargin = 100; // 距离底部的边距
+      const editorBottomY = viewportHeight - bottomMargin;
+      
+      // 弹窗左边缘位置 = 编辑器中心X - 弹窗宽度的一半
+      calculatedLeft = `${editorCenterX - (FIXED_MODAL_WIDTH / 2)}px`;
+      calculatedTop = `${editorBottomY}px`;
+      calculatedTransform = 'translateY(-100%)'; // 向上偏移整个弹窗高度
+      
+      // 确保弹窗不会超出视口边界
+      const minLeft = 20; // 最小左边距
+      const maxLeft = window.innerWidth - FIXED_MODAL_WIDTH - 20; // 最大左边距
+      const leftValue = Math.max(minLeft, Math.min(maxLeft, editorCenterX - (FIXED_MODAL_WIDTH / 2)));
+      
+      calculatedLeft = `${leftValue}px`;
+      
+      console.log('[AgentInputModal] 弹窗定位计算结果:', {
+        editorCenterX,
+        editorBottomY,
+        leftValue,
+        modalWidth: FIXED_MODAL_WIDTH,
+        viewportHeight,
+        bottomMargin,
+        editorRect: {
+          left: editorRect.left,
+          width: editorRect.width
+        }
+      });
+    } else {
+      console.warn('[AgentInputModal] 未找到编辑器元素，使用传递的editorInfo');
+      
+      // 如果找不到编辑器元素，回退到使用传递的editorInfo
+      if (props.editorInfo && props.editorInfo.left !== undefined && props.editorInfo.width !== undefined) {
+        console.log('[AgentInputModal] 使用传递的编辑器信息:', props.editorInfo);
+        
+        const editorCenterX = props.editorInfo.left + (props.editorInfo.width / 2);
+        const viewportHeight = window.innerHeight;
+        const bottomMargin = 100;
+        const editorBottomY = viewportHeight - bottomMargin;
+        
+        calculatedLeft = `${editorCenterX - (FIXED_MODAL_WIDTH / 2)}px`;
+        calculatedTop = `${editorBottomY}px`;
+        calculatedTransform = 'translateY(-100%)';
+        
+        const minLeft = 20;
+        const maxLeft = window.innerWidth - FIXED_MODAL_WIDTH - 20;
+        const leftValue = Math.max(minLeft, Math.min(maxLeft, editorCenterX - (FIXED_MODAL_WIDTH / 2)));
+        
+        calculatedLeft = `${leftValue}px`;
+      }
+    }
+  } catch (error) {
+    console.error('[AgentInputModal] 计算弹窗位置时出错:', error);
   }
   
   return {
     position: 'fixed',
     left: calculatedLeft,
-    bottom: VIEWPORT_BOTTOM_MARGIN,
+    top: calculatedTop,
     width: `${FIXED_MODAL_WIDTH}px`,
     maxWidth: '95vw',
     transform: calculatedTransform,
@@ -1078,5 +1203,30 @@ defineExpose({
 
 .response-content::-webkit-scrollbar-thumb:hover {
   background-color: rgba(0, 0, 0, 0.2);
+}
+
+/* 历史提示区域样式 */
+.history-hint {
+  padding: 20px 0;
+  text-align: center;
+}
+
+.hint-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #6b7280;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.hint-icon {
+  flex-shrink: 0;
+  color: #9ca3af;
+}
+
+.hint-content span {
+  line-height: 1.5;
 }
 </style> 

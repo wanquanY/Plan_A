@@ -142,6 +142,111 @@ export const processUserInput = (content: string): string => {
   return processedContent;
 };
 
+/**
+ * 处理agent响应内容，将markdown转换为HTML
+ * @param content agent响应的原始内容
+ * @returns 处理后的HTML内容
+ */
+export const processMarkdown = (content: string): string => {
+  if (!content) return '';
+  
+  try {
+    // 首先预处理代码块
+    const processedContent = processCodeBlocks(content);
+    
+    // 使用marked转换markdown为HTML
+    const htmlContent = marked.parse(processedContent);
+    
+    // 确保返回字符串类型
+    if (typeof htmlContent !== 'string') {
+      throw new Error('Markdown解析结果不是字符串');
+    }
+    
+    // 使用DOMPurify清理HTML
+    return DOMPurify.sanitize(htmlContent, {
+      ADD_ATTR: ['class', 'data-language', 'data-mermaid-processed', 'id'],
+      ADD_TAGS: ['code', 'pre', 'div', 'svg', 'span']
+    });
+  } catch (error) {
+    console.error('处理agent响应markdown失败:', error);
+    // 如果处理失败，回退到简单的换行处理
+    return content.replace(/\n/g, '<br>');
+  }
+};
+
+/**
+ * 处理代码块内容，添加语言标识和特殊处理
+ * @param content 包含代码块的内容
+ * @returns 处理后的内容
+ */
+const processCodeBlocks = (content: string): string => {
+  // 处理代码块，确保mermaid等特殊类型被正确标识
+  return content.replace(/```(?:(\w+)\n)?([\s\S]+?)```/g, (match, language, code) => {
+    // 检测是否是Mermaid图表
+    if (language === 'mermaid' || (!language && isLocalMermaidContent(code))) {
+      return `\`\`\`mermaid\n${code.trim()}\n\`\`\``;
+    }
+    
+    // 检测是否是思维导图内容
+    if ((language === 'markdown' || language === 'md') && isMindMapContent(code)) {
+      return `\`\`\`markdown\n${code.trim()}\n\`\`\``;
+    }
+    
+    // 对于普通代码块，如果没有指定语言，尝试检测
+    if (!language) {
+      // 简单语言检测
+      language = detectCodeLanguage(code);
+    }
+    
+    // 标准代码块渲染
+    return `\`\`\`${language || 'text'}\n${code}\n\`\`\``;
+  });
+};
+
+/**
+ * 检测代码是否为mermaid图表内容（本地版本）
+ */
+const isLocalMermaidContent = (code: string): boolean => {
+  const trimmedCode = code.trim();
+  return trimmedCode.startsWith('graph ') || 
+         trimmedCode.startsWith('sequenceDiagram') || 
+         trimmedCode.startsWith('classDiagram') || 
+         trimmedCode.startsWith('flowchart') ||
+         !!trimmedCode.match(/^flowchart\s+TD/) ||
+         !!trimmedCode.match(/^flowchart\s+LR/) ||
+         trimmedCode.startsWith('gantt') ||
+         trimmedCode.startsWith('pie') ||
+         trimmedCode.startsWith('erDiagram');
+};
+
+/**
+ * 简单的代码语言检测
+ */
+const detectCodeLanguage = (code: string): string => {
+  // 检测HTML
+  if (/<[a-z][a-z0-9]*(\s+[a-z0-9-]+(=["'][^"']*["'])?)*\s*>/i.test(code)) {
+    return 'html';
+  }
+  
+  // 检测JavaScript
+  if (code.includes('function') || code.includes('const ') || code.includes('let ') || code.includes('=>')) {
+    return 'javascript';
+  }
+  
+  // 检测Python
+  if (code.includes('def ') || code.includes('import ') || code.includes('print(')) {
+    return 'python';
+  }
+  
+  // 检测CSS
+  if (code.includes('{') && code.includes('}') && code.includes(':')) {
+    return 'css';
+  }
+  
+  // 默认返回text
+  return 'text';
+};
+
 // 流式输出处理服务中使用的状态控制变量
 let markmapRenderingInProgress = false;
 

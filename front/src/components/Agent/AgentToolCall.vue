@@ -14,6 +14,26 @@
           <p class="search-snippet">{{ item.snippet }}</p>
         </div>
       </div>
+      <div v-else-if="isNoteEditorTool" class="note-edit-results">
+        <div class="edit-summary">
+          <p><strong>编辑类型:</strong> {{ getNoteEditTypeText(getNoteEditResult(result).edit_type) }}</p>
+          <p v-if="getNoteEditResult(result).title"><strong>笔记标题:</strong> {{ getNoteEditResult(result).title }}</p>
+          <div v-if="getNoteEditResult(result).changes" class="changes-info">
+            <p><strong>变更统计:</strong></p>
+            <ul>
+              <li>原始长度: {{ getNoteEditResult(result).changes.original_length }} 字符</li>
+              <li>新长度: {{ getNoteEditResult(result).changes.new_length }} 字符</li>
+              <li>原始行数: {{ getNoteEditResult(result).changes.original_lines }} 行</li>
+              <li>新行数: {{ getNoteEditResult(result).changes.new_lines }} 行</li>
+              <li v-if="getNoteEditResult(result).changes.title_changed">标题已更新</li>
+            </ul>
+          </div>
+          <div v-if="getNoteEditResult(result).content_preview" class="content-preview">
+            <p><strong>内容预览:</strong></p>
+            <pre class="preview-content">{{ getNoteEditResult(result).content_preview }}</pre>
+          </div>
+        </div>
+      </div>
       <pre v-else>{{ formatToolResult(result) }}</pre>
     </div>
     
@@ -42,6 +62,10 @@ const isSearchTool = computed(() => {
   return props.toolName === 'serper_search' || props.toolName === 'tavily_search';
 });
 
+const isNoteEditorTool = computed(() => {
+  return props.toolName === 'note_editor';
+});
+
 const toggleResult = () => {
   if (props.result) {
     isExpanded.value = !isExpanded.value;
@@ -68,6 +92,7 @@ const getToolDisplayName = (toolName: string) => {
     'serper_news': 'Serper 新闻',
     'serper_scrape': 'Serper 网页抓取',
     'note_reader': '笔记阅读',
+    'note_editor': '笔记编辑',
     'web_search': '网页搜索',
     'web_scrape': '网页抓取',
     'file_read': '文件读取',
@@ -134,6 +159,27 @@ const getSearchResults = (result: any) => {
     console.error('解析搜索结果失败:', error);
     return [];
   }
+};
+
+// 获取笔记编辑结果
+const getNoteEditResult = (result: any) => {
+  if (typeof result === 'object' && result.changes) {
+    return result;
+  }
+  return {};
+};
+
+// 获取笔记编辑类型文本
+const getNoteEditTypeText = (edit_type: string) => {
+  const typeMap: Record<string, string> = {
+    'replace': '完全替换',
+    'append': '追加内容',
+    'prepend': '前置内容',
+    'insert': '插入内容',
+    'replace_lines': '替换行',
+    'replace_text': '替换文本'
+  };
+  return typeMap[edit_type] || edit_type;
 };
 </script>
 
@@ -291,5 +337,65 @@ const getSearchResults = (result: any) => {
   color: #6b7280;
   line-height: 1.4;
   margin: 0;
+}
+
+/* 笔记编辑结果样式 */
+.note-edit-results {
+  margin-top: 8px;
+  padding: 8px 0;
+}
+
+.edit-summary {
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.edit-summary p {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.edit-summary strong {
+  font-weight: 500;
+  color: #2563eb;
+}
+
+.changes-info {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f3f4f6;
+}
+
+.changes-info ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.changes-info li {
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.content-preview {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f3f4f6;
+}
+
+.preview-content {
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #6b7280;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  background: #f8fafc;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
 }
 </style> 

@@ -309,28 +309,35 @@ class NoteReaderTool:
             from backend.models.chat import Chat
             from sqlalchemy import select, or_, and_
             
+            # 确保在正确的异步上下文中执行数据库操作
+            api_logger.info(f"开始读取笔记，参数: note_id={note_id}, search_title={search_title}")
+            
             # 如果有会话ID，先获取会话信息以确定用户权限和关联的笔记
             user_id = None
             session_note_id = None
             if self.conversation_id:
-                chat_stmt = select(Chat).where(Chat.id == self.conversation_id)
-                chat_result = await self.db_session.execute(chat_stmt)
-                chat = chat_result.scalar_one_or_none()
-                if chat:
-                    user_id = chat.user_id
-                    api_logger.info(f"从会话 {self.conversation_id} 获取用户ID: {user_id}")
-                    
-                    # 查找与此会话关联的笔记
-                    note_stmt = select(Note).where(
-                        Note.session_id == self.conversation_id,
-                        Note.user_id == user_id,
-                        Note.is_deleted == False
-                    )
-                    note_result = await self.db_session.execute(note_stmt)
-                    session_note = note_result.scalar_one_or_none()
-                    if session_note:
-                        session_note_id = session_note.id
-                        api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
+                try:
+                    chat_stmt = select(Chat).where(Chat.id == self.conversation_id)
+                    chat_result = await self.db_session.execute(chat_stmt)
+                    chat = chat_result.scalar_one_or_none()
+                    if chat:
+                        user_id = chat.user_id
+                        api_logger.info(f"从会话 {self.conversation_id} 获取用户ID: {user_id}")
+                        
+                        # 查找与此会话关联的笔记
+                        note_stmt = select(Note).where(
+                            Note.session_id == self.conversation_id,
+                            Note.user_id == user_id,
+                            Note.is_deleted == False
+                        )
+                        note_result = await self.db_session.execute(note_stmt)
+                        session_note = note_result.scalar_one_or_none()
+                        if session_note:
+                            session_note_id = session_note.id
+                            api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
+                except Exception as e:
+                    api_logger.error(f"获取会话信息时出错: {str(e)}", exc_info=True)
+                    # 继续执行，不因会话信息获取失败而中断
             
             # 构建查询条件
             query_conditions = [
@@ -361,15 +368,20 @@ class NoteReaderTool:
             # 执行查询
             stmt = select(Note).where(*query_conditions).order_by(Note.updated_at.desc())
             
-            if note_id:
-                # 如果是通过ID查询，只取一个
-                result = await self.db_session.execute(stmt)
-                note = result.scalar_one_or_none()
-                notes = [note] if note else []
-            else:
-                # 如果是搜索或获取最近笔记，可能返回多个
-                result = await self.db_session.execute(stmt.limit(10))  # 限制返回数量
-                notes = result.scalars().all()
+            notes = []
+            try:
+                if note_id:
+                    # 如果是通过ID查询，只取一个
+                    result = await self.db_session.execute(stmt)
+                    note = result.scalar_one_or_none()
+                    notes = [note] if note else []
+                else:
+                    # 如果是搜索或获取最近笔记，可能返回多个
+                    result = await self.db_session.execute(stmt.limit(10))  # 限制返回数量
+                    notes = result.scalars().all()
+            except Exception as e:
+                api_logger.error(f"执行数据库查询时出错: {str(e)}", exc_info=True)
+                return {"error": f"数据库查询失败: {str(e)}"}
             
             if not notes:
                 return {
@@ -451,6 +463,272 @@ class NoteReaderTool:
             return {"error": f"读取笔记失败: {str(e)}"}
 
 
+class NoteEditorTool:
+    """笔记编辑工具"""
+    
+    def __init__(self, db_session = None, conversation_id: Optional[int] = None):
+        """初始化笔记编辑工具"""
+        self.db_session = db_session
+        self.conversation_id = conversation_id
+        api_logger.info(f"笔记编辑工具初始化，会话ID: {conversation_id}")
+    
+    async def edit_note(
+        self,
+        note_id: Optional[int] = None,
+        search_title: Optional[str] = None,
+        edit_type: str = "replace",
+        content: Optional[str] = None,
+        title: Optional[str] = None,
+        start_line: Optional[int] = None,
+        end_line: Optional[int] = None,
+        insert_position: Optional[str] = None,
+        search_text: Optional[str] = None,
+        replace_text: Optional[str] = None,
+        save_immediately: bool = False
+    ) -> Dict[str, Any]:
+        """编辑笔记内容
+        
+        Args:
+            note_id: 要编辑的笔记ID
+            search_title: 通过标题搜索笔记
+            edit_type: 编辑类型 - replace(替换全部), append(追加), prepend(前置), insert(插入), replace_lines(替换行), replace_text(替换文本)
+            content: 新内容（用于replace, append, prepend, insert）
+            title: 新标题（可选）
+            start_line: 开始行号（用于replace_lines）
+            end_line: 结束行号（用于replace_lines）
+            insert_position: 插入位置 - start(开头), end(结尾), after_line:N(在第N行后), before_line:N(在第N行前)
+            search_text: 要搜索的文本（用于replace_text）
+            replace_text: 替换的文本（用于replace_text）
+            save_immediately: 是否立即保存，默认为预览模式
+        """
+        if not self.db_session:
+            api_logger.error("未提供数据库会话，无法编辑笔记")
+            return {"error": "数据库连接不可用"}
+        
+        try:
+            from backend.models.note import Note
+            from backend.models.chat import Chat
+            from sqlalchemy import select, or_, and_
+            
+            # 确保在正确的异步上下文中执行数据库操作
+            api_logger.info(f"开始编辑笔记，参数: note_id={note_id}, edit_type={edit_type}")
+            
+            # 获取用户权限
+            user_id = None
+            session_note_id = None
+            if self.conversation_id:
+                try:
+                    chat_stmt = select(Chat).where(Chat.id == self.conversation_id)
+                    chat_result = await self.db_session.execute(chat_stmt)
+                    chat = chat_result.scalar_one_or_none()
+                    if chat:
+                        user_id = chat.user_id
+                        api_logger.info(f"从会话 {self.conversation_id} 获取用户ID: {user_id}")
+                        
+                        # 查找与此会话关联的笔记
+                        note_stmt = select(Note).where(
+                            Note.session_id == self.conversation_id,
+                            Note.user_id == user_id,
+                            Note.is_deleted == False
+                        )
+                        note_result = await self.db_session.execute(note_stmt)
+                        session_note = note_result.scalar_one_or_none()
+                        if session_note:
+                            session_note_id = session_note.id
+                            api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
+                except Exception as e:
+                    api_logger.error(f"获取会话信息时出错: {str(e)}", exc_info=True)
+                    # 继续执行，不因会话信息获取失败而中断
+            
+            # 确定要编辑的笔记
+            target_note = None
+            
+            try:
+                if note_id:
+                    # 通过ID查找笔记
+                    query_conditions = [
+                        Note.id == note_id,
+                        Note.is_deleted == False
+                    ]
+                    if user_id:
+                        query_conditions.append(Note.user_id == user_id)
+                    
+                    stmt = select(Note).where(and_(*query_conditions))
+                    result = await self.db_session.execute(stmt)
+                    target_note = result.scalar_one_or_none()
+                    
+                elif search_title:
+                    # 通过标题搜索笔记
+                    query_conditions = [
+                        Note.title.ilike(f"%{search_title}%"),
+                        Note.is_deleted == False
+                    ]
+                    if user_id:
+                        query_conditions.append(Note.user_id == user_id)
+                    
+                    stmt = select(Note).where(and_(*query_conditions)).order_by(Note.updated_at.desc())
+                    result = await self.db_session.execute(stmt)
+                    target_note = result.scalar_one_or_none()
+                    
+                elif session_note_id:
+                    # 使用会话关联的笔记
+                    stmt = select(Note).where(
+                        Note.id == session_note_id,
+                        Note.is_deleted == False
+                    )
+                    result = await self.db_session.execute(stmt)
+                    target_note = result.scalar_one_or_none()
+            except Exception as e:
+                api_logger.error(f"查找目标笔记时出错: {str(e)}", exc_info=True)
+                return {"error": f"查找笔记失败: {str(e)}"}
+            
+            if not target_note:
+                return {"error": "未找到要编辑的笔记"}
+            
+            # 记录编辑前的状态
+            original_content = target_note.content or ""
+            original_title = target_note.title or ""
+            target_note_id = target_note.id  # 提前保存ID，避免rollback后访问
+            
+            # 执行编辑操作
+            new_content = original_content
+            new_title = title if title is not None else original_title
+            
+            if edit_type == "replace":
+                # 完全替换内容
+                if content is not None:
+                    new_content = content
+                    
+            elif edit_type == "append":
+                # 追加内容
+                if content is not None:
+                    new_content = original_content + "\n" + content if original_content else content
+                    
+            elif edit_type == "prepend":
+                # 前置内容
+                if content is not None:
+                    new_content = content + "\n" + original_content if original_content else content
+                    
+            elif edit_type == "insert":
+                # 在指定位置插入内容
+                if content is not None and insert_position:
+                    lines = original_content.split('\n')
+                    
+                    if insert_position == "start":
+                        new_content = content + "\n" + original_content if original_content else content
+                    elif insert_position == "end":
+                        new_content = original_content + "\n" + content if original_content else content
+                    elif insert_position.startswith("after_line:"):
+                        try:
+                            line_num = int(insert_position.split(":")[1])
+                            if 0 <= line_num <= len(lines):
+                                lines.insert(line_num, content)
+                                new_content = '\n'.join(lines)
+                            else:
+                                return {"error": f"行号 {line_num} 超出范围"}
+                        except ValueError:
+                            return {"error": "无效的行号格式"}
+                    elif insert_position.startswith("before_line:"):
+                        try:
+                            line_num = int(insert_position.split(":")[1])
+                            if 1 <= line_num <= len(lines) + 1:
+                                lines.insert(line_num - 1, content)
+                                new_content = '\n'.join(lines)
+                            else:
+                                return {"error": f"行号 {line_num} 超出范围"}
+                        except ValueError:
+                            return {"error": "无效的行号格式"}
+                    else:
+                        return {"error": "无效的插入位置格式"}
+                        
+            elif edit_type == "replace_lines":
+                # 替换指定行范围
+                if content is not None and start_line is not None:
+                    lines = original_content.split('\n')
+                    end_line_actual = end_line if end_line is not None else start_line
+                    
+                    if 1 <= start_line <= len(lines) and 1 <= end_line_actual <= len(lines):
+                        # 替换指定行范围
+                        new_lines = content.split('\n')
+                        lines[start_line-1:end_line_actual] = new_lines
+                        new_content = '\n'.join(lines)
+                    else:
+                        return {"error": f"行号范围 {start_line}-{end_line_actual} 超出范围"}
+                        
+            elif edit_type == "replace_text":
+                # 替换指定文本
+                if search_text is not None and replace_text is not None:
+                    if search_text in original_content:
+                        new_content = original_content.replace(search_text, replace_text)
+                    else:
+                        return {"error": f"未找到要替换的文本: {search_text}"}
+                else:
+                    return {"error": "replace_text 类型需要提供 search_text 和 replace_text 参数"}
+            else:
+                return {"error": f"不支持的编辑类型: {edit_type}"}
+            
+            # 更新笔记
+            target_note.content = new_content
+            target_note.title = new_title
+            
+            # 根据save_immediately参数决定是否立即保存
+            if save_immediately:
+                # 提交更改到数据库
+                try:
+                    await self.db_session.commit()
+                    await self.db_session.refresh(target_note)
+                    api_logger.info(f"笔记 {target_note_id} 编辑已立即保存到数据库")
+                except Exception as e:
+                    api_logger.error(f"提交数据库事务失败: {str(e)}", exc_info=True)
+                    await self.db_session.rollback()
+                    return {"error": f"保存笔记失败: {str(e)}"}
+            else:
+                # 预览模式：回滚数据库更改，但保留计算结果
+                try:
+                    await self.db_session.rollback()
+                    api_logger.info(f"笔记 {target_note_id} 编辑为预览模式，未保存到数据库")
+                except Exception as e:
+                    api_logger.error(f"回滚数据库事务失败: {str(e)}", exc_info=True)
+                    # 即使回滚失败，也继续返回预览结果
+            
+            # 计算变化统计
+            original_lines = original_content.split('\n')
+            new_lines = new_content.split('\n')
+            
+            result = {
+                "success": True,
+                "note_id": target_note_id,  # 使用提前保存的ID
+                "title": new_title,
+                "edit_type": edit_type,
+                "content": new_content,
+                "is_preview": not save_immediately,  # 标记是否为预览
+                "changes": {
+                    "original_length": len(original_content),
+                    "new_length": len(new_content),
+                    "original_lines": len(original_lines),
+                    "new_lines": len(new_lines),
+                    "title_changed": original_title != new_title
+                },
+                "updated_at": None if not save_immediately else (target_note.updated_at.isoformat() if hasattr(target_note, 'updated_at') and target_note.updated_at else None)
+            }
+            
+            # 如果是小的更改，显示预览
+            if len(new_content) < 1000:
+                result["content_preview"] = new_content[:500] + "..." if len(new_content) > 500 else new_content
+            
+            api_logger.info(f"成功编辑笔记 {target_note_id}: {edit_type}")
+            return result
+            
+        except Exception as e:
+            api_logger.error(f"编辑笔记异常: {str(e)}", exc_info=True)
+            try:
+                await self.db_session.rollback()
+                api_logger.info("已回滚数据库事务")
+            except Exception as rollback_error:
+                api_logger.error(f"回滚数据库事务失败: {str(rollback_error)}", exc_info=True)
+            return {"error": f"编辑笔记失败: {str(e)}"}
+
+
 # 工具服务类，管理所有可用工具
 class ToolsService:
     """工具服务，管理所有可用的工具"""
@@ -461,7 +739,8 @@ class ToolsService:
         self.available_tools = {
             "tavily": TavilyTool,
             "serper": SerperTool,
-            "note_reader": NoteReaderTool
+            "note_reader": NoteReaderTool,
+            "note_editor": NoteEditorTool
         }
         api_logger.info(f"工具服务初始化，可用工具: {list(self.available_tools.keys())}")
     
@@ -471,8 +750,8 @@ class ToolsService:
             api_logger.warning(f"请求的工具 {tool_name} 不可用")
             return None
         
-        # 对于笔记阅读工具，不使用缓存，因为每次调用可能有不同的用户ID和数据库会话
-        if tool_name == "note_reader":
+        # 对于笔记相关工具，不使用缓存，因为每次调用可能有不同的用户ID和数据库会话
+        if tool_name in ["note_reader", "note_editor"]:
             try:
                 if config:
                     tool_instance = self.available_tools[tool_name](**config)

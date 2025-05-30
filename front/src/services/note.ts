@@ -151,6 +151,34 @@ class NoteService {
   }
 
   /**
+   * Agent编辑笔记
+   * 专门用于处理agent的笔记编辑请求
+   */
+  async editNoteByAgent(noteId: number, editData: any): Promise<any> {
+    try {
+      const response = await api.post(`/note/${noteId}/edit`, editData);
+      return response.data;
+    } catch (error) {
+      console.error('Agent编辑笔记失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 应用预览编辑到笔记
+   * 用户确认后真正保存编辑内容
+   */
+  async applyEditPreview(noteId: number, editData: any): Promise<any> {
+    try {
+      const response = await api.post(`/note/${noteId}/apply-edit`, editData);
+      return response.data;
+    } catch (error) {
+      console.error('应用预览编辑失败:', error);
+      throw error;
+    }
+  }
+
+  /**
    * 从会话ID获取关联的笔记
    */
   async getNoteBySessionId(sessionId: number): Promise<Note | null> {

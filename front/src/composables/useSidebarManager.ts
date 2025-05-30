@@ -15,13 +15,22 @@ export function useSidebarManager() {
 
   // 处理切换侧边栏模式
   const handleToggleSidebarMode = (data: any, editorRef: any, sidebarConversationHistory: any) => {
-    console.log('接收到切换侧边栏模式事件:', data);
+    console.log('[useSidebarManager] 接收到切换侧边栏模式事件:', data);
     
     // 如果是直接切换界面显示（按钮点击）
     if (data.showInterface) {
+      console.log('[useSidebarManager] 这是界面切换请求，目标模式:', data.newMode);
+      
       // 设置编辑器的交互模式
       if (editorRef.value && editorRef.value.setInteractionMode) {
+        console.log('[useSidebarManager] 调用 editorRef.setInteractionMode:', data.newMode);
         editorRef.value.setInteractionMode(data.newMode);
+        console.log('[useSidebarManager] setInteractionMode调用完成');
+      } else {
+        console.error('[useSidebarManager] editorRef.value或setInteractionMode方法不存在!', {
+          editorRefExists: !!editorRef.value,
+          setInteractionModeExists: !!(editorRef.value && editorRef.value.setInteractionMode)
+        });
       }
       
       if (data.newMode === 'sidebar') {
@@ -82,13 +91,18 @@ export function useSidebarManager() {
             if (hasExistingContent || savedHistory.length > 0) {
               // 如果有现有内容或历史记录，在弹窗中显示
               if (editorRef.value.showModalWithContent) {
+                // 计算最新的历史索引
+                const lastHistoryIndex = savedHistory.length > 0 ? savedHistory.length - 1 : savedHistoryIndex;
+                
                 editorRef.value.showModalWithContent({
                   response: savedResponse,
                   isResponding: savedIsResponding,
-                  historyIndex: savedHistoryIndex,
+                  historyIndex: lastHistoryIndex, // 使用最新的历史索引
                   historyLength: savedHistoryLength,
                   conversationHistory: savedHistory
                 });
+                
+                console.log('[useSidebarManager] 切换到弹窗模式，显示最新历史记录，索引:', lastHistoryIndex);
               }
             }
             // 移除自动显示演示弹窗的逻辑，让用户主动触发

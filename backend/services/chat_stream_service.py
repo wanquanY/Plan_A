@@ -623,11 +623,13 @@ class ChatStreamService:
                 
                 # 先保存AI消息（即使内容为空，也要保存以便后续更新）
                 ai_message = None
+                saved_prompt_tokens = 0  # 提前保存prompt_tokens
                 if db and user_id and conversation_id:
                     # 估算token数量（简单实现）
                     tokens = len(collected_content) // 4 if collected_content else 0
                     prompt_tokens = len(str(messages)) // 4
                     total_tokens = tokens + prompt_tokens
+                    saved_prompt_tokens = prompt_tokens  # 保存这个值供后续使用
                     
                     ai_message = await add_message(
                         db=db,
@@ -678,15 +680,14 @@ class ChatStreamService:
                         "interaction_flow": interaction_flow
                     }
                     
-                    # 更新数据库中的消息内容为JSON结构
+                    # 更新AI消息内容
                     if ai_message:
                         ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
-                        # 重新计算token数量
                         ai_message.tokens = len(final_content) // 4
-                        ai_message.total_tokens = ai_message.prompt_tokens + ai_message.tokens
+                        # 使用之前保存的prompt_tokens值，避免延迟加载
+                        ai_message.total_tokens = saved_prompt_tokens + ai_message.tokens
                         await db.commit()
                         await db.refresh(ai_message)
-                        api_logger.info(f"更新AI消息为JSON结构，最终内容长度: {len(final_content)}")
                     
                     # 保存到记忆 - 使用最终完整内容（纯文本，用于对话上下文）
                     if final_content:
@@ -700,9 +701,10 @@ class ChatStreamService:
                             "interaction_flow": interaction_flow
                         }
                         
-                        # 更新数据库中的消息内容为JSON结构
+                        # 更新AI消息内容
                         if ai_message:
                             ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
+                            # 不需要重新计算tokens，使用创建时的值
                             await db.commit()
                             await db.refresh(ai_message)
                     
@@ -818,10 +820,12 @@ class ChatStreamService:
                         
                         # 处理工具调用和保存消息（与上面相同的逻辑）
                         ai_message = None
+                        saved_prompt_tokens_fallback = 0  # 提前保存prompt_tokens
                         if db and user_id and conversation_id:
                             tokens = len(collected_content) // 4 if collected_content else 0
                             prompt_tokens = len(str(messages)) // 4
                             total_tokens = tokens + prompt_tokens
+                            saved_prompt_tokens_fallback = prompt_tokens  # 保存这个值供后续使用
                             
                             ai_message = await add_message(
                                 db=db,
@@ -872,7 +876,8 @@ class ChatStreamService:
                             if ai_message:
                                 ai_message.content = json.dumps(final_json_content, ensure_ascii=False)
                                 ai_message.tokens = len(final_content) // 4
-                                ai_message.total_tokens = ai_message.prompt_tokens + ai_message.tokens
+                                # 使用之前保存的prompt_tokens值，避免延迟加载
+                                ai_message.total_tokens = saved_prompt_tokens_fallback + ai_message.tokens
                                 await db.commit()
                                 await db.refresh(ai_message)
                             

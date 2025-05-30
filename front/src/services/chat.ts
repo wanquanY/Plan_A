@@ -351,6 +351,16 @@ const processTextStream = async (
       
       // 提取消息内容和会话ID
       if (data.data) {
+        // 详细日志记录data.data的结构
+        console.log('chat.ts 收到data.data结构:', {
+          has_message: !!data.data.message,
+          has_full_content: !!data.data.full_content,
+          has_tool_status: !!data.data.tool_status,
+          conversation_id: data.data.conversation_id,
+          done: data.data.done,
+          tool_status_content: data.data.tool_status
+        });
+        
         // 优先使用full_content字段
         const content = data.data.full_content || 
                         (data.data.message ? data.data.message.content : '') || '';
@@ -378,12 +388,20 @@ const processTextStream = async (
         let toolStatus = null;
         if (data.data.tool_status) {
           toolStatus = data.data.tool_status;
-          console.log('chat.ts 接收到工具状态:', toolStatus);
+          console.log('chat.ts 接收到工具状态:', JSON.stringify(toolStatus, null, 2));
+          console.log('chat.ts 工具状态详情:', {
+            type: toolStatus.type,
+            tool_name: toolStatus.tool_name,
+            status: toolStatus.status,
+            tool_call_id: toolStatus.tool_call_id,
+            has_result: !!toolStatus.result,
+            result_preview: toolStatus.result ? JSON.stringify(toolStatus.result).substring(0, 100) + '...' : null
+          });
         } else {
-          console.log('chat.ts 没有工具状态信息，data.data:', data.data);
+          console.log('chat.ts 没有工具状态信息，data.data keys:', Object.keys(data.data));
         }
         
-        console.log(`处理流式数据: 内容长度=${content.length}, 是否完成=${isComplete}, 会话ID=${currentConversationId || 'null'}`);
+        console.log(`处理流式数据: 内容长度=${content.length}, 是否完成=${isComplete}, 会话ID=${currentConversationId || 'null'}, 有工具状态=${!!toolStatus}`);
         
         // 确保有效会话ID
         const idToSend = currentConversationId ?? conversationId ?? 0;

@@ -43,13 +43,16 @@ onUnmounted(() => {
 });
 
 // 事件声明
-const emit = defineEmits(['agent-response', 'agent-response-chunk', 'agent-response-complete', 'agent-response-error', 'agent-tool-status']);
+const emit = defineEmits(['agent-response', 'agent-response-chunk', 'agent-response-complete', 'agent-response-error', 'agent-tool-status', 'note-content-updated', 'note-edit-preview']);
 
 // 用于存储会话ID和笔记ID
 const conversationId = ref('');
 const currentNoteId = ref('');
 const isProcessing = ref(false);
 let fullResponseAccumulator = ''; // Moved to be accessible and resettable
+
+// 用于存储当前响应的DOM元素，以便实时更新
+let currentResponseElement = null;
 
 // 设置当前会话ID
 const setConversationId = (id) => {
@@ -66,6 +69,33 @@ const setCurrentNoteId = (id) => {
 // 获取当前笔记ID
 const getCurrentNoteId = () => {
   return currentNoteId.value;
+};
+
+/**
+ * 实时更新响应内容的markdown渲染
+ * @param element 响应元素
+ * @param content 累积的内容
+ */
+const updateResponseContent = (element, content) => {
+  if (!element) return;
+  
+  try {
+    // 使用agentResponseService处理markdown
+    const processedHtml = agentResponseService.processMarkdown(content);
+    
+    // 更新DOM内容
+    element.innerHTML = processedHtml;
+    
+    // 延迟渲染特殊组件（在内容更新后）
+    setTimeout(() => {
+      // 渲染代码块
+      agentResponseService.processRenderedHtml(processedHtml, element, false);
+    }, 100);
+  } catch (error) {
+    console.error('更新响应内容失败:', error);
+    // 如果处理失败，使用简单的换行处理
+    element.innerHTML = content.replace(/\n/g, '<br>');
+  }
 };
 
 // 创建加载动画元素
@@ -115,6 +145,69 @@ const safelyManageSelection = (callback) => {
     }
   } catch (error) {
     console.error('处理selection时出错:', error);
+  }
+};
+
+// 处理笔记编辑工具结果的函数
+const handleNoteEditorResult = (toolResult) => {
+  console.log('[AgentResponseHandler] 处理笔记编辑工具结果:', toolResult);
+  console.log('[AgentResponseHandler] 工具结果类型:', typeof toolResult);
+  console.log('[AgentResponseHandler] 工具结果内容:', JSON.stringify(toolResult, null, 2));
+  
+  try {
+    let resultData = toolResult;
+    
+    // 如果结果是字符串，尝试解析为JSON
+    if (typeof toolResult === 'string') {
+      try {
+        resultData = JSON.parse(toolResult);
+        console.log('[AgentResponseHandler] 解析JSON后的结果:', resultData);
+      } catch (e) {
+        console.warn('[AgentResponseHandler] 无法解析工具结果为JSON:', e);
+        return;
+      }
+    }
+    
+    console.log('[AgentResponseHandler] 检查编辑结果字段:', {
+      success: resultData?.success,
+      note_id: resultData?.note_id,
+      content_exists: resultData?.content !== undefined,
+      content_length: resultData?.content?.length || 0,
+      is_preview: resultData?.is_preview
+    });
+    
+    // 检查是否是成功的笔记编辑结果
+    if (resultData && resultData.success && resultData.note_id && resultData.content !== undefined) {
+      console.log('[AgentResponseHandler] 检测到成功的笔记编辑，准备发射预览事件');
+      console.log('[AgentResponseHandler] 当前笔记ID:', currentNoteId.value);
+      console.log('[AgentResponseHandler] 编辑的笔记ID:', resultData.note_id);
+      
+      const previewData = {
+        noteId: resultData.note_id,
+        content: resultData.content,
+        title: resultData.title,
+        editType: resultData.edit_type,
+        changes: resultData.changes,
+        timestamp: Date.now()
+      };
+      
+      console.log('[AgentResponseHandler] 准备发射的预览数据:', previewData);
+      
+      // 发射预览事件而不是直接更新内容
+      emit('note-edit-preview', previewData);
+      
+      console.log('[AgentResponseHandler] 已发射note-edit-preview事件');
+    } else {
+      console.log('[AgentResponseHandler] 编辑结果不符合预览条件，跳过预览');
+      console.log('[AgentResponseHandler] 检查结果详情:', {
+        hasResult: !!resultData,
+        hasSuccess: resultData?.success,
+        hasNoteId: !!resultData?.note_id,
+        hasContent: resultData?.content !== undefined
+      });
+    }
+  } catch (error) {
+    console.error('[AgentResponseHandler] 处理笔记编辑结果时出错:', error);
   }
 };
 
@@ -420,7 +513,7 @@ const handleInputChat = async (inputElement, agentId, userInput, containerElemen
 };
 
 // 添加triggerChatRequest函数，将流式响应处理分离为单独函数
-const triggerChatRequest = async (agentId, userInputContent) => {
+const triggerChatRequest = async (agentId, userInputContent, responseParagraph = null) => {
   if (isProcessing.value) {
     console.warn('[AgentResponseHandler] Still processing a previous request.');
     return;
@@ -428,6 +521,9 @@ const triggerChatRequest = async (agentId, userInputContent) => {
   isProcessing.value = true;
   let streamSignaledEnd = false; // Flag to ensure end signals (complete/error) are sent once
   fullResponseAccumulator = ''; // Reset accumulator for this new request
+
+  // 保存当前响应元素的引用，用于实时更新
+  currentResponseElement = responseParagraph;
 
   console.log(`[AgentResponseHandler] Triggering chat request. AgentID: ${agentId}, ConvID: ${conversationId.value}, NoteID: ${currentNoteId.value}`);
 
@@ -459,6 +555,28 @@ const triggerChatRequest = async (agentId, userInputContent) => {
         // 处理工具状态更新
         if (toolStatus) {
           console.log('[AgentResponseHandler] 收到工具状态更新:', toolStatus);
+          console.log('[AgentResponseHandler] 工具状态详情:', {
+            type: toolStatus.type,
+            tool_name: toolStatus.tool_name,
+            status: toolStatus.status,
+            tool_call_id: toolStatus.tool_call_id,
+            has_result: !!toolStatus.result,
+            result_length: toolStatus.result ? JSON.stringify(toolStatus.result).length : 0
+          });
+          
+          // 检查是否是笔记编辑工具的完成状态
+          if (toolStatus.tool_name === 'note_editor' && toolStatus.status === 'completed' && toolStatus.result) {
+            console.log('[AgentResponseHandler] 检测到笔记编辑工具完成，处理结果');
+            console.log('[AgentResponseHandler] 工具结果原始内容:', toolStatus.result);
+            handleNoteEditorResult(toolStatus.result);
+          } else if (toolStatus.tool_name === 'note_editor') {
+            console.log('[AgentResponseHandler] 笔记编辑工具状态不满足条件:', {
+              tool_name: toolStatus.tool_name,
+              status: toolStatus.status,
+              has_result: !!toolStatus.result
+            });
+          }
+          
           emit('agent-tool-status', toolStatus);
         }
         
@@ -479,6 +597,19 @@ const triggerChatRequest = async (agentId, userInputContent) => {
 
         if (chunkContent) {
           fullResponseAccumulator += chunkContent;
+          
+          // 实时更新响应内容的markdown渲染
+          if (currentResponseElement) {
+            // 移除加载动画（如果存在）
+            const loadingElement = currentResponseElement.querySelector('.loading-animation-container, .agent-response-loading');
+            if (loadingElement) {
+              loadingElement.remove();
+            }
+            
+            // 实时渲染累积的内容
+            updateResponseContent(currentResponseElement, fullResponseAccumulator);
+          }
+          
           emit('agent-response-chunk', chunkContent);
         }
 
@@ -486,6 +617,25 @@ const triggerChatRequest = async (agentId, userInputContent) => {
           streamSignaledEnd = true;
           // 确保最终内容是完整的
           const finalContent = data.full_content || fullResponseAccumulator;
+          
+          // 最终渲染完整内容
+          if (currentResponseElement) {
+            updateResponseContent(currentResponseElement, finalContent);
+            
+            // 流式响应结束后，延迟渲染特殊组件
+            setTimeout(() => {
+              agentResponseService.processRenderedHtml(finalContent, currentResponseElement, true);
+              
+              // 触发特殊组件渲染
+              setTimeout(() => {
+                const { renderContentComponents } = import('../../services/renderService');
+                renderContentComponents.then(module => {
+                  module.renderContentComponents(true);
+                });
+              }, 200);
+            }, 300);
+          }
+          
           console.log(`[AgentResponseHandler] Stream ended. Emitting complete. ConvID: ${convId}, Response: ${finalContent}`);
           emit('agent-response-complete', { responseText: finalContent, conversationId: convId });
         }
@@ -506,6 +656,8 @@ const triggerChatRequest = async (agentId, userInputContent) => {
     emit('agent-response-error', error);
   } finally {
     isProcessing.value = false;
+    // 清理当前响应元素引用
+    currentResponseElement = null;
     console.log('[AgentResponseHandler] triggerChatRequest finally block. streamSignaledEnd:', streamSignaledEnd);
   }
 };
