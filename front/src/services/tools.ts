@@ -55,7 +55,7 @@ class ToolsService {
    */
   async getToolsList(): Promise<ToolDetail[]> {
     try {
-      const response = await apiClient.get('/tools');
+      const response = await apiClient.get('/tools/list');
       return response.data || [];
     } catch (error) {
       console.error('获取工具列表失败:', error);

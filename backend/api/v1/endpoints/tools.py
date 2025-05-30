@@ -126,7 +126,7 @@ async def extract(
     )
 
 
-@router.get("/", response_model=List[Dict[str, Any]])
+@router.get("/list", response_model=List[Dict[str, Any]])
 async def get_tools_list(
     current_user: User = Depends(get_current_active_user)
 ):
