@@ -513,7 +513,7 @@ const handleInputChat = async (inputElement, agentId, userInput, containerElemen
 };
 
 // 添加triggerChatRequest函数，将流式响应处理分离为单独函数
-const triggerChatRequest = async (agentId, userInputContent, responseParagraph = null) => {
+const triggerChatRequest = async (agentId, userInputContent, responseParagraph = null, model = null) => {
   if (isProcessing.value) {
     console.warn('[AgentResponseHandler] Still processing a previous request.');
     return;
@@ -525,13 +525,18 @@ const triggerChatRequest = async (agentId, userInputContent, responseParagraph =
   // 保存当前响应元素的引用，用于实时更新
   currentResponseElement = responseParagraph;
 
-  console.log(`[AgentResponseHandler] Triggering chat request. AgentID: ${agentId}, ConvID: ${conversationId.value}, NoteID: ${currentNoteId.value}`);
+  console.log(`[AgentResponseHandler] Triggering chat request. AgentID: ${agentId}, ConvID: ${conversationId.value}, NoteID: ${currentNoteId.value}, Model: ${model || '默认'}`);
 
   try {
     const chatRequest = {
       content: userInputContent, // Already processed by caller if needed
       agent_id: parseInt(agentId)
     };
+
+    // 如果提供了模型参数，添加到请求中
+    if (model) {
+      chatRequest.model = model;
+    }
 
     if (conversationId.value && conversationId.value !== 'null' && conversationId.value !== 'undefined') {
       chatRequest.conversation_id = parseInt(conversationId.value);

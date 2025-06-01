@@ -388,7 +388,13 @@ const handleAgentMessage = (data: any) => {
     }
     
     if (typeof agentResponseHandlerRef.value.triggerChatRequest === 'function') {
-      agentResponseHandlerRef.value.triggerChatRequest(data.agentId, data.content);
+      // 传递模型信息（如果有的话）
+      agentResponseHandlerRef.value.triggerChatRequest(
+        data.agentId, 
+        data.content, 
+        null, // responseParagraph
+        data.model // 模型信息
+      );
     }
   }
 };

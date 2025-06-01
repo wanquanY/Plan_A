@@ -603,9 +603,15 @@ class ChatStreamService:
             
             # 如果有Agent，使用Agent的设置
             if current_agent:
-                # 先备份使用默认模型，以防指定模型不可用
-                agent_model = current_agent.model
-                use_model = agent_model if agent_model else openai_client_service.model
+                # 优先使用请求中的模型，如果没有提供则使用Agent的默认模型
+                if chat_request.model:
+                    use_model = chat_request.model
+                    api_logger.info(f"流式响应使用请求中指定的模型: {use_model}")
+                else:
+                    # 先备份使用默认模型，以防指定模型不可用
+                    agent_model = current_agent.model
+                    use_model = agent_model if agent_model else openai_client_service.model
+                    api_logger.info(f"流式响应使用Agent默认模型: {use_model}")
                 
                 # 如果Agent有模型设置，使用Agent的模型设置
                 if current_agent.model_settings:
@@ -624,6 +630,13 @@ class ChatStreamService:
                         max_tokens = model_settings["max_tokens"]
                 
                 api_logger.info(f"使用Agent模型设置: model={use_model}, temperature={temperature}, top_p={top_p}, max_tokens={max_tokens}")
+            elif chat_request.model:
+                # 如果没有Agent但请求中指定了模型，使用请求中的模型
+                use_model = chat_request.model
+                api_logger.info(f"流式响应没有Agent，使用请求中指定的模型: {use_model}")
+            else:
+                # 都没有则使用默认模型
+                api_logger.info(f"流式响应使用系统默认模型: {use_model}")
             
             # 获取工具配置
             tools = chat_tool_handler.get_agent_tools(current_agent) if current_agent else []

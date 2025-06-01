@@ -1,114 +1,81 @@
 <template>
-  <div class="unified-container">
-    <!-- 输入框区域 -->
-    <div class="input-area">
-      <textarea
+  <div class="unified-input" @dragover.prevent="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop">
+    <!-- 图片预览区域 -->
+    <div v-if="previewImages.length > 0" class="image-preview-container">
+      <div v-for="(image, index) in previewImages" :key="index" class="preview-image-wrapper">
+        <img :src="image.preview" :alt="image.file.name" class="preview-image" />
+        <button @click="removeImage(index)" class="remove-image-btn">×</button>
+      </div>
+    </div>
+
+    <!-- 上传进度提示 -->
+    <div v-if="uploadingCount > 0" class="upload-progress">
+      正在上传 {{ uploadingCount }} 张图片...
+    </div>
+
+    <!-- 拖拽覆盖层 -->
+    <div v-if="isDragOver" class="drag-overlay">
+      <div class="drag-hint">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <circle cx="8.5" cy="8.5" r="1.5"></circle>
+          <polyline points="21,15 16,10 5,21"></polyline>
+        </svg>
+        <p>释放以上传图片</p>
+      </div>
+    </div>
+
+    <!-- 输入区域 -->
+    <div class="input-container">
+      <textarea 
         ref="inputRef"
-        class="unified-textarea"
+        class="message-input" 
         :placeholder="placeholder"
         v-model="inputValue"
-        @keydown="handleKeydown"
         @input="autoResize"
+        @keydown="handleKeydown"
         @compositionstart="handleCompositionStart"
         @compositionend="handleCompositionEnd"
         @paste="handlePaste"
-        @drop="handleDrop"
-        @dragover="handleDragOver"
-        @dragenter="handleDragEnter"
-        @dragleave="handleDragLeave"
         rows="1"
       ></textarea>
-      
-      <!-- 图片预览区域 -->
-      <div v-if="previewImages.length > 0" class="image-preview-container">
-        <div v-for="(image, index) in previewImages" :key="index" class="image-preview-item">
-          <img :src="image.url" :alt="image.name" class="preview-image" />
-          <button class="remove-image-btn" @click="removeImage(index)" type="button">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
-      </div>
-      
-      <!-- 上传进度提示 -->
-      <div v-if="uploadingCount > 0" class="upload-progress">
-        <div class="upload-spinner"></div>
-        <span>正在上传 {{ uploadingCount }} 张图片...</span>
-      </div>
     </div>
-    
-    <!-- 底部操作栏 -->
+
+    <!-- 控制栏 -->
     <div class="controls-bar">
       <!-- 左侧控制 -->
       <div class="left-controls">
-        <!-- Agent选择器 -->
-        <div class="agent-tag" @click.stop="showAgentSelector = !showAgentSelector">
-          <div class="agent-arrow">
+        <!-- 模型选择器 -->
+        <div class="model-tag" @click.stop="toggleModelSelector" ref="modelTagRef">
+          <div class="model-arrow">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline :points="showAgentSelector ? '18,15 12,9 6,15' : '6,9 12,15 18,9'"></polyline>
+              <polyline :points="showModelSelector ? '18,15 12,9 6,15' : '6,9 12,15 18,9'"></polyline>
             </svg>
           </div>
-          <span class="agent-label">{{ selectedAgent?.name || '小助理' }}</span>
+          <span class="model-label">{{ selectedModel || '选择模型' }}</span>
           
-          <!-- Agent下拉菜单 -->
-          <div v-if="showAgentSelector" class="agent-dropdown-unified">
-            <div class="agent-dropdown-list">
+          <!-- 模型下拉菜单 -->
+          <div v-if="showModelSelector" class="model-dropdown-unified" :style="dropdownStyle">
+            <div class="model-dropdown-list">
               <div
-                v-for="agent in agents"
-                :key="agent.id"
-                class="agent-dropdown-item"
-                :class="{ selected: selectedAgent?.id === agent.id }"
-                @click.stop="selectAgent(agent)"
+                v-for="model in availableModels"
+                :key="model"
+                class="model-dropdown-item"
+                :class="{ selected: selectedModel === model }"
+                @click.stop="selectModel(model)"
               >
-                  <img 
-                  class="agent-dropdown-avatar"
-                    :src="agent.avatar_url || 'https://placehold.co/24x24?text=AI'" 
-                    :alt="agent.name" 
-                    onerror="this.src='https://placehold.co/24x24?text=AI'"
-                  />
-                <span class="agent-dropdown-name">{{ agent.name }}</span>
+                <span class="model-dropdown-name">{{ model }}</span>
               </div>
-              <div v-if="loading" class="agent-dropdown-loading">
+              <div v-if="loading" class="model-dropdown-loading">
                 <div class="loading-spinner"></div>
                 加载中...
               </div>
-              <div v-if="!loading && agents.length === 0" class="agent-dropdown-empty">暂无可用AI助手</div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 调整按钮 -->
-        <div class="adjust-button-container">
-          <button 
-            class="adjust-btn"
-            @click="showAdjustMenu = !showAdjustMenu"
-            title="调整"
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"></circle>
-              <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
-            </svg>
-            <span>调整</span>
-          </button>
-          
-          <!-- 调整下拉菜单 -->
-          <div v-if="showAdjustMenu" class="adjust-dropdown">
-            <div class="adjust-dropdown-list">
-              <div
-                v-for="option in adjustOptions"
-                :key="option.key"
-                class="adjust-dropdown-item"
-                @click.stop="handleAdjust(option.key)"
-              >
-                <span class="adjust-dropdown-name">{{ option.label }}</span>
-              </div>
+              <div v-if="!loading && availableModels.length === 0" class="model-dropdown-empty">暂无可用模型</div>
             </div>
           </div>
         </div>
       </div>
-      
+
       <!-- 右侧控制 -->
       <div class="right-controls">
         <button 
@@ -126,7 +93,7 @@
         <button 
           class="send-btn" 
           @click="handleSendMessage"
-          :disabled="!selectedAgent || (!inputValue.trim() && previewImages.length === 0 && !isAgentResponding)"
+          :disabled="!selectedModel || (!inputValue.trim() && previewImages.length === 0 && !isAgentResponding)"
           :title="isAgentResponding ? '停止响应' : '发送'"
           :class="{ 'stop-btn': isAgentResponding }"
         >
@@ -159,6 +126,7 @@ import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { message } from 'ant-design-vue';
 import agentService from '../../services/agent';
 import uploadService from '../../services/uploadService';
+import { uploadImage } from '../../services/uploadService';
 
 const props = defineProps({
   placeholder: {
@@ -181,10 +149,13 @@ const emit = defineEmits(['send', 'select-agent', 'upload-file', 'adjust-tone', 
 // 状态变量
 const inputRef = ref(null);
 const fileInputRef = ref(null);
+const modelTagRef = ref(null);
+const adjustButtonRef = ref(null);
 const inputValue = ref('');
-const selectedAgent = ref(null);
-const agents = ref([]);
-const showAgentSelector = ref(false);
+const defaultAgent = ref(null); // 默认使用id为1的agent
+const selectedModel = ref(''); // 当前选择的模型
+const availableModels = ref([]);
+const showModelSelector = ref(false);
 const showAdjustMenu = ref(false);
 const isComposing = ref(false);
 const adjustOptions = ref([
@@ -194,36 +165,126 @@ const adjustOptions = ref([
   { key: 'longer', label: '更详细' }
 ]);
 const loading = ref(false);
+const dropdownStyle = ref({});
+const adjustDropdownStyle = ref({});
 
 // 图片相关状态
 const previewImages = ref([]);
 const uploadingCount = ref(0);
 const isDragOver = ref(false);
 
-// 加载Agent列表
-const fetchAgents = async () => {
+// 加载可用模型列表
+const fetchAvailableModels = async () => {
   loading.value = true;
   try {
-    const agentList = await agentService.getAllAgents();
-    agents.value = agentList;
-    console.log(`已加载${agentList.length}个AI助手`);
+    const models = await agentService.getAvailableModels();
+    availableModels.value = models;
+    console.log(`已加载${models.length}个可用模型`);
     
-    // 默认选择第一个Agent
-    if (agentList.length > 0 && !selectedAgent.value) {
-      selectAgent(agentList[0]);
+    // 如果还没有选择模型且有可用模型，选择第一个
+    if (!selectedModel.value && models.length > 0) {
+      selectedModel.value = models[0];
     }
   } catch (error) {
-    console.error('加载AI助手列表失败:', error);
+    console.error('加载模型列表失败:', error);
   } finally {
     loading.value = false;
   }
 };
 
-// 选择Agent
-const selectAgent = (agent) => {
-  selectedAgent.value = agent;
-  showAgentSelector.value = false;
-  emit('select-agent', agent);
+// 获取默认Agent（优先使用id为1，否则使用第一个可用Agent）
+const fetchDefaultAgent = async () => {
+  try {
+    // 首先尝试获取ID为1的Agent
+    let agent = await agentService.getAgentDetail(1);
+    
+    if (!agent) {
+      console.log('未找到ID为1的Agent，尝试获取用户的第一个可用Agent');
+      // 如果没有ID为1的Agent，获取用户能看到的所有Agent
+      const allAgents = await agentService.getAllAgents();
+      if (allAgents && allAgents.length > 0) {
+        agent = allAgents[0]; // 使用第一个可用的Agent
+        console.log('使用第一个可用Agent作为默认:', agent.name, '模型:', agent.model);
+      }
+    }
+    
+    if (agent) {
+      defaultAgent.value = agent;
+      // 如果还没有选择模型，使用默认agent的模型
+      if (!selectedModel.value && agent.model) {
+        selectedModel.value = agent.model;
+      }
+      console.log('默认Agent加载成功:', agent.name, '模型:', agent.model);
+      
+      // 通知父组件默认agent已选择
+      emit('select-agent', agent);
+    } else {
+      console.warn('没有找到任何可用的Agent，将尝试创建默认Agent');
+      await createDefaultAgent();
+    }
+  } catch (error) {
+    console.error('加载默认Agent失败:', error);
+    // 尝试创建默认Agent
+    await createDefaultAgent();
+  }
+};
+
+// 创建默认Agent
+const createDefaultAgent = async () => {
+  try {
+    console.log('尝试创建默认Agent');
+    
+    // 获取可用模型列表
+    const models = await agentService.getAvailableModels();
+    const defaultModel = models.length > 0 ? models[0] : 'gpt-3.5-turbo';
+    
+    const defaultAgentData = {
+      name: '默认助手',
+      avatar_url: 'https://placehold.co/40x40?text=AI',
+      system_prompt: '你是一个有用的AI助手，能够帮助用户解答问题和完成各种任务。',
+      model: defaultModel,
+      max_memory: 50,
+      model_settings: {
+        temperature: 0.7,
+        top_p: 1,
+        frequency_penalty: 0,
+        presence_penalty: 0,
+        max_tokens: 4000
+      },
+      tools_enabled: {},
+      is_public: false
+    };
+    
+    const newAgent = await agentService.createAgent(defaultAgentData);
+    if (newAgent) {
+      defaultAgent.value = newAgent;
+      selectedModel.value = newAgent.model;
+      console.log('默认Agent创建成功:', newAgent.name, '模型:', newAgent.model);
+      emit('select-agent', newAgent);
+    } else {
+      console.error('创建默认Agent失败');
+      // 提示用户需要手动创建Agent
+      message.error('没有可用的AI助手，请先创建一个Agent');
+    }
+  } catch (error) {
+    console.error('创建默认Agent时出错:', error);
+    message.error('无法初始化AI助手，请手动创建一个Agent');
+  }
+};
+
+// 选择模型
+const selectModel = (model) => {
+  selectedModel.value = model;
+  showModelSelector.value = false;
+  
+  // 创建一个临时的agent对象，包含新选择的模型
+  if (defaultAgent.value) {
+    const agentWithNewModel = {
+      ...defaultAgent.value,
+      model: model
+    };
+    emit('select-agent', agentWithNewModel);
+  }
   
   // 聚焦到输入框
   nextTick(() => {
@@ -238,28 +299,79 @@ const triggerFileUpload = () => {
 
 // 处理文件选择
 const handleFileSelect = async (event) => {
-  const files = Array.from(event.target.files || []);
-  await uploadImages(files);
-  // 清空文件输入框，允许重复选择相同文件
+  const files = Array.from(event.target.files);
+  if (files.length === 0) return;
+
+  // 添加到上传队列
+  uploadingCount.value += files.length;
+
+  try {
+    for (const file of files) {
+      // 检查文件类型
+      if (!file.type.startsWith('image/')) {
+        message.warning(`文件 ${file.name} 不是有效的图片格式`);
+        uploadingCount.value--;
+        continue;
+      }
+
+      // 检查文件大小（限制为5MB）
+      const maxSize = 5 * 1024 * 1024;
+      if (file.size > maxSize) {
+        message.warning(`文件 ${file.name} 超过5MB大小限制`);
+        uploadingCount.value--;
+        continue;
+      }
+
+      try {
+        // 创建预览URL
+        const preview = URL.createObjectURL(file);
+        
+        // 立即上传图片获取真实URL
+        console.log(`开始上传图片: ${file.name}`);
+        const uploadedUrl = await uploadImage(file, 'chat-images');
+        console.log(`图片上传成功: ${file.name} -> ${uploadedUrl}`);
+
+        // 添加到预览列表，使用真实URL
+        previewImages.value.push({
+          file,
+          preview,  // 用于本地预览
+          url: uploadedUrl,  // 用于发送给后端的真实URL
+          name: file.name,
+          size: file.size
+        });
+
+        uploadingCount.value--;
+      } catch (uploadError) {
+        console.error(`上传图片失败: ${file.name}`, uploadError);
+        message.error(`上传图片失败: ${file.name}`);
+        uploadingCount.value--;
+      }
+    }
+  } catch (error) {
+    console.error('处理图片选择失败:', error);
+    message.error('处理图片失败');
+    uploadingCount.value = 0;
+  }
+
+  // 清空文件输入框
   event.target.value = '';
 };
 
-// 处理拖拽相关事件
-const handleDragOver = (event) => {
-  event.preventDefault();
-  event.stopPropagation();
+// 移除图片
+const removeImage = (index) => {
+  const image = previewImages.value[index];
+  URL.revokeObjectURL(image.preview);
+  previewImages.value.splice(index, 1);
 };
 
-const handleDragEnter = (event) => {
+// 处理拖拽
+const handleDragOver = (event) => {
   event.preventDefault();
-  event.stopPropagation();
   isDragOver.value = true;
 };
 
 const handleDragLeave = (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  // 只有当离开整个输入区域时才取消拖拽状态
+  // 检查是否真的离开了拖拽区域
   if (!event.currentTarget.contains(event.relatedTarget)) {
     isDragOver.value = false;
   }
@@ -267,93 +379,52 @@ const handleDragLeave = (event) => {
 
 const handleDrop = async (event) => {
   event.preventDefault();
-  event.stopPropagation();
   isDragOver.value = false;
   
-  const files = Array.from(event.dataTransfer?.files || []).filter(file => 
+  const files = Array.from(event.dataTransfer.files).filter(file => 
     file.type.startsWith('image/')
   );
   
-  if (files.length > 0) {
-    await uploadImages(files);
-  }
-};
-
-// 处理粘贴事件
-const handlePaste = async (event) => {
-  const clipboardItems = event.clipboardData?.items;
-  if (!clipboardItems) return;
-  
-  const imageFiles = [];
-  
-  for (let i = 0; i < clipboardItems.length; i++) {
-    const item = clipboardItems[i];
-    if (item.type.indexOf('image') !== -1) {
-      const file = item.getAsFile();
-      if (file) {
-        imageFiles.push(file);
-      }
-    }
-  }
-  
-  if (imageFiles.length > 0) {
-    event.preventDefault(); // 阻止默认粘贴行为
-    await uploadImages(imageFiles);
-  }
-};
-
-// 上传图片
-const uploadImages = async (files) => {
-  const validFiles = files.filter(file => file.type.startsWith('image/'));
-  
-  if (validFiles.length === 0) {
-    message.warning('请选择有效的图片文件');
+  if (files.length === 0) {
+    message.warning('请拖拽图片文件');
     return;
   }
-  
-  uploadingCount.value = validFiles.length;
-  
-  try {
-    const uploadPromises = validFiles.map(async (file) => {
-      try {
-        const url = await uploadService.uploadImage(file);
-        return {
-          file,
-          url,
-          name: file.name,
-          size: file.size
-        };
-      } catch (error) {
-        console.error(`上传图片 ${file.name} 失败:`, error);
-        message.error(`上传图片 ${file.name} 失败`);
-        return null;
-      }
-    });
-    
-    const results = await Promise.all(uploadPromises);
-    const successfulUploads = results.filter(result => result !== null);
-    
-    // 添加到预览列表
-    previewImages.value.push(...successfulUploads);
-    
-    if (successfulUploads.length > 0) {
-      message.success(`成功上传 ${successfulUploads.length} 张图片`);
+
+  // 模拟文件选择事件
+  const mockEvent = {
+    target: {
+      files: files,
+      value: ''
     }
+  };
+  
+  await handleFileSelect(mockEvent);
+};
+
+// 处理粘贴
+const handlePaste = async (event) => {
+  const items = Array.from(event.clipboardData.items);
+  const imageItems = items.filter(item => item.type.startsWith('image/'));
+  
+  if (imageItems.length === 0) return;
+  
+  event.preventDefault();
+  
+  const files = imageItems.map(item => item.getAsFile()).filter(Boolean);
+  
+  if (files.length > 0) {
+    const mockEvent = {
+      target: {
+        files: files,
+        value: ''
+      }
+    };
     
-  } catch (error) {
-    console.error('批量上传图片失败:', error);
-    message.error('上传图片失败');
-  } finally {
-    uploadingCount.value = 0;
+    await handleFileSelect(mockEvent);
   }
 };
 
-// 移除图片
-const removeImage = (index) => {
-  previewImages.value.splice(index, 1);
-};
-
-// 发送消息或停止响应
+// 发送消息
 const handleSendMessage = () => {
   // 如果agent正在响应，则停止响应
   if (props.isAgentResponding) {
@@ -362,23 +433,43 @@ const handleSendMessage = () => {
   }
 
   // 否则正常发送消息
-  if (!selectedAgent.value) {
-    message.warning('请先选择AI助手');
+  if (!selectedModel.value) {
+    message.warning('请先选择模型');
     return;
   }
-  if (!selectedAgent.value.id) {
-    message.error('选中的AI助手信息不完整');
+  if (!defaultAgent.value) {
+    message.error('默认Agent未加载完成');
     return;
   }
   if (!inputValue.value.trim() && previewImages.value.length === 0) {
     return;
   }
 
+  // 检查是否还有图片正在上传
+  if (uploadingCount.value > 0) {
+    message.warning('图片还在上传中，请稍等...');
+    return;
+  }
+
+  // 创建带有选择模型的agent对象
+  const agentWithSelectedModel = {
+    ...defaultAgent.value,
+    model: selectedModel.value
+  };
+
+  // 使用已上传的真实URL
+  const imagesForSend = previewImages.value.map(image => ({
+    url: image.url,  // 使用上传后的真实URL
+    name: image.name || image.file.name,
+    size: image.size || image.file.size
+  }));
+
   const messageData = {
-    agentId: selectedAgent.value.id,
+    agentId: defaultAgent.value.id,
     content: inputValue.value.trim(),
-    images: previewImages.value,
-    agent: selectedAgent.value
+    images: imagesForSend,  // 使用包含真实URL的图片数据
+    agent: agentWithSelectedModel,
+    model: selectedModel.value
   };
   
   // 清空输入框和图片
@@ -468,7 +559,10 @@ defineExpose({
 
 // 组件挂载时初始化
 onMounted(() => {
-  fetchAgents();
+  // 先加载模型列表
+  fetchAvailableModels();
+  // 再加载默认Agent
+  fetchDefaultAgent();
   
   if (props.autoFocus) {
     nextTick(() => {
@@ -478,10 +572,10 @@ onMounted(() => {
     });
   }
   
-  // 点击外部关闭Agent选择器和调整菜单
+  // 点击外部关闭模型选择器和调整菜单
   const handleClickOutside = (event) => {
-    if (showAgentSelector.value && !event.target.closest('.agent-tag')) {
-      showAgentSelector.value = false;
+    if (showModelSelector.value && !event.target.closest('.model-tag')) {
+      showModelSelector.value = false;
     }
     if (showAdjustMenu.value && !event.target.closest('.adjust-button-container')) {
       showAdjustMenu.value = false;
@@ -501,71 +595,129 @@ const handleAdjust = (adjustType) => {
   showAdjustMenu.value = false;
   emit('adjust-tone', { tone: adjustType });
 };
+
+// 计算下拉菜单位置
+const calculateDropdownPosition = () => {
+  if (!modelTagRef.value) return;
+  
+  nextTick(() => {
+    const rect = modelTagRef.value.getBoundingClientRect();
+    const windowHeight = window.innerHeight;
+    const dropdownHeight = 300; // 增加最大高度
+    
+    // 计算是否有足够的下方空间
+    const spaceBelow = windowHeight - rect.bottom;
+    const showBelow = spaceBelow >= Math.min(dropdownHeight, 200);
+    
+    dropdownStyle.value = {
+      position: 'fixed',
+      left: `${rect.left}px`,
+      minWidth: `${Math.max(rect.width, 180)}px`,
+      maxHeight: `${dropdownHeight}px`
+    };
+    
+    if (showBelow) {
+      // 在下方显示
+      dropdownStyle.value.top = `${rect.bottom + 4}px`;
+    } else {
+      // 在上方显示
+      dropdownStyle.value.bottom = `${windowHeight - rect.top + 4}px`;
+    }
+  });
+};
+
+const toggleModelSelector = () => {
+  showModelSelector.value = !showModelSelector.value;
+  if (showModelSelector.value) {
+    nextTick(() => {
+      calculateDropdownPosition();
+    });
+  }
+};
+
+const toggleAdjustMenu = () => {
+  showAdjustMenu.value = !showAdjustMenu.value;
+  if (showAdjustMenu.value) {
+    nextTick(() => {
+      calculateAdjustDropdownPosition();
+    });
+  }
+};
+
+const calculateAdjustDropdownPosition = () => {
+  if (!adjustButtonRef.value) return;
+  
+  const rect = adjustButtonRef.value.getBoundingClientRect();
+  
+  adjustDropdownStyle.value = {
+    position: 'fixed',
+    top: `${rect.top - 8}px`, // 向上偏移8px，显示在按钮上方
+    left: `${rect.left}px`,
+    transform: 'translateY(-100%)', // 完全显示在按钮上方
+    minWidth: `${Math.max(rect.width, 120)}px`
+  };
+};
 </script>
 
 <style scoped>
-.unified-container {
-  background: #ffffff;
-  border: 1px solid #d1d5db;
+.unified-input {
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
-  transition: all 0.2s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  background: #ffffff;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.unified-container:focus-within {
+.unified-input:focus-within {
   border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08), 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
-.input-area {
-  padding: 12px 16px 8px;
+.input-container {
+  padding: 12px 12px 0;
 }
 
-.unified-textarea {
+.message-input {
   width: 100%;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: 14px;
-  line-height: 1.4;
-  color: #1f2937;
-  resize: none;
   min-height: 20px;
   max-height: 120px;
-  transition: border-color 0.2s ease;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 14px;
+  line-height: 1.5;
+  font-family: inherit;
+  color: #1f2937;
+  background: transparent;
+  overflow-y: hidden;
 }
 
-.unified-textarea::placeholder {
+.message-input::placeholder {
   color: #9ca3af;
 }
 
-/* 拖拽状态样式 */
-.unified-textarea.drag-over {
-  background-color: rgba(99, 102, 241, 0.05);
-  border-color: #6366f1;
-}
-
-/* 图片预览容器 */
 .image-preview-container {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid #e5e7eb;
+  padding: 12px 12px 0;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
-.image-preview-item {
+.preview-image-wrapper {
   position: relative;
-  display: inline-block;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
 }
 
 .preview-image {
   width: 60px;
   height: 60px;
   object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid #e5e7eb;
+  display: block;
 }
 
 .remove-image-btn {
@@ -574,10 +726,12 @@ const handleAdjust = (adjustType) => {
   right: -4px;
   width: 18px;
   height: 18px;
-  background: #ef4444;
-  border: none;
   border-radius: 50%;
+  background: #ef4444;
   color: white;
+  border: 2px solid white;
+  font-size: 12px;
+  line-height: 1;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -589,30 +743,40 @@ const handleAdjust = (adjustType) => {
   background: #dc2626;
 }
 
-/* 上传进度提示 */
 .upload-progress {
+  padding: 8px 12px;
+  color: #6b7280;
+  font-size: 12px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.drag-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(99, 102, 241, 0.1);
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  padding: 8px;
-  background: #f3f4f6;
-  border-radius: 6px;
-  font-size: 12px;
-  color: #6b7280;
+  justify-content: center;
+  z-index: 10;
+  border: 2px dashed #6366f1;
+  border-radius: 12px;
 }
 
-.upload-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(99, 102, 241, 0.2);
-  border-top-color: #6366f1;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
+.drag-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #6366f1;
+  font-weight: 500;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.drag-hint p {
+  margin: 8px 0 0 0;
+  font-size: 14px;
 }
 
 .controls-bar {
@@ -688,7 +852,7 @@ const handleAdjust = (adjustType) => {
   background: #dc2626;
 }
 
-.agent-tag {
+.model-tag {
   position: relative;
   display: flex;
   align-items: center;
@@ -701,11 +865,11 @@ const handleAdjust = (adjustType) => {
   color: #374151;
 }
 
-.agent-tag:hover {
+.model-tag:hover {
   background: #e5e7eb;
 }
 
-.agent-arrow {
+.model-arrow {
   width: 12px;
   height: 12px;
   color: #6b7280;
@@ -715,35 +879,33 @@ const handleAdjust = (adjustType) => {
   justify-content: center;
 }
 
-.agent-label {
+.model-label {
   font-size: 12px;
   color: #374151;
   font-weight: 500;
   line-height: 1;
 }
 
-.agent-dropdown-unified {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
+.model-dropdown-unified {
+  position: fixed;
   background: #ffffff;
   border: 1px solid #d1d5db;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 10000;
-  max-height: 200px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  z-index: 999999;
+  max-height: 300px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
-  min-width: 100px;
+  min-width: 180px;
   width: max-content;
 }
 
-.agent-dropdown-list {
+.model-dropdown-list {
   padding: 4px;
 }
 
-.agent-dropdown-item {
+.model-dropdown-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -754,24 +916,16 @@ const handleAdjust = (adjustType) => {
   min-width: 0;
 }
 
-.agent-dropdown-item:hover {
+.model-dropdown-item:hover {
   background: #f3f4f6;
 }
 
-.agent-dropdown-item.selected {
+.model-dropdown-item.selected {
   background: #e0e7ff;
   color: #3730a3;
 }
 
-.agent-dropdown-avatar {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex-shrink: 0;
-}
-
-.agent-dropdown-name {
+.model-dropdown-name {
   font-size: 12px;
   font-weight: 500;
   color: inherit;
@@ -804,14 +958,11 @@ const handleAdjust = (adjustType) => {
 }
 
 .adjust-dropdown {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
   background: #ffffff;
   border: 1px solid #d1d5db;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 10000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  z-index: 99999;
   min-width: 120px;
 }
 
@@ -836,8 +987,8 @@ const handleAdjust = (adjustType) => {
 }
 
 /* 加载和空状态样式 */
-.agent-dropdown-loading,
-.agent-dropdown-empty {
+.model-dropdown-loading,
+.model-dropdown-empty {
   padding: 12px;
   text-align: center;
   color: #6b7280;
@@ -857,16 +1008,22 @@ const handleAdjust = (adjustType) => {
   animation: spin 1s linear infinite;
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .image-preview-container {
     gap: 6px;
-}
+  }
 
   .preview-image {
     width: 50px;
     height: 50px;
-}
+  }
 
   .controls-bar {
     padding: 6px 8px 8px;

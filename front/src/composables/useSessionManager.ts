@@ -172,6 +172,12 @@ export function useSessionManager() {
         note_id: noteIdValue
       };
       
+      // 如果有模型信息，添加到请求中
+      if (data.model) {
+        chatRequest.model = data.model;
+        console.log('发送聊天请求包含模型信息:', data.model);
+      }
+      
       // 如果有图片数据，添加到请求中
       if (data.images && data.images.length > 0) {
         chatRequest.images = data.images;

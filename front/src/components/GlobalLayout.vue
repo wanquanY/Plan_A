@@ -28,7 +28,7 @@ const pagination = reactive({
 // 笔记分页相关数据
 const notesPagination = reactive({
   current: 1,
-  pageSize: 10,
+  pageSize: 20,
   total: 0,
   pages: 1,
   loading: false,

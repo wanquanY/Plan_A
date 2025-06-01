@@ -41,7 +41,7 @@ class NoteService {
   /**
    * 获取笔记列表
    */
-  async getNotes(page = 1, pageSize = 10): Promise<{ notes: Note[]; total: number; pages: number }> {
+  async getNotes(page = 1, pageSize = 20): Promise<{ notes: Note[]; total: number; pages: number }> {
     try {
       const skip = (page - 1) * pageSize;
       const response = await api.get('/note', {

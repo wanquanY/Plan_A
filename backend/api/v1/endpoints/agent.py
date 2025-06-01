@@ -44,13 +44,7 @@ async def list_models(
     
     # 返回一些常用模型作为参考，但不再限制用户使用的模型
     suggested_models = [
-        "gpt-3.5-turbo",
-        "gpt-3.5-turbo-16k",
-        "gpt-4",
-        "gpt-4-32k",
-        "gpt-4-turbo",
         "gpt-4o", 
-        "claude-3-5-sonnet-20240620",
         "claude-3-7-sonnet-20250219",
         'anthropic/claude-sonnet-4',
         'deepseek-r1-vol',

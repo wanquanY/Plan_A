@@ -24,6 +24,7 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
     agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
     note_id: Optional[int] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
+    model: Optional[str] = Field(None, description="指定使用的模型，如果提供则覆盖Agent默认模型")
 
 
 class AskAgainRequest(BaseModel):

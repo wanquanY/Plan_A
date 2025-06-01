@@ -181,8 +181,8 @@
                   {{ chunk.content }}
                 </div>
               </div>
-              <!-- 工具状态块 - 独立成行 -->
-              <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
+              <!-- 工具状态块 - 独立成行，只在有有效工具名称时显示 -->
+              <div v-else-if="chunk.type === 'tool_status' && chunk.tool_name" class="tool-chunk">
                 <AgentToolCall 
                   :tool-name="chunk.tool_name || ''"
                   :status="chunk.status || (message.isTyping ? '' : 'completed')"

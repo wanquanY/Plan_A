@@ -304,12 +304,23 @@ export function useStreamingResponse() {
       const timeA = new Date(a.timestamp || 0).getTime();
       const timeB = new Date(b.timestamp || 0).getTime();
       
-      // 如果时间戳相同，文本块优先于工具状态块
       if (timeA === timeB) {
-        if (a.type === 'text' && b.type === 'tool_status') return -1;
-        if (a.type === 'tool_status' && b.type === 'text') return 1;
+        // 优先级: reasoning > text > tool_status
+        const typePriority = (type: string) => {
+          if (type === 'reasoning') return 1;
+          if (type === 'text') return 2;
+          if (type === 'tool_status') return 3;
+          return 4; // 其他类型
+        };
         
-        // 如果都是文本块，按segmentIndex排序
+        const priorityA = typePriority(a.type);
+        const priorityB = typePriority(b.type);
+        
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB;
+        }
+        
+        // 如果都是文本块，按segmentIndex排序 (这个逻辑可能需要重新审视，但暂时保留)
         if (a.type === 'text' && b.type === 'text') {
           return (a.segmentIndex || 0) - (b.segmentIndex || 0);
         }

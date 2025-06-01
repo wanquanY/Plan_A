@@ -58,6 +58,7 @@ export interface ChatRequest {
   }>;
   conversation_id?: number;
   note_id?: number;
+  model?: string;
 }
 
 // 会话列表接口
@@ -208,6 +209,7 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
         conversation_id: number;
         agent_id: number;
         note_id?: number;
+        model?: string;
         images?: Array<{
           url: string;
           name?: string;
@@ -219,6 +221,11 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
         agent_id: request.agent_id,
         note_id: request.note_id
       };
+      
+      // 如果有模型参数，添加到请求体中
+      if (request.model) {
+        requestBody.model = request.model;
+      }
       
       // 如果有图片数据，添加到请求体中
       if (request.images && request.images.length > 0) {

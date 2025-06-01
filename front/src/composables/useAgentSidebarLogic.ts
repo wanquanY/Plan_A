@@ -83,12 +83,21 @@ export function useAgentSidebarLogic(props: any, emit: any) {
           currentMsg.contentChunks = [];
         }
         
+        // 初始化baseTimestamp（如果还没有）
+        if (!currentMsg.baseTimestamp) {
+          currentMsg.baseTimestamp = new Date();
+        }
+        
+        // 计算思考内容的时间戳，应该基于当前文本位置
+        const baseTime = currentMsg.baseTimestamp || new Date();
+        const reasoningTimestamp = new Date(baseTime.getTime() + (currentMsg.content?.length || 0) + 1);
+        
         // 查找最后一个chunk，如果是reasoning类型，则合并内容
         const lastChunk = currentMsg.contentChunks[currentMsg.contentChunks.length - 1];
         if (lastChunk && lastChunk.type === 'reasoning' && lastChunk.content) {
           // 合并到现有的思考内容中
           lastChunk.content += toolStatus.reasoning_content;
-          lastChunk.timestamp = new Date(); // 更新时间戳
+          // 保持原有时间戳，不更新为当前时间
           
           console.log('已合并思考内容到现有chunk:', {
             totalReasoningLength: lastChunk.content.length,
@@ -99,14 +108,15 @@ export function useAgentSidebarLogic(props: any, emit: any) {
           const reasoningChunk = {
             type: 'reasoning' as const,
             content: toolStatus.reasoning_content,
-            timestamp: new Date()
+            timestamp: reasoningTimestamp
           };
           
           currentMsg.contentChunks.push(reasoningChunk);
           
           console.log('已创建新的思考内容chunk:', {
             reasoningLength: toolStatus.reasoning_content.length,
-            totalChunks: currentMsg.contentChunks.length
+            totalChunks: currentMsg.contentChunks.length,
+            timestamp: reasoningTimestamp
           });
         }
       }
@@ -208,6 +218,11 @@ export function useAgentSidebarLogic(props: any, emit: any) {
       const currentMsg = messages.value[editingAgentMsgIndex];
       console.log('找到编辑重新执行的消息，更新内容:', currentMsg.id);
       
+      // 初始化baseTimestamp（如果还没有）
+      if (!currentMsg.baseTimestamp) {
+        currentMsg.baseTimestamp = currentMsg.timestamp || new Date();
+      }
+      
       // 更新消息内容
       currentMsg.content = displayContent;
       currentMsg.originalContent = textContent; // 保存原始内容
@@ -241,6 +256,11 @@ export function useAgentSidebarLogic(props: any, emit: any) {
     if (existingAgentMsgIndex !== -1) {
       // 更新现有消息
       const currentMsg = messages.value[existingAgentMsgIndex];
+      
+      // 初始化baseTimestamp（如果还没有）
+      if (!currentMsg.baseTimestamp) {
+        currentMsg.baseTimestamp = currentMsg.timestamp || new Date();
+      }
       
       // 更新消息内容
       currentMsg.content = displayContent;
@@ -281,12 +301,14 @@ export function useAgentSidebarLogic(props: any, emit: any) {
       
       if (!hasSameContent && !hasRecentMessage) {
         // 添加新的AI消息
+        const baseTimestamp = new Date();
         const agentMessage = {
           id: `agent_${currentTime}_${Math.random().toString(36).substr(2, 9)}`, // 更唯一的ID
           type: 'agent' as const,
           content: displayContent,
           originalContent: textContent, // 保存原始内容
-          timestamp: new Date(),
+          timestamp: baseTimestamp,
+          baseTimestamp,
           agent: currentAgent.value,
           isTyping: props.isAgentResponding,
           contentChunks: contentChunks
