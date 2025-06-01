@@ -735,7 +735,8 @@ defineExpose({
   setInteractionMode,
   getCurrentAgentData,
   closeModal,
-  showModalWithContent
+  showModalWithContent,
+  handleInsertResponse
 });
 </script>
 
