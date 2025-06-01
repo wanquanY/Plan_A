@@ -3,7 +3,7 @@ import { message } from 'ant-design-vue';
 import { useAgentChat } from './useAgentChat';
 import { useStreamingResponse } from './useStreamingResponse';
 import { parseAgentMessage, extractTextFromInteractionFlow, extractReasoningFromInteractionFlow, hasReasoningContent } from '../utils/messageParser';
-import { markdownToHtml } from '../services/markdownService';
+import { markdownToHtml, renderRealtimeMarkdown } from '../services/markdownService';
 import chatService from '../services/chat';
 
 export function useAgentSidebarLogic(props: any, emit: any) {
@@ -338,12 +338,12 @@ export function useAgentSidebarLogic(props: any, emit: any) {
   };
 
   // 渲染markdown内容
-  const renderMarkdown = (content: string) => {
+  const renderMarkdown = (content: string, isTyping = false) => {
     if (!content) return '';
     
     try {
-      // 使用markdownService渲染markdown
-      const htmlContent = markdownToHtml(content);
+      // 使用优化的实时markdown渲染器
+      const htmlContent = renderRealtimeMarkdown(content, isTyping);
       return htmlContent;
     } catch (error) {
       console.error('渲染markdown失败:', error);

@@ -16,8 +16,8 @@
             <div v-if="parsedContentChunks && parsedContentChunks.length > 0">
               <!-- 按时间顺序渲染所有内容块 -->
               <template v-for="(chunk, index) in getSortedContentChunks(parsedContentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
-                <!-- 文本块 - 内联显示 -->
-                <span v-if="chunk.type === 'text'" v-html="formatTextWithBreaks(chunk.content)" class="text-chunk"></span>
+                <!-- 文本块 - 内联显示，流式输出时也使用实时markdown渲染 -->
+                <span v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content, true)" class="text-chunk"></span>
                 <!-- 工具状态块 - 独立成行 -->
                 <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
                   <AgentToolCall 
@@ -33,7 +33,7 @@
             </div>
             <!-- 兼容旧的消息格式 -->
             <div v-else>
-              <span v-html="formatTextWithBreaks(agentResponse)"></span>
+              <span v-html="renderMarkdown(agentResponse, true)"></span>
             </div>
             <span class="typing-indicator">|</span>
           </div>
@@ -45,7 +45,7 @@
               <!-- 按时间顺序渲染所有内容块 -->
               <template v-for="(chunk, index) in getSortedContentChunks(parsedContentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
                 <!-- 文本块 - 内联显示 -->
-                <span v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content)" class="text-chunk"></span>
+                <span v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content, false)" class="text-chunk"></span>
                 <!-- 工具状态块 - 独立成行 -->
                 <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
                   <AgentToolCall 
@@ -60,7 +60,7 @@
               </template>
             </div>
             <!-- 兼容旧的消息格式（历史消息） -->
-            <div v-else v-html="renderMarkdown(agentResponse)"></div>
+            <div v-else v-html="renderMarkdown(agentResponse, false)"></div>
           </div>
           
           <!-- 操作按钮（仅图标，与侧边栏样式一致） -->
@@ -182,7 +182,7 @@ import AgentToolCall from './AgentToolCall.vue';
 import MermaidRenderer from '../rendering/MermaidRenderer.vue';
 import CodeBlock from '../rendering/CodeBlock.vue';
 import MarkMap from '../rendering/MarkMap.vue';
-import { markdownToHtml } from '../../services/markdownService';
+import { markdownToHtml, renderRealtimeMarkdown } from '../../services/markdownService';
 import { renderMermaidDynamically, renderCodeBlocks, renderMarkMaps } from '../../services/renderService';
 import { parseAgentMessage, extractTextFromInteractionFlow } from '../../utils/messageParser';
 import { useStreamingResponse } from '../../composables/useStreamingResponse';
@@ -592,22 +592,21 @@ const copyResponse = async () => {
 };
 
 // 渲染markdown内容
-const renderMarkdown = (content) => {
+const renderMarkdown = (content: string, isTyping = false) => {
   if (!content) return '';
   
   try {
-    // 使用markdownService将markdown转换为HTML
-    const htmlContent = markdownToHtml(content);
+    // 使用优化的实时markdown渲染器
+    const htmlContent = renderRealtimeMarkdown(content, isTyping);
     
-    // 延迟渲染特殊组件（在DOM更新后）
+    // 在下一个tick时渲染特殊组件
     nextTick(() => {
       renderSpecialComponents();
     });
     
     return htmlContent;
   } catch (error) {
-    console.error('渲染markdown失败:', error);
-    // 如果渲染失败，回退到纯文本显示
+    console.error('AgentInputModal markdown渲染失败:', error);
     return content.replace(/\n/g, '<br>');
   }
 };
@@ -1224,5 +1223,115 @@ defineExpose({
 
 .hint-content span {
   line-height: 1.5;
+}
+
+/* 实时markdown渲染样式优化 */
+.typing-content h1,
+.typing-content h2,
+.typing-content h3,
+.typing-content h4,
+.typing-content h5,
+.typing-content h6,
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin: 0.8em 0 0.4em 0;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #111827;
+}
+
+.typing-content h1, .markdown-content h1 { font-size: 1.5em; }
+.typing-content h2, .markdown-content h2 { font-size: 1.3em; }
+.typing-content h3, .markdown-content h3 { font-size: 1.1em; }
+.typing-content h4, .markdown-content h4 { font-size: 1em; }
+
+.typing-content p,
+.markdown-content p {
+  margin: 0.5em 0;
+  line-height: 1.6;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.typing-content ul,
+.typing-content ol,
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.typing-content li,
+.markdown-content li {
+  margin: 0.1em 0;
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.typing-content strong,
+.markdown-content strong {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.typing-content em,
+.markdown-content em {
+  font-style: italic;
+  color: #374151;
+}
+
+.typing-content code,
+.markdown-content code:not(.language-mermaid):not([class*="language-"]) {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+  font-size: 0.875em;
+  background-color: #f3f4f6;
+  color: #e53e3e;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  border: 1px solid #e5e7eb;
+}
+
+.typing-content a,
+.markdown-content a {
+  color: #3b82f6;
+  text-decoration: none;
+}
+
+.typing-content a:hover,
+.markdown-content a:hover {
+  text-decoration: underline;
+}
+
+/* 流式渲染时的平滑过渡效果 */
+.typing-content {
+  transition: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1f2937;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  max-width: 100%;
+}
+
+.markdown-content {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1f2937;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+  max-width: 100%;
 }
 </style> 

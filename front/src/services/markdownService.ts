@@ -287,6 +287,111 @@ export const markdownToHtml = (markdown: string): string => {
   }
 };
 
+// 实时流式渲染优化的markdown处理器
+export const renderRealtimeMarkdown = (markdown: string, isTyping = false): string => {
+  if (!markdown) return '';
+  
+  try {
+    // 如果正在流式输出且内容较短，进行快速渲染
+    if (isTyping && markdown.length < 1000) {
+      return renderQuickMarkdown(markdown);
+    }
+    
+    // 对于较长内容或完成的内容，使用完整渲染
+    return markdownToHtml(markdown);
+  } catch (error) {
+    console.error('实时Markdown渲染失败:', error);
+    return markdown.replace(/\n/g, '<br>');
+  }
+};
+
+// 快速markdown渲染器，专门用于流式输出
+const renderQuickMarkdown = (markdown: string): string => {
+  if (!markdown) return '';
+  
+  let processed = markdown;
+  
+  // 1. 处理标题 (只处理完整的行)
+  processed = processed.replace(/^(#{1,6})\s+(.+)$/gm, (match, hashes, content) => {
+    const level = hashes.length;
+    return `<h${level}>${content.trim()}</h${level}>`;
+  });
+  
+  // 2. 处理粗体（只处理完整的**文本**）
+  processed = processed.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  
+  // 3. 处理斜体（只处理完整的*文本*）
+  processed = processed.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  
+  // 4. 处理行内代码（只处理完整的`代码`）
+  processed = processed.replace(/`([^`]+)`/g, '<code>$1</code>');
+  
+  // 5. 处理链接（只处理完整的[文本](链接)）
+  processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  
+  // 6. 处理列表项（只处理完整的行）
+  processed = processed.replace(/^[-*+]\s+(.+)$/gm, '<li>$1</li>');
+  
+  // 7. 处理有序列表（只处理完整的行）
+  processed = processed.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>');
+  
+  // 8. 包装连续的列表项
+  processed = processed.replace(/(<li>.*<\/li>[\s]*)+/g, (match) => {
+    // 检查是否已经在ul标签内
+    if (match.includes('<ul>') || match.includes('</ul>')) {
+      return match; // 已经包装了，不再处理
+    }
+    return `<ul>${match}</ul>`;
+  });
+  
+  // 9. 处理段落（将连续的非HTML行包装在p标签中）
+  const lines = processed.split('\n');
+  const processedLines: string[] = [];
+  let currentParagraph: string[] = [];
+  
+  lines.forEach(line => {
+    const trimmedLine = line.trim();
+    
+    // 如果是HTML标签开头或空行
+    if (trimmedLine.startsWith('<') || trimmedLine === '') {
+      // 如果有累积的段落，先处理
+      if (currentParagraph.length > 0) {
+        const paragraphContent = currentParagraph.join(' ').trim();
+        if (paragraphContent) {
+          processedLines.push(`<p>${paragraphContent}</p>`);
+        }
+        currentParagraph = [];
+      }
+      
+      // 添加当前行（如果不是空行）
+      if (trimmedLine) {
+        processedLines.push(trimmedLine);
+      }
+    } else {
+      // 累积段落内容
+      currentParagraph.push(trimmedLine);
+    }
+  });
+  
+  // 处理最后的段落
+  if (currentParagraph.length > 0) {
+    const paragraphContent = currentParagraph.join(' ').trim();
+    if (paragraphContent) {
+      processedLines.push(`<p>${paragraphContent}</p>`);
+    }
+  }
+  
+  // 10. 处理换行
+  const finalResult = processedLines.join('\n').replace(/\n/g, '<br>');
+  
+  // 清理多余的br标签
+  return finalResult
+    .replace(/<\/p><br>/g, '</p>')
+    .replace(/<br><p>/g, '<p>')
+    .replace(/<\/h[1-6]><br>/g, (match) => match.replace('<br>', ''))
+    .replace(/<br><h[1-6]>/g, (match) => match.replace('<br>', ''));
+};
+
 // 格式化消息内容，处理Markdown和代码块
 export const formatMessageContent = (content: string): string => {
   // 预处理内容

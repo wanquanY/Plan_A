@@ -142,10 +142,10 @@
             </div>
             <!-- 按时间顺序渲染所有内容块 -->
             <template v-for="(chunk, index) in getSortedContentChunks(message.contentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
-              <!-- 文本块 - 内联显示 -->
+              <!-- 文本块 - 内联显示，优化流式渲染的markdown处理 -->
               <span 
                 v-if="chunk.type === 'text'" 
-                v-html="message.isTyping ? formatTextWithBreaks(chunk.content) : renderMarkdown(chunk.content)" 
+                v-html="renderTextContent(chunk.content, message.isTyping)" 
                 class="text-chunk"
               ></span>
               <!-- 思考内容块 - 统一结构，根据状态显示不同内容 -->
@@ -198,7 +198,7 @@
           </div>
           <!-- 兼容旧的消息格式 -->
           <div v-else>
-            <span v-html="message.isTyping ? formatTextWithBreaks(message.content) : renderMarkdown(message.content)"></span>
+            <span v-html="renderTextContent(message.content, message.isTyping)"></span>
             <span v-if="message.isTyping" class="typing-indicator">|</span>
           </div>
         </div>
@@ -233,7 +233,7 @@
 <script setup lang="ts">
 import { nextTick, ref, computed, watch, reactive } from 'vue';
 import AgentToolCall from './AgentToolCall.vue';
-import { markdownToHtml } from '../../services/markdownService';
+import { markdownToHtml, renderRealtimeMarkdown } from '../../services/markdownService';
 import { useStreamingResponse } from '../../composables/useStreamingResponse';
 import type { ChatMessage } from '../../composables/useAgentChat';
 
@@ -549,7 +549,7 @@ const renderMarkdown = (content?: string) => {
     // 延迟渲染特殊组件（在DOM更新后）
     nextTick(() => {
       // 这里可以添加特殊组件的渲染逻辑
-      console.log('Markdown渲染完成');
+      console.log('完整Markdown渲染完成');
     });
     
     return htmlContent;
@@ -566,6 +566,28 @@ const getEditPlaceholder = () => {
     return parsedUserContent.value.text_content || '';
   }
   return '';
+};
+
+// 优化流式渲染的markdown处理
+const renderTextContent = (content?: string, isTyping?: boolean) => {
+  if (!content) return '';
+  
+  try {
+    // 使用优化的实时markdown渲染器
+    const htmlContent = renderRealtimeMarkdown(content, isTyping);
+    
+    // 延迟渲染特殊组件（在DOM更新后）
+    nextTick(() => {
+      // 这里可以添加特殊组件的渲染逻辑
+      console.log('实时Markdown渲染完成, 内容长度:', content.length, '是否正在输入:', isTyping);
+    });
+    
+    return htmlContent;
+  } catch (error) {
+    console.error('渲染markdown失败:', error);
+    // 如果渲染失败，回退到纯文本显示
+    return content.replace(/\n/g, '<br>');
+  }
 };
 </script>
 
@@ -1199,5 +1221,94 @@ const getEditPlaceholder = () => {
   overflow-wrap: break-word;
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* 实时markdown渲染样式优化 */
+.content-container h1,
+.content-container h2,
+.content-container h3,
+.content-container h4,
+.content-container h5,
+.content-container h6 {
+  margin: 0.8em 0 0.4em 0;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #111827;
+}
+
+.content-container h1 { font-size: 1.5em; }
+.content-container h2 { font-size: 1.3em; }
+.content-container h3 { font-size: 1.1em; }
+.content-container h4 { font-size: 1em; }
+
+.content-container p {
+  margin: 0.5em 0;
+  line-height: 1.6;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.content-container ul,
+.content-container ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.content-container li {
+  margin: 0.1em 0;
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.content-container strong {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.content-container em {
+  font-style: italic;
+  color: #374151;
+}
+
+.content-container code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+  font-size: 0.875em;
+  background-color: #f3f4f6;
+  color: #e53e3e;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  border: 1px solid #e5e7eb;
+}
+
+.content-container a {
+  color: #3b82f6;
+  text-decoration: none;
+}
+
+.content-container a:hover {
+  text-decoration: underline;
+}
+
+/* 流式渲染时的平滑过渡 */
+.content-container.typing {
+  transition: none;
+}
+
+.content-container.typing h1,
+.content-container.typing h2,
+.content-container.typing h3,
+.content-container.typing h4,
+.content-container.typing h5,
+.content-container.typing h6,
+.content-container.typing p,
+.content-container.typing ul,
+.content-container.typing ol,
+.content-container.typing li {
+  transition: none;
 }
 </style> 
