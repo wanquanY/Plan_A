@@ -766,6 +766,36 @@ const editMessage = async (
   }
 };
 
+// 停止响应并保存当前内容
+const stopAndSaveResponse = async (conversationId: number, currentContent: string, userContent: string, agentId?: number): Promise<boolean> => {
+  try {
+    console.log('调用停止并保存响应API:', {
+      conversation_id: conversationId,
+      current_content_length: currentContent.length,
+      user_content_length: userContent.length,
+      agent_id: agentId
+    });
+
+    const response = await apiClient.post('/chat/stop-and-save', {
+      conversation_id: conversationId,
+      current_content: currentContent,
+      user_content: userContent,
+      agent_id: agentId
+    });
+
+    if (response.data.code === 200) {
+      console.log('停止并保存响应成功:', response.data.data);
+      return true;
+    } else {
+      console.error('停止并保存响应失败:', response.data.msg);
+      return false;
+    }
+  } catch (error) {
+    console.error('调用停止并保存响应API失败:', error);
+    return false;
+  }
+};
+
 const chatService = {
   streamChat: chatWithAgent,
   getSessions,
@@ -774,7 +804,8 @@ const chatService = {
   createSession,
   updateSession,
   deleteSession,
-  editMessage
+  editMessage,
+  stopAndSaveResponse
 };
 
 export default chatService; 

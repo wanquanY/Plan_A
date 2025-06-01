@@ -126,11 +126,17 @@
         <button 
           class="send-btn" 
           @click="handleSendMessage"
-          :disabled="!selectedAgent || (!inputValue.trim() && previewImages.length === 0)"
-          title="发送"
+          :disabled="!selectedAgent || (!inputValue.trim() && previewImages.length === 0 && !isAgentResponding)"
+          :title="isAgentResponding ? '停止响应' : '发送'"
+          :class="{ 'stop-btn': isAgentResponding }"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <!-- 发送图标 -->
+          <svg v-if="!isAgentResponding" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+          </svg>
+          <!-- 停止图标 -->
+          <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12" rx="1"></rect>
           </svg>
         </button>
       </div>
@@ -162,10 +168,15 @@ const props = defineProps({
   autoFocus: {
     type: Boolean,
     default: true
+  },
+  // 新增：agent是否正在响应的状态
+  isAgentResponding: {
+    type: Boolean,
+    default: false
   }
 });
 
-const emit = defineEmits(['send', 'select-agent', 'upload-file', 'adjust-tone']);
+const emit = defineEmits(['send', 'select-agent', 'upload-file', 'adjust-tone', 'stop-response']);
 
 // 状态变量
 const inputRef = ref(null);
@@ -342,8 +353,15 @@ const removeImage = (index) => {
   previewImages.value.splice(index, 1);
 };
 
-// 发送消息
+// 发送消息或停止响应
 const handleSendMessage = () => {
+  // 如果agent正在响应，则停止响应
+  if (props.isAgentResponding) {
+    emit('stop-response');
+    return;
+  }
+
+  // 否则正常发送消息
   if (!selectedAgent.value) {
     message.warning('请先选择AI助手');
     return;
@@ -658,6 +676,16 @@ const handleAdjust = (adjustType) => {
   background: #d1d5db;
   color: #9ca3af;
   cursor: not-allowed;
+}
+
+/* 停止按钮样式 */
+.send-btn.stop-btn {
+  background: #ef4444;
+  color: white;
+}
+
+.send-btn.stop-btn:hover:not(:disabled) {
+  background: #dc2626;
 }
 
 .agent-tag {

@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import uuid
 
 from backend.schemas.chat import (
     ChatRequest, ChatCompletionResponse, ChatCreate, ChatUpdate, 
@@ -18,7 +19,7 @@ from backend.services.chat import (
 )
 from backend.crud.chat import (
     get_user_chats, get_chat, create_chat, update_chat_title, 
-    soft_delete_chat, get_chat_messages, get_latest_chat, soft_delete_messages_after
+    soft_delete_chat, get_chat_messages, get_latest_chat, soft_delete_messages_after, add_message
 )
 from backend.core.response import SuccessResponse
 from backend.utils.logging import api_logger
@@ -558,7 +559,7 @@ async def get_chat_session(
     """
     api_logger.info(f"获取聊天会话详情: conversation_id={conversation_id}, user={current_user.username}")
     
-    # 获取会话基本信息
+    # 验证会话是否属于当前用户
     chat = await get_chat(db, conversation_id)
     if not chat or chat.user_id != current_user.id:
         api_logger.warning(f"聊天会话不存在或无权访问: conversation_id={conversation_id}, user={current_user.username}")
@@ -1404,4 +1405,137 @@ async def get_chat_history_endpoint(
         }
         result.append(message_data)
     
-    return result 
+    return result
+
+
+@router.post("/stop-and-save")
+async def stop_and_save_response(
+    request: Request,
+    stop_request: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    停止Agent响应并保存当前已生成的内容
+    """
+    request_id = str(uuid.uuid4())
+    api_logger.info(f"收到停止并保存响应请求: {stop_request}, request_id={request_id}")
+    
+    try:
+        conversation_id = stop_request.get("conversation_id")
+        current_content = stop_request.get("current_content", "")
+        user_content = stop_request.get("user_content", "")
+        agent_id = stop_request.get("agent_id")
+        
+        if not conversation_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="缺少会话ID"
+            )
+        
+        # 验证会话是否属于当前用户
+        chat = await get_chat(db, conversation_id)
+        if not chat or chat.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="会话不存在或无权访问"
+            )
+        
+        # 如果有内容需要保存，保存Agent消息
+        if current_content.strip():
+            from backend.crud.chat import add_message
+            
+            # 计算token数量（简单估算）
+            tokens = len(current_content) // 4
+            prompt_tokens = len(user_content) // 4 if user_content else 0
+            total_tokens = tokens + prompt_tokens
+            
+            # 如果提供了用户内容，且会话中还没有用户消息，先保存用户消息
+            if user_content.strip():
+                # 检查会话中最新的消息是否是用户消息
+                existing_messages = await get_chat_messages(db, conversation_id)
+                if not existing_messages or existing_messages[-1].role != "user":
+                    # 保存用户消息
+                    user_message = await add_message(
+                        db=db,
+                        conversation_id=conversation_id,
+                        role="user",
+                        content=user_content,
+                        tokens=prompt_tokens,
+                        prompt_tokens=0,
+                        total_tokens=prompt_tokens,
+                        agent_id=agent_id
+                    )
+                    
+                    # 添加到记忆服务
+                    from backend.services.memory import memory_service
+                    memory_service.add_user_message(conversation_id, user_content, current_user.id)
+                    
+                    api_logger.info(f"已保存停止时的用户消息: conversation_id={conversation_id}, message_id={user_message.id}")
+            
+            # 保存Agent的部分响应
+            ai_message = await add_message(
+                db=db,
+                conversation_id=conversation_id,
+                role="assistant",
+                content=current_content,
+                tokens=tokens,
+                prompt_tokens=prompt_tokens,
+                total_tokens=total_tokens,
+                agent_id=agent_id
+            )
+            
+            # 添加到记忆服务
+            from backend.services.memory import memory_service
+            memory_service.add_assistant_message(conversation_id, current_content, current_user.id)
+            
+            api_logger.info(f"已保存停止时的Agent响应: conversation_id={conversation_id}, message_id={ai_message.id}, content_length={len(current_content)}")
+        elif user_content.strip():
+            # 如果只有用户内容没有Agent响应，也要保存用户消息
+            from backend.crud.chat import add_message
+            
+            prompt_tokens = len(user_content) // 4
+            
+            # 检查会话中最新的消息是否是用户消息
+            existing_messages = await get_chat_messages(db, conversation_id)
+            if not existing_messages or existing_messages[-1].role != "user":
+                # 保存用户消息
+                user_message = await add_message(
+                    db=db,
+                    conversation_id=conversation_id,
+                    role="user",
+                    content=user_content,
+                    tokens=prompt_tokens,
+                    prompt_tokens=0,
+                    total_tokens=prompt_tokens,
+                    agent_id=agent_id
+                )
+                
+                # 添加到记忆服务
+                from backend.services.memory import memory_service
+                memory_service.add_user_message(conversation_id, user_content, current_user.id)
+                
+                api_logger.info(f"已保存停止时的用户消息: conversation_id={conversation_id}, message_id={user_message.id}")
+        
+        return {
+            "code": 200,
+            "msg": "成功保存停止时的响应内容",
+            "data": {
+                "conversation_id": conversation_id,
+                "content_saved": len(current_content) > 0,
+                "content_length": len(current_content),
+                "user_content_saved": len(user_content.strip()) > 0
+            },
+            "errors": None,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "request_id": request_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        api_logger.error(f"停止并保存响应失败: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"停止并保存响应失败: {str(e)}"
+        ) 

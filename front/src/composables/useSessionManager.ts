@@ -28,6 +28,15 @@ export function useSessionManager() {
   const sidebarAgentResponse = ref('');
   const sidebarIsAgentResponding = ref(false);
 
+  // 添加当前响应控制器的引用
+  const currentResponseController = ref<AbortController | null>(null);
+  
+  // 添加当前响应的会话ID引用，用于停止时获取正确的会话ID
+  const currentResponseConversationId = ref<number | null>(null);
+  
+  // 添加当前用户消息内容的引用，用于停止时保存
+  const currentUserMessageContent = ref<string>('');
+
   // 获取会话详情
   const fetchSessionDetail = async (sessionId: number) => {
     try {
@@ -145,6 +154,12 @@ export function useSessionManager() {
       sidebarAgentResponse.value = ''; // 清空之前的响应
       let finalConversationId = currentSessionId?.value;
       
+      // 初始化当前响应的会话ID
+      currentResponseConversationId.value = currentSessionId?.value ? Number(currentSessionId.value) : null;
+      
+      // 记录当前用户消息内容
+      currentUserMessageContent.value = data.content || '';
+      
       // 获取笔记ID的值
       const noteIdValue = currentNoteId?.value;
       console.log('发送请求时的笔记ID:', noteIdValue);
@@ -164,8 +179,8 @@ export function useSessionManager() {
         console.log('图片URL列表:', data.images.map((img: any) => img.url));
       }
       
-      // 使用chatService的streamChat方法
-      const abortController = await chatService.streamChat(chatRequest, (response, isComplete, conversationId, toolStatus, reasoningContent) => {
+      // 使用chatService的streamChat方法，保存控制器引用
+      currentResponseController.value = await chatService.streamChat(chatRequest, (response, isComplete, conversationId, toolStatus, reasoningContent) => {
         // 流式响应回调
         console.log('收到流式响应:', { response, isComplete, conversationId, toolStatus, reasoningContent });
         
@@ -215,12 +230,15 @@ export function useSessionManager() {
         // 更新会话ID
         if (conversationId && conversationId !== finalConversationId) {
           finalConversationId = conversationId;
+          // 同时更新当前响应的会话ID引用
+          currentResponseConversationId.value = conversationId;
           console.log('更新会话ID:', finalConversationId);
         }
         
         if (isComplete) {
           console.log('流式响应完成');
           sidebarIsAgentResponding.value = false;
+          currentResponseController.value = null; // 清空控制器引用
           
           // 注意：不再在末尾插入工具状态HTML，现在使用 contentChunks 系统
           
@@ -240,7 +258,7 @@ export function useSessionManager() {
           // 延迟一小段时间后刷新会话历史记录，确保服务器端消息已保存并获取到正确的消息ID
           setTimeout(async () => {
             if (sidebarAgentResponse.value && (finalConversationId || currentSessionId?.value)) {
-                             const sessionIdToUse = finalConversationId || currentSessionId?.value;
+              const sessionIdToUse = finalConversationId || currentSessionId?.value;
               console.log('流式输出完成，刷新会话历史记录以获取消息ID，会话ID:', sessionIdToUse);
               
               try {
@@ -280,6 +298,12 @@ export function useSessionManager() {
                 console.log('添加到会话历史记录，总条数:', sidebarConversationHistory.value.length);
               }
             }
+            
+            // 清空当前响应的会话ID引用（响应完成）
+            currentResponseConversationId.value = null;
+            
+            // 清空当前用户消息内容引用
+            currentUserMessageContent.value = '';
           }, 800); // 增加延迟时间，确保服务器端消息已完全保存
         }
         
@@ -290,7 +314,118 @@ export function useSessionManager() {
       console.error('发送消息失败:', error);
       sidebarAgentResponse.value = `抱歉，AI助手出错了: ${error.message || '未知错误'}`;
       sidebarIsAgentResponding.value = false;
+      currentResponseController.value = null; // 清空控制器引用
+      currentResponseConversationId.value = null; // 清空当前响应的会话ID引用（异常）
+      currentUserMessageContent.value = ''; // 清空当前用户消息内容引用（异常）
       throw error;
+    }
+  };
+
+  // 停止Agent响应
+  const handleStopResponse = async () => {
+    console.log('[useSessionManager] 停止Agent响应');
+    
+    if (currentResponseController.value) {
+      console.log('[useSessionManager] 找到当前响应控制器，执行停止');
+      
+      // 保存当前状态到变量，因为停止后可能会被清空
+      // 优先使用当前响应的会话ID，如果没有则使用全局会话ID
+      const conversationId = currentResponseConversationId.value || currentSessionId?.value;
+      const currentContent = sidebarAgentResponse.value;
+      
+      // 获取当前用户输入的内容（用于首次聊天时保存）
+      const lastUserMessage = currentUserMessageContent.value || 
+        (sidebarConversationHistory.value.length > 0 ? 
+          sidebarConversationHistory.value[sidebarConversationHistory.value.length - 1]?.user || '' : '');
+      
+      console.log('[useSessionManager] 停止响应时的状态:', {
+        currentResponseConversationId: currentResponseConversationId.value,
+        globalSessionId: currentSessionId?.value,
+        selectedConversationId: conversationId,
+        contentLength: currentContent?.length || 0,
+        lastUserMessage: lastUserMessage.substring(0, 50) + '...'
+      });
+      
+      // 停止流式响应
+      currentResponseController.value.abort();
+      currentResponseController.value = null;
+      sidebarIsAgentResponding.value = false;
+      
+      // 提示用户停止操作正在进行
+      message.info('正在停止响应并保存已生成的内容...');
+      
+      // 如果有内容需要保存，调用后端API保存
+      if (currentContent && currentContent.trim() && conversationId) {
+        try {
+          console.log('[useSessionManager] 调用后端API保存停止时的内容，会话ID:', conversationId);
+          const saved = await chatService.stopAndSaveResponse(
+            Number(conversationId),
+            currentContent,
+            lastUserMessage, // 传递用户消息内容，确保首次聊天时用户消息也被保存
+            undefined // agent_id 在后端可以从消息历史中推断
+          );
+          
+          if (saved) {
+            console.log('[useSessionManager] 停止时的内容已成功保存到数据库');
+            message.success('已停止响应并保存内容到历史记录');
+            
+            // 如果是新建笔记的首次聊天，更新全局会话ID
+            if (!currentSessionId?.value && currentResponseConversationId.value && currentSessionId) {
+              currentSessionId.value = currentResponseConversationId.value;
+              console.log('[useSessionManager] 更新全局会话ID为:', currentResponseConversationId.value);
+            }
+          } else {
+            console.warn('[useSessionManager] 停止时的内容保存失败');
+            message.warning('已停止响应，但保存内容时出现问题');
+          }
+        } catch (error) {
+          console.error('[useSessionManager] 保存停止时的内容时出错:', error);
+          message.error('已停止响应，但保存内容失败');
+        }
+      } else {
+        console.log('[useSessionManager] 停止时没有内容需要保存或没有会话ID:', {
+          hasContent: !!(currentContent && currentContent.trim()),
+          hasConversationId: !!conversationId,
+          contentPreview: currentContent?.substring(0, 50) + '...'
+        });
+        
+        if (!conversationId) {
+          message.warning('已停止响应，但无法保存内容（没有会话ID）');
+        } else {
+          message.success('已停止响应');
+        }
+      }
+      
+      // 延迟刷新历史记录，确保服务器端数据已保存
+      setTimeout(async () => {
+        try {
+          const idToUse = conversationId;
+          if (idToUse) {
+            console.log('[useSessionManager] 停止后刷新会话历史记录，使用会话ID:', idToUse);
+            // 重新获取会话历史记录，确保包含最新的消息（包括被停止的消息）
+            const agentHistory = await chatService.getSessionAgentHistory(Number(idToUse));
+            if (agentHistory && agentHistory.length > 0) {
+              sidebarConversationHistory.value = [...agentHistory];
+              sidebarHistoryLength.value = agentHistory.length;
+              sidebarHistoryIndex.value = agentHistory.length - 1;
+              console.log('[useSessionManager] 停止后刷新会话历史记录成功，条数:', agentHistory.length);
+            }
+          }
+        } catch (error) {
+          console.error('[useSessionManager] 停止后刷新会话历史记录失败:', error);
+        }
+      }, 1000); // 增加延迟，确保后端有足够时间保存数据
+      
+      // 清空当前响应的会话ID引用
+      currentResponseConversationId.value = null;
+      
+      // 清空当前用户消息内容引用
+      currentUserMessageContent.value = '';
+      
+      console.log('[useSessionManager] Agent响应已停止');
+    } else {
+      console.log('[useSessionManager] 没有找到当前响应控制器，可能已经完成或未开始');
+      message.info('没有正在进行的响应可以停止');
     }
   };
 
@@ -389,6 +524,7 @@ export function useSessionManager() {
     handleSidebarSend,
     handleSidebarNavigateHistory,
     handleSidebarEditMessage,
+    handleStopResponse,
     fetchSessions
   };
 } 

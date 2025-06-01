@@ -55,6 +55,7 @@ const handleNoteEditorResult = (toolResult: any) => {
         console.log('[AgentSidebarToolStatus] 解析JSON后的结果:', resultData);
       } catch (e) {
         console.warn('[AgentSidebarToolStatus] 无法解析工具结果为JSON:', e);
+        console.warn('[AgentSidebarToolStatus] 原始字符串内容:', toolResult);
         return null;
       }
     }
@@ -64,14 +65,16 @@ const handleNoteEditorResult = (toolResult: any) => {
       note_id: resultData?.note_id,
       content_exists: resultData?.content !== undefined,
       content_length: resultData?.content?.length || 0,
-      is_preview: resultData?.is_preview
+      is_preview: resultData?.is_preview,
+      title: resultData?.title,
+      edit_type: resultData?.edit_type
     });
     
     // 检查是否是成功的笔记编辑结果
     if (resultData && resultData.success && resultData.note_id && resultData.content !== undefined) {
       console.log('[AgentSidebarToolStatus] 笔记编辑成功，准备返回预览数据');
       
-      return {
+      const previewData = {
         noteId: resultData.note_id,
         title: resultData.title,
         content: resultData.content,
@@ -81,12 +84,21 @@ const handleNoteEditorResult = (toolResult: any) => {
         updatedAt: resultData.updated_at,
         contentPreview: resultData.content_preview
       };
+      
+      console.log('[AgentSidebarToolStatus] 即将返回的预览数据:', previewData);
+      return previewData;
     } else {
       console.log('[AgentSidebarToolStatus] 笔记编辑结果不符合预期格式:', {
         has_success: !!resultData?.success,
+        success_value: resultData?.success,
         has_note_id: !!resultData?.note_id,
-        has_content: resultData?.content !== undefined
+        note_id_value: resultData?.note_id,
+        has_content: resultData?.content !== undefined,
+        content_sample: resultData?.content?.substring(0, 100)
       });
+      
+      // 尝试查看是否有其他可能的字段名称
+      console.log('[AgentSidebarToolStatus] 可用的字段:', Object.keys(resultData || {}));
     }
   } catch (error) {
     console.error('[AgentSidebarToolStatus] 处理笔记编辑结果时出错:', error);

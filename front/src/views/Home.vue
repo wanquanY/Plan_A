@@ -366,6 +366,12 @@ const handleNoteEditPreview = (previewData: any) => {
   }
 };
 
+// 处理停止Agent响应
+const handleStopResponse = () => {
+  console.log('[Home.vue] 用户请求停止Agent响应');
+  sessionManager.handleStopResponse();
+};
+
 // 关闭侧边栏
 const closeSidebar = () => {
   const result = sidebarManager.closeSidebar(editorRef);
@@ -483,6 +489,7 @@ onMounted(() => {
               @edit-message="handleSidebarEditMessage"
               @resize="handleSidebarResize"
               @note-edit-preview="handleNoteEditPreview"
+              @stop-response="handleStopResponse"
               ref="agentSidebarRef"
             />
           </div>

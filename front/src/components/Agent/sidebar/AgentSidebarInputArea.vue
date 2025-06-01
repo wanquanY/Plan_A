@@ -4,6 +4,8 @@
       @send="$emit('send', $event)"
       @select-agent="$emit('select-agent', $event)"
       @upload-file="$emit('upload-file')"
+      @stop-response="$emit('stop-response')"
+      :is-agent-responding="isAgentResponding"
       ref="unifiedInputRef"
     />
   </div>
@@ -13,7 +15,14 @@
 import { ref } from 'vue';
 import UnifiedInput from '../../unified-input/UnifiedInput.vue';
 
-const emit = defineEmits(['send', 'select-agent', 'upload-file']);
+const props = defineProps({
+  isAgentResponding: {
+    type: Boolean,
+    default: false
+  }
+});
+
+const emit = defineEmits(['send', 'select-agent', 'upload-file', 'stop-response']);
 
 const unifiedInputRef = ref(null);
 

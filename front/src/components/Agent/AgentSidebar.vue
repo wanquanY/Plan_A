@@ -23,6 +23,8 @@
       @send="handleSendMessage"
       @select-agent="handleSelectAgent"
       @upload-file="handleUploadFile"
+      @stop-response="handleStopResponse"
+      :is-agent-responding="isAgentResponding"
       ref="inputAreaRef"
     />
 
@@ -76,7 +78,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message', 'resize', 'note-edit-preview']);
+const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message', 'resize', 'note-edit-preview', 'stop-response']);
 
 // 组件引用
 const messageListRef = ref(null);
@@ -190,22 +192,32 @@ const enhancedHandleToolStatus = (toolStatus: any) => {
   // 如果是笔记编辑工具结果，进行特殊处理
   if (result && result.type === 'note_editor_result') {
     console.log('[AgentSidebar] 检测到笔记编辑工具结果，开始处理预览');
+    console.log('[AgentSidebar] toolStatusRef是否存在:', !!toolStatusRef.value);
+    console.log('[AgentSidebar] handleNoteEditorResult方法是否存在:', typeof toolStatusRef.value?.handleNoteEditorResult);
+    
     const noteEditData = toolStatusRef.value?.handleNoteEditorResult(result.result);
     if (noteEditData) {
       console.log('[AgentSidebar] 笔记编辑数据处理成功，发射预览事件:', noteEditData);
       emit('note-edit-preview', noteEditData);
     } else {
-      console.warn('[AgentSidebar] 笔记编辑数据处理失败');
+      console.warn('[AgentSidebar] 笔记编辑数据处理失败 - handleNoteEditorResult返回null');
+      console.warn('[AgentSidebar] 原始工具结果:', result.result);
     }
   }
   
   // 也检查工具状态本身是否是笔记编辑工具的完成状态
   if (toolStatus.tool_name === 'note_editor' && toolStatus.status === 'completed' && toolStatus.result) {
     console.log('[AgentSidebar] 直接检测到笔记编辑工具完成状态');
+    console.log('[AgentSidebar] toolStatusRef是否存在:', !!toolStatusRef.value);
+    console.log('[AgentSidebar] handleNoteEditorResult方法是否存在:', typeof toolStatusRef.value?.handleNoteEditorResult);
+    
     const noteEditData = toolStatusRef.value?.handleNoteEditorResult(toolStatus.result);
     if (noteEditData) {
       console.log('[AgentSidebar] 直接处理笔记编辑结果成功，发射预览事件:', noteEditData);
       emit('note-edit-preview', noteEditData);
+    } else {
+      console.warn('[AgentSidebar] 直接处理笔记编辑结果失败 - handleNoteEditorResult返回null');
+      console.warn('[AgentSidebar] 原始工具状态结果:', toolStatus.result);
     }
   }
 };
@@ -461,6 +473,12 @@ onMounted(() => {
 defineExpose({
   handleToolStatus: enhancedHandleToolStatus
 });
+
+// 停止Agent响应
+const handleStopResponse = () => {
+  console.log('[AgentSidebar] 用户请求停止响应');
+  emit('stop-response');
+};
 </script>
 
 <style scoped>
