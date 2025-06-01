@@ -418,8 +418,9 @@ const handleHistoryNavigation = (payload: any) => {
   }
 };
 
-const handleInsertResponse = async (responseText: string) => {
-  if (editorState.interactionMode.value === 'sidebar') {
+const handleInsertResponse = async (responseText: string, fromSidebar = false) => {
+  // 如果是从侧边栏来的插入请求，不要再次发出sidebar-insert事件，直接插入
+  if (editorState.interactionMode.value === 'sidebar' && !fromSidebar) {
     emit('sidebar-insert', responseText);
     return;
   }

@@ -26,7 +26,7 @@
                     :tool-call-id="chunk.tool_call_id || ''"
                     :result="chunk.result"
                     :error="chunk.error"
-                    :key="`tool-${chunk.tool_call_id}-${chunk.status}`"
+                    :key="`tool-typing-${chunk.tool_call_id || index}`"
                   />
                 </div>
               </template>
@@ -54,7 +54,7 @@
                     :tool-call-id="chunk.tool_call_id || ''"
                     :result="chunk.result"
                     :error="chunk.error"
-                    :key="`tool-completed-${chunk.tool_call_id}`"
+                    :key="`tool-final-${chunk.tool_call_id || index}`"
                   />
                 </div>
               </template>
@@ -377,9 +377,7 @@ watch(() => props.agentResponse, (newValue) => {
       
       // 触发特殊组件渲染
       nextTick(() => {
-        setTimeout(() => {
-          renderSpecialComponents();
-        }, 100);
+        renderSpecialComponents();
       });
     }
   }
@@ -418,9 +416,7 @@ watch(() => props.isAgentResponding, (newValue, oldValue) => {
     }
     
     nextTick(() => {
-      setTimeout(() => {
-        renderSpecialComponents();
-      }, 200);
+      renderSpecialComponents();
     });
   }
 });

@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, createApp } from 'vue';
+import { ref, onMounted, onUnmounted, createApp, nextTick } from 'vue';
 import chatService from '@/services/chat';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -622,18 +622,18 @@ const triggerChatRequest = async (agentId, userInputContent, responseParagraph =
           if (currentResponseElement) {
             updateResponseContent(currentResponseElement, finalContent);
             
-            // 流式响应结束后，延迟渲染特殊组件
-            setTimeout(() => {
+            // 流式响应结束后，立即渲染特殊组件，不要延迟
+            nextTick(() => {
               agentResponseService.processRenderedHtml(finalContent, currentResponseElement, true);
               
-              // 触发特殊组件渲染
-              setTimeout(() => {
+              // 立即触发特殊组件渲染
+              nextTick(() => {
                 const { renderContentComponents } = import('../../services/renderService');
                 renderContentComponents.then(module => {
                   module.renderContentComponents(true);
                 });
-              }, 200);
-            }, 300);
+              });
+            });
           }
           
           console.log(`[AgentResponseHandler] Stream ended. Emitting complete. ConvID: ${convId}, Response: ${finalContent}`);

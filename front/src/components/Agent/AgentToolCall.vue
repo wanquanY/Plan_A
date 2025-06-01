@@ -1,5 +1,5 @@
 <template>
-  <div class="tool-call-card" :class="status">
+  <div class="tool-call-card" :class="status" :key="`${toolCallId}-${status}`">
     <div class="tool-call-header" @click="toggleResult">
       <span class="tool-icon">{{ getToolStatusIcon(status) }}</span>
       <span class="tool-name">{{ getToolDisplayName(toolName) }}</span>
@@ -44,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 
 interface Props {
   toolName: string;
@@ -55,6 +55,13 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+
+// 添加调试日志来跟踪状态变化
+watch(() => props.status, (newStatus, oldStatus) => {
+  if (newStatus !== oldStatus) {
+    console.log(`[AgentToolCall] 工具状态变化: ${props.toolName}(${props.toolCallId}) ${oldStatus} -> ${newStatus}`);
+  }
+}, { immediate: true });
 
 const isExpanded = ref(false);
 

@@ -108,7 +108,7 @@ export function useAgentChat() {
     return messages.value.find(msg => 
       msg.type === 'agent' && 
       msg.isTyping && 
-      (!msg.id || (!msg.id.includes('edit_') && !msg.id.startsWith('history_')))
+      (!msg.id || (!msg.id.includes('edit_') && !msg.id.includes('edit_agent_') && !msg.id.startsWith('history_')))
     );
   };
 

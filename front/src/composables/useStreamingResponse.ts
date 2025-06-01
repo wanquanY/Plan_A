@@ -6,6 +6,7 @@ export function useStreamingResponse() {
   // 处理工具状态更新
   const handleToolStatus = (toolStatus: any, currentMsg: ChatMessage) => {
     console.log('处理工具状态:', toolStatus);
+    console.log('目标消息ID:', currentMsg.id, '当前contentChunks数量:', currentMsg.contentChunks?.length || 0);
     
     // 忽略 tools_completed 状态，这是一个总体完成状态，不需要显示
     if (toolStatus.type === 'tools_completed') {
@@ -71,6 +72,7 @@ export function useStreamingResponse() {
     if (existingIndex !== -1) {
       // 更新现有的工具状态，保持原有时间戳
       const existingChunk = currentMsg.contentChunks[existingIndex];
+      console.log('找到现有工具状态，更新从:', existingChunk.status, '到:', toolChunk.status);
       Object.assign(existingChunk, {
         ...toolChunk,
         timestamp: existingChunk.timestamp // 保持原有时间戳
@@ -82,7 +84,12 @@ export function useStreamingResponse() {
       console.log('添加新工具状态到内容流:', toolChunk);
     }
     
-    console.log('当前内容块数量:', currentMsg.contentChunks.length);
+    console.log('处理工具状态后，当前内容块数量:', currentMsg.contentChunks.length);
+    console.log('当前所有工具状态块:', currentMsg.contentChunks.filter(c => c.type === 'tool_status').map(c => ({
+      tool_name: c.tool_name,
+      status: c.status,
+      tool_call_id: c.tool_call_id
+    })));
   };
 
   // 处理流式文本更新
@@ -149,6 +156,7 @@ export function useStreamingResponse() {
         if (firstTextChunk) {
           // 更新现有文本块
           firstTextChunk.content = newResponse;
+          console.log('更新现有文本块，长度:', newResponse.length);
         } else {
           // 初始化baseTimestamp如果不存在
           if (!currentMsg.baseTimestamp) {
@@ -163,6 +171,7 @@ export function useStreamingResponse() {
             segmentIndex: 0
           };
           currentMsg.contentChunks.push(firstTextChunk);
+          console.log('创建第一个文本块，长度:', newResponse.length);
         }
         currentMsg.lastTextLength = currentTextLength;
       }

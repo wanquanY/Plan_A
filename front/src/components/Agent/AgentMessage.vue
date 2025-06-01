@@ -189,7 +189,7 @@
                   :tool-call-id="chunk.tool_call_id || ''"
                   :result="chunk.result"
                   :error="chunk.error"
-                  :key="`tool-${chunk.tool_call_id}-${chunk.status || 'default'}`"
+                  :key="`tool-${chunk.tool_call_id || index}`"
                 />
               </div>
             </template>
