@@ -14,6 +14,8 @@ from backend.core.response import SuccessResponse, ErrorResponse
 from backend.services.memory import memory_service
 from backend.services.chat import get_chat_messages
 from backend.utils.logging import api_logger
+from backend.crud.note_session import note_session
+from backend.crud.chat import get_chat_messages
 
 router = APIRouter()
 
@@ -29,7 +31,6 @@ async def create_note(
         # 创建新笔记，不再自动创建会话
         new_note = Note(
             user_id=current_user.id,
-            session_id=None,  # 初始没有关联会话，只有通过@agent交互后才会创建会话
             title=note_data.title if note_data.title is not None else "",  # 如果标题为None则设为空字符串，不再使用默认标题
             content=note_data.content or "",
             is_public=note_data.is_public or False
@@ -42,7 +43,7 @@ async def create_note(
             data={
                 "note_id": new_note.id,
                 "title": new_note.title,
-                "session_id": new_note.session_id
+                "session_id": None  # 新创建的笔记没有关联会话
             },
             msg="笔记创建成功"
         )
@@ -82,10 +83,14 @@ async def get_notes(
         
         notes_list = []
         for note in notes:
+            # 获取笔记的主要会话ID
+            primary_session = await note_session.get_primary_session_by_note(db, note.id)
+            session_id = primary_session.id if primary_session else None
+            
             notes_list.append({
                 "id": note.id,
                 "title": note.title,
-                "session_id": note.session_id,
+                "session_id": session_id,
                 "is_public": note.is_public,
                 "created_at": note.created_at.isoformat() if note.created_at else None,
                 "updated_at": note.updated_at.isoformat() if note.updated_at else None
@@ -123,18 +128,22 @@ async def get_note(
         if not note:
             return ErrorResponse(msg="笔记不存在或已删除")
         
+        # 获取笔记的主要会话
+        primary_session = await note_session.get_primary_session_by_note(db, note.id)
+        session_id = primary_session.id if primary_session else None
+        
         # 如果笔记关联了会话，尝试恢复会话记忆到Redis
-        if note.session_id:
+        if session_id:
             try:
                 # 获取会话记忆当前状态
-                memory_messages = memory_service.get_messages(note.session_id)
+                memory_messages = memory_service.get_messages(session_id)
                 
                 # 如果Redis中没有该会话的记忆，则尝试从数据库恢复
                 if not memory_messages:
-                    api_logger.info(f"笔记 {note_id} 关联的会话 {note.session_id} 在Redis中没有记忆，尝试恢复")
+                    api_logger.info(f"笔记 {note_id} 关联的会话 {session_id} 在Redis中没有记忆，尝试恢复")
                     
                     # 获取会话历史消息
-                    db_messages = await get_chat_messages(db, note.session_id)
+                    db_messages = await get_chat_messages(db, session_id)
                     
                     # 格式化消息并恢复到Redis
                     formatted_messages = [
@@ -144,21 +153,50 @@ async def get_note(
                     ]
                     
                     # 恢复记忆，传递用户ID进行管理
-                    restored = memory_service.restore_memory_from_db(note.session_id, formatted_messages, current_user.id)
+                    restored = memory_service.restore_memory_from_db(session_id, formatted_messages, current_user.id)
                     if restored:
-                        api_logger.info(f"已自动恢复笔记 {note_id} 关联的会话 {note.session_id} 记忆，共 {len(formatted_messages)} 条消息")
+                        api_logger.info(f"已自动恢复笔记 {note_id} 关联的会话 {session_id} 记忆，共 {len(formatted_messages)} 条消息")
                     else:
-                        api_logger.warning(f"笔记 {note_id} 关联的会话 {note.session_id} 没有可恢复的历史消息")
+                        api_logger.warning(f"笔记 {note_id} 关联的会话 {session_id} 没有可恢复的历史消息")
             except Exception as e:
                 # 恢复记忆失败不影响笔记获取
-                api_logger.error(f"自动恢复笔记 {note_id} 关联的会话 {note.session_id} 记忆失败: {str(e)}", exc_info=True)
+                api_logger.error(f"自动恢复笔记 {note_id} 关联的会话 {session_id} 记忆失败: {str(e)}", exc_info=True)
+        
+        # 获取所有关联的会话
+        sessions = await note_session.get_sessions_by_note(db, note.id)
+        primary_session = await note_session.get_primary_session_by_note(db, note.id)
+        
+        session_list = []
+        for session in sessions:
+            # 获取会话的消息数量和最后一条消息
+            messages = await get_chat_messages(db, session.id)
+            message_count = len(messages) if messages else 0
+            
+            # 获取最后一条消息内容
+            last_message = None
+            if message_count > 0:
+                # 直接使用完整的消息内容，不进行截断
+                last_message = messages[-1].content if messages[-1].content else None
+            
+            session_info = {
+                "id": session.id,
+                "title": session.title,
+                "is_primary": session.id == (primary_session.id if primary_session else None),
+                "agent_id": session.agent_id,
+                "message_count": message_count,
+                "last_message": last_message,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "updated_at": session.updated_at.isoformat() if session.updated_at else None
+            }
+            session_list.append(session_info)
         
         return SuccessResponse(
             data={
                 "id": note.id,
                 "title": note.title,
                 "content": note.content,
-                "session_id": note.session_id,
+                "session_id": session_id,  # 主要会话ID（向后兼容）
+                "sessions": session_list,  # 所有关联的会话
                 "is_public": note.is_public,
                 "last_edited_position": note.last_edited_position,
                 "created_at": note.created_at.isoformat() if note.created_at else None,
@@ -206,11 +244,15 @@ async def update_note(
         await db.commit()
         await db.refresh(note)
         
+        # 获取主要会话ID
+        primary_session = await note_session.get_primary_session_by_note(db, note.id)
+        session_id = primary_session.id if primary_session else None
+        
         return SuccessResponse(
             data={
                 "id": note.id,
                 "title": note.title,
-                "session_id": note.session_id,
+                "session_id": session_id,
                 "updated_at": note.updated_at.isoformat() if note.updated_at else None
             },
             msg="笔记更新成功"
@@ -442,4 +484,178 @@ async def apply_edit_preview(
     except Exception as e:
         api_logger.error(f"应用预览编辑失败: {str(e)}", exc_info=True)
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"应用编辑时发生错误: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"应用编辑时发生错误: {str(e)}")
+
+
+@router.post("/{note_id}/sessions/{session_id}/link")
+async def link_note_to_session(
+    note_id: int,
+    session_id: int,
+    is_primary: bool = False,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user)
+):
+    """将笔记关联到会话"""
+    try:
+        # 验证笔记存在且属于当前用户
+        note_stmt = select(Note).where(
+            Note.id == note_id,
+            Note.user_id == current_user.id,
+            Note.is_deleted == False
+        )
+        note_result = await db.execute(note_stmt)
+        note = note_result.scalar_one_or_none()
+        
+        if not note:
+            return ErrorResponse(msg="笔记不存在或已删除")
+        
+        # 验证会话存在且属于当前用户
+        session_stmt = select(Chat).where(
+            Chat.id == session_id,
+            Chat.user_id == current_user.id,
+            Chat.is_deleted == False
+        )
+        session_result = await db.execute(session_stmt)
+        session = session_result.scalar_one_or_none()
+        
+        if not session:
+            return ErrorResponse(msg="会话不存在或已删除")
+        
+        # 创建关联
+        note_session_link = await note_session.create_note_session_link(
+            db, note_id, session_id, is_primary
+        )
+        
+        return SuccessResponse(
+            data={
+                "note_id": note_id,
+                "session_id": session_id,
+                "is_primary": note_session_link.is_primary
+            },
+            msg="笔记会话关联成功"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"关联笔记会话时发生错误: {str(e)}")
+
+
+@router.delete("/{note_id}/sessions/{session_id}/unlink")
+async def unlink_note_from_session(
+    note_id: int,
+    session_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user)
+):
+    """取消笔记和会话的关联"""
+    try:
+        # 验证笔记属于当前用户
+        note_stmt = select(Note).where(
+            Note.id == note_id,
+            Note.user_id == current_user.id,
+            Note.is_deleted == False
+        )
+        note_result = await db.execute(note_stmt)
+        note = note_result.scalar_one_or_none()
+        
+        if not note:
+            return ErrorResponse(msg="笔记不存在或已删除")
+        
+        # 删除关联
+        success = await note_session.remove_note_session_link(db, note_id, session_id)
+        
+        if success:
+            return SuccessResponse(msg="取消关联成功")
+        else:
+            return ErrorResponse(msg="关联不存在")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"取消关联时发生错误: {str(e)}")
+
+
+@router.put("/{note_id}/sessions/{session_id}/set-primary")
+async def set_primary_session(
+    note_id: int,
+    session_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user)
+):
+    """设置笔记的主要会话"""
+    try:
+        # 验证笔记属于当前用户
+        note_stmt = select(Note).where(
+            Note.id == note_id,
+            Note.user_id == current_user.id,
+            Note.is_deleted == False
+        )
+        note_result = await db.execute(note_stmt)
+        note = note_result.scalar_one_or_none()
+        
+        if not note:
+            return ErrorResponse(msg="笔记不存在或已删除")
+        
+        # 设置主要会话
+        success = await note_session.set_primary_session(db, note_id, session_id)
+        
+        if success:
+            return SuccessResponse(msg="主要会话设置成功")
+        else:
+            return ErrorResponse(msg="会话关联不存在")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"设置主要会话时发生错误: {str(e)}")
+
+
+@router.get("/{note_id}/sessions")
+async def get_note_sessions(
+    note_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取笔记的所有关联会话"""
+    try:
+        # 验证笔记属于当前用户
+        note_stmt = select(Note).where(
+            Note.id == note_id,
+            Note.user_id == current_user.id,
+            Note.is_deleted == False
+        )
+        note_result = await db.execute(note_stmt)
+        note = note_result.scalar_one_or_none()
+        
+        if not note:
+            return ErrorResponse(msg="笔记不存在或已删除")
+        
+        # 获取所有关联的会话
+        sessions = await note_session.get_sessions_by_note(db, note_id)
+        primary_session = await note_session.get_primary_session_by_note(db, note_id)
+        
+        session_list = []
+        for session in sessions:
+            # 获取会话的消息数量和最后一条消息
+            messages = await get_chat_messages(db, session.id)
+            message_count = len(messages) if messages else 0
+            
+            # 获取最后一条消息内容
+            last_message = None
+            if message_count > 0:
+                # 直接使用完整的消息内容，不进行截断
+                last_message = messages[-1].content if messages[-1].content else None
+            
+            session_info = {
+                "id": session.id,
+                "title": session.title,
+                "is_primary": session.id == (primary_session.id if primary_session else None),
+                "agent_id": session.agent_id,
+                "message_count": message_count,
+                "last_message": last_message,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "updated_at": session.updated_at.isoformat() if session.updated_at else None
+            }
+            session_list.append(session_info)
+        
+        return SuccessResponse(
+            data={
+                "note_id": note_id,
+                "sessions": session_list
+            },
+            msg="获取笔记会话列表成功"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取笔记会话列表时发生错误: {str(e)}") 

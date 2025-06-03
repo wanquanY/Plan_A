@@ -10,7 +10,6 @@ class Note(BaseModel):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True, index=True)
     title = Column(String(255), nullable=False, default="新笔记")
     content = Column(Text, nullable=False, default="")
     last_edited_position = Column(Integer, nullable=True)  # 用户上次编辑位置
@@ -19,4 +18,19 @@ class Note(BaseModel):
     
     # 关联关系
     user = relationship("User", back_populates="notes")
-    session = relationship("Chat", back_populates="notes", uselist=False) 
+    note_sessions = relationship("NoteSession", back_populates="note", cascade="all, delete-orphan")
+    
+    # 移除会触发懒加载的property方法，改为在需要时通过明确的查询获取
+    # 这些方法会在业务逻辑层通过专门的查询来实现，避免在模型层产生异步问题
+    
+    def get_session_count(self):
+        """获取关联的会话数量（同步方法，仅用于已加载的数据）"""
+        if hasattr(self, '_note_sessions_loaded') and self._note_sessions_loaded:
+            return len([ns for ns in self.note_sessions if not ns.is_deleted])
+        return 0
+    
+    def has_primary_session(self):
+        """检查是否有主要会话（同步方法，仅用于已加载的数据）"""
+        if hasattr(self, '_note_sessions_loaded') and self._note_sessions_loaded:
+            return any(ns.is_primary for ns in self.note_sessions if not ns.is_deleted)
+        return False 

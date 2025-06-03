@@ -4,7 +4,7 @@
     <ResizableHandle @resize="handleResize" />
     
     <!-- 侧边栏头部 -->
-    <AgentSidebarHeader @close="close" />
+    <AgentSidebarHeader @close="close" :noteId="noteId" @session-switched="handleSessionSwitched" ref="headerRef" />
 
     <!-- 聊天消息区域 -->
     <AgentMessageList
@@ -75,15 +75,20 @@ const props = defineProps({
   conversationId: {
     type: [Number, String, null],
     default: null
+  },
+  noteId: {
+    type: [Number, String, null],
+    default: null
   }
 });
 
-const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message', 'resize', 'note-edit-preview', 'stop-response']);
+const emit = defineEmits(['close', 'send', 'select-agent', 'request-insert', 'navigate-history', 'adjust-tone', 'edit-message', 'resize', 'note-edit-preview', 'stop-response', 'session-switched']);
 
 // 组件引用
 const messageListRef = ref(null);
 const inputAreaRef = ref(null);
 const toolStatusRef = ref(null);
+const headerRef = ref(null);
 
 // 使用主要业务逻辑
 const {
@@ -352,6 +357,14 @@ watch(() => props.isAgentResponding, (isResponding) => {
     nextTick(() => {
       toolStatusRef.value?.renderSpecialComponents();
     });
+    
+    // 响应完成后，刷新会话列表（如果有noteId）
+    if (props.noteId && headerRef.value && headerRef.value.refreshSessions) {
+      console.log('[AgentSidebar] 响应完成，刷新会话列表');
+      setTimeout(() => {
+        headerRef.value.refreshSessions();
+      }, 1000); // 稍微延迟一下，确保后端已经生成并保存了会话标题
+    }
   }
 });
 
@@ -478,6 +491,17 @@ defineExpose({
 const handleStopResponse = () => {
   console.log('[AgentSidebar] 用户请求停止响应');
   emit('stop-response');
+};
+
+// 处理会话切换
+const handleSessionSwitched = (sessionId: number) => {
+  console.log('[AgentSidebar] 会话切换到:', sessionId);
+  
+  // 清理当前消息
+  clearMessages();
+  
+  // 发射会话切换事件给父组件，让父组件重新加载会话历史
+  emit('session-switched', sessionId);
 };
 </script>
 

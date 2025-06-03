@@ -68,9 +68,9 @@ onUnmounted(() => {
         <span>用户信息</span>
       </div>
       
-      <div class="menu-item" @click="navigateTo('/agent-management')">
+      <div class="menu-item" @click="navigateTo('/agent/1/edit')">
         <RobotOutlined />
-        <span>Agent 管理</span>
+        <span>设置</span>
       </div>
       
       <div class="menu-divider"></div>

@@ -59,7 +59,7 @@ routeManager.initializeRoute(
     const result = await noteManager.fetchNoteDetail(noteId);
     if (result && result.note) {
       // 如果笔记有关联的session_id，加载会话历史记录到侧边栏
-      if (result.note.session_id && !routeManager.route.query.sessionId) {
+      if (result.note.session_id && !routeManager.route.query.id) {
         console.log(`笔记关联了会话ID: ${result.note.session_id}，设置currentSessionId并加载历史记录`);
         sessionManager.currentSessionId.value = result.note.session_id;
         
@@ -69,7 +69,7 @@ routeManager.initializeRoute(
           console.error('加载关联会话历史记录失败:', error);
         }
       } else {
-        console.log('笔记没有关联的session_id或URL中已有sessionId，清空会话历史');
+        console.log('笔记没有关联的session_id或URL中已有会话ID，清空会话历史');
       }
     }
   },
@@ -143,7 +143,7 @@ routeManager.watchRouteChanges(
     const result = await noteManager.fetchNoteDetail(noteId);
     if (result && result.note) {
       // 如果笔记有关联的session_id，加载会话历史记录到侧边栏
-      if (result.note.session_id && !routeManager.route.query.sessionId) {
+      if (result.note.session_id && !routeManager.route.query.id) {
         console.log(`笔记关联了会话ID: ${result.note.session_id}，设置currentSessionId并加载历史记录`);
         sessionManager.currentSessionId.value = result.note.session_id;
         
@@ -153,7 +153,7 @@ routeManager.watchRouteChanges(
           console.error('加载关联会话历史记录失败:', error);
         }
       } else {
-        console.log('笔记没有关联的session_id或URL中已有sessionId，清空会话历史');
+        console.log('笔记没有关联的session_id或URL中已有会话ID，清空会话历史');
       }
       
       // 处理复杂的渲染逻辑
@@ -372,6 +372,28 @@ const handleStopResponse = () => {
   sessionManager.handleStopResponse();
 };
 
+// 处理会话切换
+const handleSessionSwitched = async (sessionId: number) => {
+  console.log('[Home.vue] 处理会话切换:', sessionId);
+  
+  try {
+    // 更新当前会话ID
+    if (sessionManager.currentSessionId) {
+      sessionManager.currentSessionId.value = sessionId;
+    }
+    
+    // 清理侧边栏历史记录
+    sessionManager.clearSidebarHistory();
+    
+    // 加载新会话的历史记录
+    await sessionManager.loadSessionHistoryToSidebar(sessionId);
+    
+    console.log('[Home.vue] 会话切换完成');
+  } catch (error) {
+    console.error('[Home.vue] 会话切换失败:', error);
+  }
+};
+
 // 关闭侧边栏
 const closeSidebar = () => {
   const result = sidebarManager.closeSidebar(editorRef);
@@ -482,6 +504,7 @@ onMounted(() => {
               :historyLength="sessionManager.sidebarHistoryLength.value"
               :conversationHistory="sessionManager.sidebarConversationHistory.value"
               :conversationId="sessionManager.currentSessionId.value"
+              :noteId="noteManager.currentNoteId.value"
               @close="closeSidebar"
               @send="handleSidebarSend"
               @request-insert="handleSidebarInsert" 
@@ -490,6 +513,7 @@ onMounted(() => {
               @resize="handleSidebarResize"
               @note-edit-preview="handleNoteEditPreview"
               @stop-response="handleStopResponse"
+              @session-switched="handleSessionSwitched"
               ref="agentSidebarRef"
             />
           </div>

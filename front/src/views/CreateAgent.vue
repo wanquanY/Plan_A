@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue';
-import { Form, Input, Upload, Button, Slider, Switch, message, Collapse, Checkbox, Tooltip, Select, Card, Tag, Divider } from 'ant-design-vue';
+import { Form, Input, Button, Slider, Switch, message, Collapse, Checkbox, Tooltip, Select, Card, Tag, Divider } from 'ant-design-vue';
 import { PlusOutlined, LoadingOutlined, QuestionCircleOutlined, ArrowLeftOutlined, ToolOutlined, LinkOutlined } from '@ant-design/icons-vue';
 import { useRouter, useRoute } from 'vue-router';
-import type { UploadChangeParam } from 'ant-design-vue';
 import agentService from '@/services/agent';
 import toolsService from '@/services/tools';
 import type { ToolConfig, Agent } from '@/services/agent';
@@ -13,31 +12,23 @@ const router = useRouter();
 const route = useRoute();
 const isEditMode = ref(false);
 const agentId = ref<number | null>(null);
-const pageTitle = ref('创建新Agent');
+const submitLoading = ref(false);
 
 // 表单引用
 const formRef = ref();
-
-// 头像上传相关
-const uploadLoading = ref(false);
-const imageUrl = ref('');
-const fileList = ref([]);
 
 // 工具相关状态
 const availableTools = ref<ToolDetail[]>([]);
 const toolsGrouped = ref<Record<string, ToolDetail[]>>({});
 const toolsLoading = ref(false);
-const configMode = ref<'provider' | 'tool'>('tool'); // 配置模式：提供商级别或工具级别
-const activeProviders = ref<string[]>([]); // 控制折叠框展开状态
+const configMode = ref<'provider' | 'tool'>('tool');
+const activeProviders = ref<string[]>([]);
 
 // 表单数据
 const formState = reactive({
-  name: '',
-  avatar_url: '',
   system_prompt: '你是一个有用的助手',
   model: 'claude-3-7-sonnet-20250219',
   max_memory: 100,
-  is_public: true,
   model_settings: {
     temperature: 0.7,
     top_p: 1,
@@ -50,10 +41,6 @@ const formState = reactive({
 
 // 表单验证规则
 const rules = {
-  name: [
-    { required: true, message: '请输入Agent名称', trigger: 'blur' },
-    { min: 2, max: 50, message: '名称长度应在2-50字符之间', trigger: 'blur' }
-  ],
   system_prompt: [
     { required: true, message: '请输入系统提示词', trigger: 'blur' }
   ]
@@ -69,42 +56,6 @@ const enabledToolsCount = computed(() => {
     return Object.values(providerConfig).filter(config => config.enabled).length;
   }
 });
-
-// 上传前验证
-const beforeUpload = (file) => {
-  const isImage = file.type.startsWith('image/');
-  if (!isImage) {
-    message.error('只能上传图片文件!');
-  }
-  const isLt2M = file.size / 1024 / 1024 < 2;
-  if (!isLt2M) {
-    message.error('图片大小不能超过2MB!');
-  }
-  return isImage && isLt2M;
-};
-
-// 处理上传变化
-const handleChange = (info: UploadChangeParam) => {
-  if (info.file.status === 'uploading') {
-    uploadLoading.value = true;
-    return;
-  }
-  
-  if (info.file.status === 'done') {
-    uploadLoading.value = false;
-    if (info.file.response && info.file.response.success) {
-      const fileInfo = info.file.response.file_info;
-      imageUrl.value = fileInfo.url;
-      formState.avatar_url = fileInfo.url;
-      message.success('头像上传成功!');
-    } else {
-      message.error('上传失败: ' + (info.file.response?.message || '未知错误'));
-    }
-  } else if (info.file.status === 'error') {
-    uploadLoading.value = false;
-    message.error('上传失败: ' + info.file.response?.message || '未知错误');
-  }
-};
 
 // 加载工具列表
 const loadToolsList = async () => {
@@ -216,13 +167,9 @@ const loadAgentDetails = async (id: number) => {
   try {
     const agent = await agentService.getAgentDetail(id);
     if (agent) {
-      // 更新基本信息
-      formState.name = agent.name;
-      formState.avatar_url = agent.avatar_url;
       formState.system_prompt = agent.system_prompt;
       formState.model = agent.model;
       formState.max_memory = agent.max_memory;
-      formState.is_public = agent.is_public;
       
       if (agent.model_settings) {
         formState.model_settings = {
@@ -234,29 +181,22 @@ const loadAgentDetails = async (id: number) => {
         };
       }
       
-      // 处理工具配置
       if (agent.tools_enabled) {
         formState.tools_enabled = await detectAndConvertConfig(agent.tools_enabled);
       } else {
         initializeToolsConfig();
       }
       
-      // 更新图片预览
-      if (agent.avatar_url) {
-        imageUrl.value = agent.avatar_url;
-      }
-      
       agentId.value = agent.id;
       isEditMode.value = true;
-      pageTitle.value = '编辑Agent';
     } else {
       message.error('获取Agent详情失败');
-      router.push('/agent-management');
+      router.push('/');
     }
   } catch (error) {
     console.error('加载Agent详情失败:', error);
     message.error('加载Agent详情失败');
-    router.push('/agent-management');
+    router.push('/');
   }
 };
 
@@ -314,41 +254,34 @@ const getProviderStatus = (providerName: string) => {
 };
 
 // 提交表单
-const submitForm = () => {
-  formRef.value.validate().then(async () => {
-    try {
-      let result;
-      if (isEditMode.value && agentId.value) {
-        // 编辑已有Agent
-        result = await agentService.updateAgent(agentId.value, formState);
-        if (result) {
-          message.success('Agent更新成功');
-          router.push('/agent-management');
-        } else {
-          message.error('Agent更新失败');
-        }
+const submitForm = async (values: any) => {
+  submitLoading.value = true;
+  try {
+    let result;
+    if (isEditMode.value && agentId.value) {
+      // 编辑已有Agent
+      const dataToUpdate = { ...formState };
+      result = await agentService.updateAgent(agentId.value, dataToUpdate);
+      if (result && result.id) {
+        message.success('Agent更新成功');
       } else {
-        // 创建新Agent
-        result = await agentService.createAgent(formState);
-        if (result) {
-          message.success('Agent创建成功');
-          router.push('/agent-management');
-        } else {
-          message.error('Agent创建失败');
-        }
+        message.error(result?.message || 'Agent更新失败');
       }
-    } catch (error) {
-      console.error(isEditMode.value ? '更新Agent失败:' : '创建Agent失败:', error);
-      message.error(isEditMode.value ? '更新Agent失败' : '创建Agent失败');
+    } else {
+      // 这个分支理论上不会进入，因为我们总是编辑 agent 1
+      message.error('无效的操作');
+      router.push('/');
     }
-  }).catch(error => {
-    console.log('表单验证失败:', error);
-  });
+  } catch (error: any) {
+    console.error('更新Agent失败:', error);
+    message.error(error.message || '更新Agent失败');
+  } finally {
+    submitLoading.value = false;
+  }
 };
 
-// 返回Agent管理页面
-const goBack = () => {
-  router.push('/agent-management');
+const goBackIfApplicable = () => {
+  router.push('/');
 };
 
 // 可用模型列表
@@ -377,34 +310,27 @@ const fetchAvailableModels = async () => {
 };
 
 onMounted(async () => {
-  // 获取可用模型列表
-  await fetchAvailableModels();
-  
-  // 加载工具列表
   await loadToolsList();
   
-  // 检查URL参数是否包含Agent ID，如果有则是编辑模式
-  const idParam = route.query.id;
-  if (idParam) {
-    const id = parseInt(idParam as string, 10);
+  if (route.params.id) {
+    const id = Number(route.params.id);
     if (!isNaN(id)) {
-      // 加载Agent详情
+      agentId.value = id;
+      isEditMode.value = true;
       await loadAgentDetails(id);
+    } else {
+      message.error('无效的Agent ID');
+      router.push('/');
     }
+  } else {
+    console.log('非编辑模式，但路由中没有ID。当前路由:', route.fullPath);
+    router.push('/');
   }
 });
 </script>
 
 <template>
   <div class="create-agent-page">
-    <div class="page-header">
-      <Button class="back-button" type="text" @click="goBack">
-        <ArrowLeftOutlined />
-        <span>返回Agent管理</span>
-      </Button>
-      <h1>{{ pageTitle }}</h1>
-    </div>
-    
     <div class="page-content">
       <Form 
         ref="formRef"
@@ -412,292 +338,227 @@ onMounted(async () => {
         :rules="rules"
         layout="vertical"
         class="create-agent-form"
+        @finish="submitForm"
       >
-        <div class="form-grid">
-          <!-- 左侧表单区域 -->
-          <div class="form-left">
-            <Form.Item label="名称" name="name">
-              <Input v-model:value="formState.name" placeholder="请输入Agent名称" />
-            </Form.Item>
-            
-            <Form.Item label="头像" name="avatar_url">
-              <div class="avatar-uploader">
-                <Upload
-                  v-model:file-list="fileList"
-                  :show-upload-list="false"
-                  :action="'http://14.103.155.104:18000/api/upload'"
-                  :before-upload="beforeUpload"
-                  :headers="{}"
-                  @change="handleChange"
-                  list-type="picture-card"
-                >
-                  <div v-if="imageUrl" class="avatar-preview">
-                    <img :src="imageUrl" alt="avatar" />
-                  </div>
-                  <div v-else class="upload-button">
-                    <div v-if="uploadLoading">
-                      <LoadingOutlined />
-                    </div>
-                    <div v-else>
-                      <PlusOutlined />
-                      <div style="margin-top: 8px">上传头像</div>
-                    </div>
-                  </div>
-                </Upload>
-              </div>
-            </Form.Item>
-            
-            <Form.Item label="系统提示词" name="system_prompt">
-              <Input.TextArea 
-                v-model:value="formState.system_prompt" 
-                placeholder="请输入系统提示词" 
-                :rows="8"
-                :autoSize="{ minRows: 8, maxRows: 15 }"
-              />
-            </Form.Item>
-          </div>
+        <div class="form-left">
+          <Form.Item label="系统提示词" name="system_prompt">
+            <Input.TextArea 
+              v-model:value="formState.system_prompt" 
+              placeholder="请输入系统提示词" 
+              :rows="8"
+              :autoSize="{ minRows: 8, maxRows: 15 }"
+            />
+          </Form.Item>
+        </div>
+        
+        <div class="form-right">
+          <Form.Item label="模型" name="model">
+            <Select
+              v-model:value="formState.model"
+              placeholder="请选择模型"
+              style="width: 100%"
+              :options="availableModels.map(model => ({ label: model, value: model }))"
+            />
+          </Form.Item>
           
-          <!-- 右侧表单区域 -->
-          <div class="form-right">
-            <Form.Item label="模型" name="model">
-              <Select
-                v-model:value="formState.model"
-                placeholder="请选择模型"
-                style="width: 100%"
-                :options="availableModels.map(model => ({ label: model, value: model }))"
+          <div class="advanced-settings">
+            <h3>高级设置 <Tooltip title="这些设置会影响AI的回复风格和行为"><QuestionCircleOutlined /></Tooltip></h3>
+            
+            <Form.Item label="最大记忆轮数" name="max_memory">
+              <Slider 
+                v-model:value="formState.max_memory" 
+                :min="1" 
+                :max="200" 
+                :step="1"
               />
+              <div class="slider-value">{{ formState.max_memory }}</div>
             </Form.Item>
             
-            <div class="advanced-settings">
-              <h3>高级设置 <Tooltip title="这些设置会影响AI的回复风格和行为"><QuestionCircleOutlined /></Tooltip></h3>
-              
-              <Form.Item label="是否公开" name="is_public">
-                <div class="public-switch">
-                  <Switch v-model:checked="formState.is_public" />
-                  <span>{{ formState.is_public ? '公开' : '私有' }}</span>
-                  <Tooltip title="公开的Agent可以被其他用户查看和使用">
-                    <QuestionCircleOutlined />
-                  </Tooltip>
+            <Form.Item label="Temperature" name="temperature">
+              <Slider 
+                v-model:value="formState.model_settings.temperature" 
+                :min="0" 
+                :max="2" 
+                :step="0.1"
+              />
+              <div class="slider-value">{{ formState.model_settings.temperature }}</div>
+            </Form.Item>
+            
+            <Form.Item label="Max Tokens" name="max_tokens">
+              <Slider 
+                v-model:value="formState.model_settings.max_tokens" 
+                :min="500" 
+                :max="8000" 
+                :step="100"
+              />
+              <div class="slider-value">{{ formState.model_settings.max_tokens }}</div>
+            </Form.Item>
+            
+            <Form.Item label="工具能力">
+              <a-form-item-rest>
+              <div class="tools-section">
+                <div class="tools-header">
+                  <h4>
+                    <ToolOutlined />
+                    工具配置
+                    <Tag v-if="enabledToolsCount > 0" color="blue">
+                      已启用 {{ enabledToolsCount }} 个工具
+                    </Tag>
+                  </h4>
+                  <div class="tools-description">
+                    为您的Agent配置外部工具，让它能够搜索信息、解析网页等
+                  </div>
                 </div>
-              </Form.Item>
-              
-              <Form.Item label="最大记忆轮数" name="max_memory">
-                <Slider 
-                  v-model:value="formState.max_memory" 
-                  :min="1" 
-                  :max="200" 
-                  :step="1"
-                />
-                <div class="slider-value">{{ formState.max_memory }}</div>
-              </Form.Item>
-              
-              <Form.Item label="Temperature" name="temperature">
-                <Slider 
-                  v-model:value="formState.model_settings.temperature" 
-                  :min="0" 
-                  :max="2" 
-                  :step="0.1"
-                />
-                <div class="slider-value">{{ formState.model_settings.temperature }}</div>
-              </Form.Item>
-              
-              <Form.Item label="Max Tokens" name="max_tokens">
-                <Slider 
-                  v-model:value="formState.model_settings.max_tokens" 
-                  :min="500" 
-                  :max="8000" 
-                  :step="100"
-                />
-                <div class="slider-value">{{ formState.model_settings.max_tokens }}</div>
-              </Form.Item>
-              
-              <Form.Item label="工具能力">
-                <a-form-item-rest>
-                <div class="tools-section">
-                  <div class="tools-header">
-                    <h4>
-                      <ToolOutlined />
-                      工具配置
-                      <Tag v-if="enabledToolsCount > 0" color="blue">
-                        已启用 {{ enabledToolsCount }} 个工具
-                      </Tag>
-                    </h4>
-                    <div class="tools-description">
-                      为您的Agent配置外部工具，让它能够搜索信息、解析网页等
-                    </div>
-                  </div>
-                  
-                  <div v-if="toolsLoading" class="tools-loading">
-                    <LoadingOutlined />
-                    <span>加载工具列表中...</span>
-                  </div>
-                  
-                  <div v-else class="tools-config">
-                    <!-- 使用折叠框按提供商分组显示工具 -->
-                    <Collapse v-model:activeKey="activeProviders" class="tools-collapse">
-                      <Collapse.Panel 
-                        v-for="(tools, providerName) in toolsGrouped" 
-                        :key="providerName"
-                        class="provider-panel"
-                      >
-                        <template #header>
-                          <div class="provider-header">
-                            <div class="provider-info">
-                              <span class="provider-name">{{ tools[0]?.provider_info?.name || providerName }}</span>
-                              <Tag 
-                                :color="getProviderStatus(providerName).enabled ? 'green' : 
-                                       getProviderStatus(providerName).partial ? 'orange' : 'default'"
-                              >
-                                {{ tools.length }} 个工具
-                                <span v-if="getProviderStatus(providerName).enabled"> - 全部启用</span>
-                                <span v-else-if="getProviderStatus(providerName).partial"> - 部分启用</span>
-                              </Tag>
-                            </div>
-                            <div class="provider-actions" @click.stop>
-                              <Button 
-                                size="small"
-                                :type="getProviderStatus(providerName).enabled ? 'default' : 'primary'"
-                                @click="toggleProvider(providerName, !getProviderStatus(providerName).enabled)"
-                              >
-                                {{ getProviderStatus(providerName).enabled ? '全部禁用' : '全部启用' }}
-                              </Button>
-                            </div>
-                          </div>
-                          <div v-if="tools[0]?.provider_info?.description" class="provider-description">
-                            {{ tools[0].provider_info.description }}
-                            <a 
-                              v-if="tools[0]?.provider_info?.website" 
-                              :href="tools[0].provider_info.website" 
-                              target="_blank"
-                              class="provider-link"
-                              @click.stop
+                
+                <div v-if="toolsLoading" class="tools-loading">
+                  <LoadingOutlined />
+                  <span>加载工具列表中...</span>
+                </div>
+                
+                <div v-else class="tools-config">
+                  <Collapse v-model:activeKey="activeProviders" class="tools-collapse">
+                    <Collapse.Panel 
+                      v-for="(tools, providerName) in toolsGrouped" 
+                      :key="providerName"
+                      class="provider-panel"
+                    >
+                      <template #header>
+                        <div class="provider-header">
+                          <div class="provider-info">
+                            <span class="provider-name">{{ tools[0]?.provider_info?.name || providerName }}</span>
+                            <Tag 
+                              :color="getProviderStatus(providerName).enabled ? 'green' : 
+                                     getProviderStatus(providerName).partial ? 'orange' : 'default'"
                             >
-                              <LinkOutlined />
-                              官网
-                            </a>
+                              {{ tools.length }} 个工具
+                              <span v-if="getProviderStatus(providerName).enabled"> - 全部启用</span>
+                              <span v-else-if="getProviderStatus(providerName).partial"> - 部分启用</span>
+                            </Tag>
                           </div>
-                        </template>
-                        
-                        <div class="tools-list">
-                          <div 
-                            v-for="tool in tools" 
-                            :key="tool.name"
-                            class="tool-item"
+                          <div class="provider-actions" @click.stop>
+                            <Button 
+                              size="small"
+                              :type="getProviderStatus(providerName).enabled ? 'default' : 'primary'"
+                              @click="toggleProvider(providerName, !getProviderStatus(providerName).enabled)"
+                            >
+                              {{ getProviderStatus(providerName).enabled ? '全部禁用' : '全部启用' }}
+                            </Button>
+                          </div>
+                        </div>
+                        <div v-if="tools[0]?.provider_info?.description" class="provider-description">
+                          {{ tools[0].provider_info.description }}
+                          <a 
+                            v-if="tools[0]?.provider_info?.website" 
+                            :href="tools[0].provider_info.website" 
+                            target="_blank"
+                            class="provider-link"
+                            @click.stop
                           >
-                            <div class="tool-main">
-                              <div class="tool-info">
-                                <div class="tool-header-row">
-                                  <Checkbox 
-                                    :checked="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled"
-                                    @change="toggleTool(tool.name)"
-                                  >
-                                    <span class="tool-name">{{ tool.display_name }}</span>
-                                  </Checkbox>
-                                  <Tag 
-                                    v-if="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled" 
-                                    color="green" 
-                                    size="small"
-                                  >
-                                    已启用
-                                  </Tag>
-                                </div>
-                                <div class="tool-description">
-                                  {{ tool.description }}
-                                </div>
+                            <LinkOutlined />
+                            官网
+                          </a>
+                        </div>
+                      </template>
+                      
+                      <div class="tools-list">
+                        <div 
+                          v-for="tool in tools" 
+                          :key="tool.name"
+                          class="tool-item"
+                        >
+                          <div class="tool-main">
+                            <div class="tool-info">
+                              <div class="tool-header-row">
+                                <Checkbox 
+                                  :checked="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled"
+                                  @change="toggleTool(tool.name)"
+                                >
+                                  <span class="tool-name">{{ tool.display_name }}</span>
+                                </Checkbox>
+                                <Tag 
+                                  v-if="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled" 
+                                  color="green" 
+                                  size="small"
+                                >
+                                  已启用
+                                </Tag>
+                              </div>
+                              <div class="tool-description">
+                                {{ tool.description }}
                               </div>
                             </div>
-                            
-                            <!-- 工具配置区域 -->
-                            <div 
-                              v-if="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled" 
-                              class="tool-config"
-                            >
-                              <Divider />
-                              <div class="tool-config-content">
-                                <div v-if="tool.api_key_required" class="api-key-section">
-                                  <Form.Item 
-                                    :label="`${tool.display_name} API密钥`"
-                                    :name="`tool_${tool.name}_api_key`"
-                                  >
-                                    <Input 
-                                      :value="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.api_key"
-                                      @input="(e) => updateToolApiKey(tool.name, e.target.value)"
-                                      placeholder="请输入API密钥"
-                                      type="password"
-                                    />
-                                    <div class="api-key-hint">
-                                      前往 
-                                      <a 
-                                        :href="tool.provider_info.website" 
-                                        target="_blank"
-                                      >
-                                        {{ tool.provider_info.name }}官网
-                                      </a> 
-                                      获取API密钥
-                                    </div>
-                                  </Form.Item>
-                                </div>
-                                
-                                <!-- 工具参数说明 -->
-                                <div v-if="tool.parameters && Object.keys(tool.parameters).length > 0" class="tool-params">
-                                  <div class="params-title">支持的参数：</div>
-                                  <div class="params-list">
-                                    <Tag 
-                                      v-for="(param, paramName) in tool.parameters" 
-                                      :key="paramName"
-                                      :color="tool.required_params.includes(paramName) ? 'red' : 'blue'"
-                                      size="small"
+                          </div>
+                          
+                          <div 
+                            v-if="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.enabled" 
+                            class="tool-config"
+                          >
+                            <Divider />
+                            <div class="tool-config-content">
+                              <div v-if="tool.api_key_required" class="api-key-section">
+                                <Form.Item 
+                                  :label="`${tool.display_name} API密钥`"
+                                  :name="`tool_${tool.name}_api_key`"
+                                >
+                                  <Input 
+                                    :value="(formState.tools_enabled as ToolLevelConfig)[tool.name]?.api_key"
+                                    @input="(e) => updateToolApiKey(tool.name, e.target.value)"
+                                    placeholder="请输入API密钥"
+                                    type="password"
+                                  />
+                                  <div class="api-key-hint">
+                                    前往 
+                                    <a 
+                                      :href="tool.provider_info.website" 
+                                      target="_blank"
                                     >
-                                      {{ paramName }}
-                                      <span v-if="tool.required_params.includes(paramName)">*</span>
-                                    </Tag>
+                                      {{ tool.provider_info.name }}官网
+                                    </a> 
+                                    获取API密钥
                                   </div>
+                                </Form.Item>
+                              </div>
+                              
+                              <div v-if="tool.parameters && Object.keys(tool.parameters).length > 0" class="tool-params">
+                                <div class="params-title">支持的参数：</div>
+                                <div class="params-list">
+                                  <Tag 
+                                    v-for="(param, paramName) in tool.parameters" 
+                                    :key="paramName"
+                                    :color="tool.required_params.includes(paramName) ? 'red' : 'blue'"
+                                    size="small"
+                                  >
+                                    {{ paramName }}
+                                    <span v-if="tool.required_params.includes(paramName)">*</span>
+                                  </Tag>
                                 </div>
                               </div>
                             </div>
                           </div>
                         </div>
-                      </Collapse.Panel>
-                    </Collapse>
-                    
-                    <!-- 如果没有工具 -->
-                    <div v-if="Object.keys(toolsGrouped).length === 0" class="no-tools">
-                      <div class="no-tools-content">
-                        <ToolOutlined />
-                        <div>暂无可用工具</div>
                       </div>
+                    </Collapse.Panel>
+                  </Collapse>
+                  
+                  <div v-if="Object.keys(toolsGrouped).length === 0" class="no-tools">
+                    <div class="no-tools-content">
+                      <ToolOutlined />
+                      <div>暂无可用工具</div>
                     </div>
                   </div>
                 </div>
-                </a-form-item-rest>
-              </Form.Item>
-            </div>
+              </div>
+              </a-form-item-rest>
+            </Form.Item>
           </div>
         </div>
         
         <div class="form-actions">
-          <Button @click="goBack">取消</Button>
-          <Button type="primary" @click="submitForm">{{ isEditMode ? '更新' : '创建' }}</Button>
+          <Button type="primary" html-type="submit" :loading="submitLoading" class="submit-button">
+            保存更新
+          </Button>
         </div>
       </Form>
-    </div>
-    
-    <div class="agent-preview">
-      <h3>{{ isEditMode ? 'Agent预览' : 'AI助手预览' }}</h3>
-      <div class="preview-card">
-        <div class="preview-header">
-          <div class="preview-avatar">
-            <img :src="imageUrl || 'https://via.placeholder.com/150'" alt="Agent Avatar" />
-          </div>
-          <div class="preview-name">{{ formState.name || (isEditMode ? '编辑中的Agent' : '新建Agent') }}</div>
-          <div v-if="isEditMode" class="preview-badge">编辑中</div>
-        </div>
-        <div class="preview-content">
-          <div class="preview-model">{{ formState.model }}</div>
-          <div class="preview-prompt">{{ formState.system_prompt.substring(0, 100) }}{{ formState.system_prompt.length > 100 ? '...' : '' }}</div>
-          <div v-if="isEditMode" class="preview-id">ID: {{ agentId }}</div>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -742,14 +603,18 @@ onMounted(async () => {
 }
 
 .form-grid {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 0px;
 }
 
 .form-left, .form-right {
-  display: flex;
-  flex-direction: column;
+  width: 100%;
+  margin-bottom: 24px;
+}
+
+.form-right {
+  margin-bottom: 0;
 }
 
 .avatar-uploader {
@@ -821,7 +686,6 @@ onMounted(async () => {
   gap: 8px;
 }
 
-/* 新的工具配置样式 */
 .tools-section {
   margin-top: 16px;
 }
@@ -860,7 +724,6 @@ onMounted(async () => {
   gap: 16px;
 }
 
-/* 折叠框样式 */
 .tools-collapse {
   border: 1px solid #f0f0f0;
   border-radius: 8px;

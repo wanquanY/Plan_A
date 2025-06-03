@@ -312,7 +312,7 @@ class NoteReaderTool:
             # 确保在正确的异步上下文中执行数据库操作
             api_logger.info(f"开始读取笔记，参数: note_id={note_id}, search_title={search_title}")
             
-            # 如果有会话ID，先获取会话信息以确定用户权限和关联的笔记
+            # 获取用户权限
             user_id = None
             session_note_id = None
             if self.conversation_id:
@@ -325,16 +325,26 @@ class NoteReaderTool:
                         api_logger.info(f"从会话 {self.conversation_id} 获取用户ID: {user_id}")
                         
                         # 查找与此会话关联的笔记
-                        note_stmt = select(Note).where(
-                            Note.session_id == self.conversation_id,
-                            Note.user_id == user_id,
-                            Note.is_deleted == False
+                        from backend.models.note_session import NoteSession
+                        note_session_stmt = select(NoteSession).where(
+                            NoteSession.session_id == self.conversation_id
                         )
-                        note_result = await self.db_session.execute(note_stmt)
-                        session_note = note_result.scalar_one_or_none()
-                        if session_note:
-                            session_note_id = session_note.id
-                            api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
+                        note_session_result = await self.db_session.execute(note_session_stmt)
+                        note_session = note_session_result.scalar_one_or_none()
+                        if note_session:
+                            # 通过note_session获取笔记
+                            note_stmt = select(Note).where(
+                                Note.id == note_session.note_id,
+                                Note.user_id == user_id,
+                                Note.is_deleted == False
+                            )
+                            note_result = await self.db_session.execute(note_stmt)
+                            session_note = note_result.scalar_one_or_none()
+                            if session_note:
+                                session_note_id = session_note.id
+                                api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
+                        else:
+                            api_logger.info(f"未找到会话 {self.conversation_id} 关联的笔记")
                 except Exception as e:
                     api_logger.error(f"获取会话信息时出错: {str(e)}", exc_info=True)
                     # 继续执行，不因会话信息获取失败而中断
@@ -436,13 +446,36 @@ class NoteReaderTool:
                 
                 # 添加元数据信息
                 if include_metadata:
-                    note_result["metadata"] = {
-                        "created_at": note.created_at.isoformat() if note.created_at else None,
-                        "updated_at": note.updated_at.isoformat() if note.updated_at else None,
-                        "session_id": note.session_id,
-                        "is_public": note.is_public,
-                        "last_edited_position": note.last_edited_position
-                    }
+                    # 获取笔记关联的会话信息
+                    try:
+                        from backend.models.note_session import NoteSession
+                        note_sessions_stmt = select(NoteSession).where(NoteSession.note_id == note.id)
+                        note_sessions_result = await self.db_session.execute(note_sessions_stmt)
+                        note_sessions = note_sessions_result.scalars().all()
+                        
+                        # 提取会话ID列表和主要会话ID
+                        session_ids = [ns.session_id for ns in note_sessions]
+                        primary_session_id = next((ns.session_id for ns in note_sessions if ns.is_primary), None)
+                        
+                        note_result["metadata"] = {
+                            "created_at": note.created_at.isoformat() if note.created_at else None,
+                            "updated_at": note.updated_at.isoformat() if note.updated_at else None,
+                            "session_ids": session_ids,  # 所有关联的会话ID
+                            "primary_session_id": primary_session_id,  # 主要会话ID
+                            "is_public": note.is_public,
+                            "last_edited_position": note.last_edited_position
+                        }
+                    except Exception as e:
+                        api_logger.error(f"获取笔记会话关联信息失败: {str(e)}")
+                        # 如果获取会话信息失败，提供基本元数据
+                        note_result["metadata"] = {
+                            "created_at": note.created_at.isoformat() if note.created_at else None,
+                            "updated_at": note.updated_at.isoformat() if note.updated_at else None,
+                            "session_ids": [],
+                            "primary_session_id": None,
+                            "is_public": note.is_public,
+                            "last_edited_position": note.last_edited_position
+                        }
                 
                 results.append(note_result)
             
@@ -526,16 +559,26 @@ class NoteEditorTool:
                         api_logger.info(f"从会话 {self.conversation_id} 获取用户ID: {user_id}")
                         
                         # 查找与此会话关联的笔记
-                        note_stmt = select(Note).where(
-                            Note.session_id == self.conversation_id,
-                            Note.user_id == user_id,
-                            Note.is_deleted == False
+                        from backend.models.note_session import NoteSession
+                        note_session_stmt = select(NoteSession).where(
+                            NoteSession.session_id == self.conversation_id
                         )
-                        note_result = await self.db_session.execute(note_stmt)
-                        session_note = note_result.scalar_one_or_none()
-                        if session_note:
-                            session_note_id = session_note.id
-                            api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
+                        note_session_result = await self.db_session.execute(note_session_stmt)
+                        note_session = note_session_result.scalar_one_or_none()
+                        if note_session:
+                            # 通过note_session获取笔记
+                            note_stmt = select(Note).where(
+                                Note.id == note_session.note_id,
+                                Note.user_id == user_id,
+                                Note.is_deleted == False
+                            )
+                            note_result = await self.db_session.execute(note_stmt)
+                            session_note = note_result.scalar_one_or_none()
+                            if session_note:
+                                session_note_id = session_note.id
+                                api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
+                        else:
+                            api_logger.info(f"未找到会话 {self.conversation_id} 关联的笔记")
                 except Exception as e:
                     api_logger.error(f"获取会话信息时出错: {str(e)}", exc_info=True)
                     # 继续执行，不因会话信息获取失败而中断

@@ -104,7 +104,6 @@ const goToLogin = () => {
     <div class="register-wrapper">
       <div class="logo-area">
         <div class="app-logo">
-          <div class="logo-icon">P</div>
           <div class="title-container">
             <h1 class="app-title">Plan<span class="highlight">_A</span></h1>
             <p class="app-desc">简单、高效的写作平台</p>
@@ -212,54 +211,52 @@ const goToLogin = () => {
 .register-container {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
+  align-items: center;
   min-height: 100vh;
-  height: 100vh;
   width: 100vw;
-  max-width: 100%;
-  margin: 0;
-  padding: 0;
-  background-color: #f8fafc;
+  background: #f0f2f5; /* 浅灰色背景 */
   position: relative;
   overflow: hidden;
+  padding: 20px;
+}
+
+/* 粒子背景容器 (如果使用，颜色也需要调整) */
+.particles-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  /* 粒子颜色应与浅色背景协调 */
 }
 
 .register-wrapper {
   width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
+  max-width: 960px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   z-index: 10;
-  flex: 1;
-  padding: 0 16px;
+  position: relative;
 }
 
 .logo-area {
   text-align: center;
-  margin-bottom: 40px;
-  position: relative;
-  z-index: 5;
+  margin-bottom: 30px;
 }
 
 .app-logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 15px;
-  margin-bottom: 16px;
 }
 
-.title-container {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
+/* Logo icon 样式调整为浅色主题 */
 .logo-icon {
-  background: linear-gradient(135deg, #1890ff, #722ed1);
+  background: linear-gradient(135deg, #007aff, #005bb5); /* 科技蓝渐变 */
   color: white;
   width: 60px;
   height: 60px;
@@ -269,191 +266,173 @@ const goToLogin = () => {
   justify-content: center;
   font-weight: bold;
   font-size: 36px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3); /* 调整阴影颜色和透明度 */
 }
 
 .app-title {
-  font-size: 42px;
+  font-size: 48px;
   font-weight: bold;
-  color: #333;
-  margin: 0;
-  letter-spacing: -0.5px;
-  line-height: 1.1;
+  color: #1f2937; /* 深灰色字体 */
+  margin-bottom: 8px;
+  letter-spacing: 1px;
 }
 
-.highlight {
-  background: linear-gradient(45deg, #1890ff, #722ed1);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  color: transparent;
+.app-title .highlight {
+  color: #007aff; /* 科技蓝高亮 (调整为更适合浅色的蓝色) */
 }
 
 .app-desc {
-  font-size: 16px;
-  color: rgba(0, 0, 0, 0.65);
-  margin-top: 8px;
+  color: #4b5563; /* 中灰色字体 */
+  font-size: 18px;
   margin-bottom: 0;
 }
 
 .register-card {
   width: 100%;
-  max-width: 400px;
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  overflow: hidden;
-  background: white;
+  max-width: 420px;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 122, 255, 0.15); /* 科技蓝阴影 (调整透明度) */
+  background: #ffffff; /* 白色背景 */
+  border: 1px solid #e5e7eb; /* 浅灰色边框 */
+  padding: 25px;
 }
 
 .card-header {
-  padding: 24px 24px 0;
+  text-align: center;
+  margin-bottom: 24px;
 }
 
 .card-title {
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.85);
   margin-bottom: 8px;
+  color: #1f2937; /* 深灰色字体 */
 }
 
 .card-subtitle {
-  color: rgba(0, 0, 0, 0.45);
-  margin-bottom: 24px;
+  color: #6b7280; /* 中灰色字体 */
+  font-size: 14px;
+}
+
+/* 输入框样式调整 - 与Login.vue保持一致 */
+:deep(.ant-input-affix-wrapper) {
+  background-color: #f9fafb !important; /* 非常浅的灰色背景 */
+  border: 1px solid #d1d5db !important; /* 浅灰色边框 */
+  border-radius: 6px !important;
+}
+
+:deep(.ant-input) {
+  background-color: transparent !important;
+  color: #1f2937 !important; /* 深灰色字体 */
+  font-size: 16px !important;
+}
+
+:deep(.ant-input::placeholder) {
+  color: #9ca3af !important; /* 较浅的灰色占位符 */
+}
+
+:deep(.ant-input-prefix .anticon) {
+  color: #007aff !important; /* 科技蓝图标 */
 }
 
 .register-button {
   height: 48px;
-  font-size: 16px;
-  background: linear-gradient(45deg, #722ed1, #a878eb);
+  font-size: 18px;
+  background: linear-gradient(90deg, #007aff, #005bb5); /* 科技蓝渐变 (调整颜色) */
+  color: #ffffff; /* 白色文字 */
   border: none;
-  transition: all 0.3s;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  letter-spacing: 0.5px;
+  transition: all 0.3s ease;
 }
 
-.register-button:hover {
-  background: linear-gradient(45deg, #642ab5, #9a6ce0);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(114, 46, 209, 0.3);
+.register-button:hover,
+.register-button:focus {
+  background: linear-gradient(90deg, #005bb5, #007aff);
+  box-shadow: 0 0 15px rgba(0, 122, 255, 0.3); /* 悬浮辉光效果 */
+  transform: translateY(-2px);
 }
 
 .form-footer {
   text-align: center;
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .login-link {
-  color: #722ed1;
+  color: #007aff; /* 科技蓝链接 */
   font-size: 14px;
+  transition: color 0.3s ease;
+}
+
+.login-link:hover {
+  color: #005bb5;
 }
 
 .register-footer {
   text-align: center;
-  color: rgba(0, 0, 0, 0.45);
+  color: #6b7280; /* 中灰色字体 */
   font-size: 14px;
-  padding: 16px 0;
+  padding: 20px 0;
   width: 100%;
   z-index: 10;
+  position: absolute;
+  bottom: 0;
+  left: 0;
 }
 
-/* 装饰性元素 */
-.decoration-circle {
-  position: fixed;
-  border-radius: 50%;
-  opacity: 0.4;
-  z-index: 1;
-}
-
-.circle-1 {
-  width: 600px;
-  height: 600px;
-  background: linear-gradient(135deg, #722ed1, #a878eb);
-  top: -200px;
-  right: -200px;
-}
-
-.circle-2 {
-  width: 800px;
-  height: 800px;
-  background: linear-gradient(135deg, #52c41a, #85e45b);
-  bottom: -300px;
-  left: -300px;
-}
-
-.circle-3 {
-  width: 400px;
-  height: 400px;
-  background: linear-gradient(135deg, #1890ff, #40a9ff);
-  top: 40%;
-  right: -100px;
-}
-
+.decoration-circle,
 .decoration-square {
-  position: fixed;
-  opacity: 0.2;
-  transform: rotate(45deg);
-  z-index: 1;
+  display: none;
 }
 
-.square-1 {
-  width: 200px;
-  height: 200px;
-  background: #faad14;
-  bottom: 5%;
-  right: 10%;
-}
-
-.square-2 {
-  width: 150px;
-  height: 150px;
-  background: #f5222d;
-  top: 20%;
-  left: 5%;
-}
-
-@media (min-width: 992px) {
-  .register-container {
-    padding: 0;
-  }
-  
+@media (min-width: 768px) {
   .register-wrapper {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr;
-    gap: 40px;
-    padding: 0 48px;
+    flex-direction: row;
+    justify-content: space-around;
     align-items: center;
-    height: 100%;
+    gap: 40px;
   }
-  
+
   .logo-area {
-    grid-column: 1;
-    grid-row: 1;
     text-align: left;
     margin-bottom: 0;
-    max-width: 500px;
-  }
-
-  .right-section {
-    grid-column: 2;
-    grid-row: 1;
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    width: 100%;
-  }
-  
-  .register-footer {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    max-width: 450px;
   }
   
   .app-title {
-    font-size: 56px;
+    font-size: 54px;
   }
-  
+
   .app-desc {
-    font-size: 18px;
+    font-size: 20px;
+  }
+
+  .register-card {
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .logo-area {
+    margin-bottom: 40px;
+  }
+  .app-title {
+    font-size: 36px;
+  }
+  .app-desc {
+    font-size: 16px;
+  }
+  .register-card {
+    padding: 20px;
+    max-width: 100%;
+  }
+  .card-title {
+    font-size: 22px;
+  }
+  .register-button {
+    height: 44px;
+    font-size: 16px;
   }
 }
 </style> 

@@ -21,6 +21,7 @@ from backend.crud.chat import (
     get_user_chats, get_chat, create_chat, update_chat_title, 
     soft_delete_chat, get_chat_messages, get_latest_chat, soft_delete_messages_after, add_message
 )
+from backend.crud.note_session import note_session
 from backend.core.response import SuccessResponse
 from backend.utils.logging import api_logger
 from backend.core.config import settings
@@ -96,7 +97,7 @@ async def chat(
     if chat_request.note_id and response.conversation_id:
         from backend.models.note import Note
         
-        # 更新笔记，关联到新创建的会话
+        # 验证笔记存在且属于当前用户
         note_stmt = select(Note).where(
             Note.id == chat_request.note_id,
             Note.user_id == current_user.id,
@@ -106,9 +107,19 @@ async def chat(
         note = note_result.scalar_one_or_none()
         
         if note:
-            note.session_id = response.conversation_id
-            await db.commit()
-            api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {response.conversation_id}")
+            # 使用新的多对多关联方式
+            # 检查是否已有主要会话，如果没有则设为主要会话
+            existing_primary = await note_session.get_primary_session_by_note(db, chat_request.note_id)
+            is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
+            
+            await note_session.create_note_session_link(
+                db, 
+                note_id=chat_request.note_id, 
+                session_id=response.conversation_id,
+                is_primary=is_primary
+            )
+            
+            api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {response.conversation_id}，是否为主要会话: {is_primary}")
     
     api_logger.info(f"聊天请求完成: {current_user.username}, 会话ID: {response.conversation_id}")
     
@@ -286,9 +297,19 @@ async def stream_chat(
                     note = note_result.scalar_one_or_none()
                     
                     if note:
-                        note.session_id = conversation_id
-                        await db.commit()
-                        api_logger.info(f"笔记ID {note_id} 已关联到预创建会话ID {conversation_id}")
+                        # 使用新的多对多关联方式
+                        # 检查是否已有主要会话，如果没有则设为主要会话
+                        existing_primary = await note_session.get_primary_session_by_note(db, note_id)
+                        is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
+                        
+                        await note_session.create_note_session_link(
+                            db, 
+                            note_id=note_id, 
+                            session_id=conversation_id,
+                            is_primary=is_primary
+                        )
+                        
+                        api_logger.info(f"笔记ID {note_id} 已关联到预创建会话ID {conversation_id}，是否为主要会话: {is_primary}")
             
             async for chunk_data in generate_chat_stream(
                 chat_request=chat_request,
@@ -678,9 +699,19 @@ async def create_chat_session(
             note = note_result.scalar_one_or_none()
             
             if note:
-                note.session_id = new_chat.id
-                await db.commit()
-                api_logger.info(f"笔记ID {chat_data.note_id} 已关联到会话ID {new_chat.id}")
+                # 使用新的多对多关联方式
+                # 检查是否已有主要会话，如果没有则设为主要会话
+                existing_primary = await note_session.get_primary_session_by_note(db, chat_data.note_id)
+                is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
+                
+                await note_session.create_note_session_link(
+                    db, 
+                    note_id=chat_data.note_id, 
+                    session_id=new_chat.id,
+                    is_primary=is_primary
+                )
+                
+                api_logger.info(f"笔记ID {chat_data.note_id} 已关联到会话ID {new_chat.id}，是否为主要会话: {is_primary}")
         
         return SuccessResponse(
             data={

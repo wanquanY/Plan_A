@@ -63,8 +63,12 @@ const goToRegister = () => {
   <div class="login-container">
     <div class="login-wrapper">
       <div class="logo-area">
-        <h1 class="app-title">Plan<span class="highlight">_A</span></h1>
-        <p class="app-desc">简单、高效的写作平台</p>
+        <div class="app-logo">
+          <div class="title-container">
+            <h1 class="app-title">Plan<span class="highlight">_A</span></h1>
+            <p class="app-desc">简单、高效的写作平台</p>
+          </div>
+        </div>
       </div>
       
       <div class="right-section">
@@ -144,59 +148,67 @@ const goToRegister = () => {
 .login-container {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
+  align-items: center;
   min-height: 100vh;
-  height: 100vh;
   width: 100vw;
-  max-width: 100%;
-  margin: 0;
-  padding: 0;
-  background-color: #f8fafc;
+  background: #f0f2f5;
   position: relative;
   overflow: hidden;
+  padding: 20px;
+}
+
+
+.particles-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
 }
 
 .login-wrapper {
   width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
+  max-width: 960px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   z-index: 10;
-  flex: 1;
-  padding: 0 16px;
+  position: relative;
 }
 
 .logo-area {
   text-align: center;
-  margin-bottom: 40px;
-  position: relative;
-  z-index: 5;
+  margin-bottom: 30px;
 }
 
 .app-title {
-  font-size: 42px;
+  font-size: 48px;
   font-weight: bold;
-  background: linear-gradient(45deg, #1890ff, #722ed1);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #1f2937;
   margin-bottom: 8px;
+  letter-spacing: 1px;
+}
+
+.app-title .highlight {
+  color: #007aff;
 }
 
 .app-desc {
-  color: #666;
-  font-size: 16px;
+  color: #4b5563;
+  font-size: 18px;
   margin-bottom: 0;
 }
 
 .login-card {
   width: 100%;
   max-width: 400px;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  background: white;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 122, 255, 0.15);
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
 }
 
 .card-header {
@@ -205,151 +217,134 @@ const goToRegister = () => {
 }
 
 .card-title {
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 600;
   margin-bottom: 8px;
-  color: #333;
+  color: #1f2937;
 }
 
 .card-subtitle {
-  color: #666;
+  color: #6b7280;
   font-size: 14px;
 }
 
-.login-button {
-  height: 44px;
-  font-size: 16px;
-  background: linear-gradient(45deg, #1890ff, #40a9ff);
-  border: none;
-  margin-bottom: 12px;
-  letter-spacing: -0.5px;
+:deep(.ant-input-affix-wrapper) {
+  background-color: #f9fafb !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 6px !important;
 }
 
-.login-button:hover {
-  background: linear-gradient(45deg, #0084ff, #2994ff);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
+:deep(.ant-input) {
+  background-color: transparent !important;
+  color: #1f2937 !important;
+  font-size: 16px !important;
+}
+
+:deep(.ant-input::placeholder) {
+  color: #9ca3af !important;
+}
+
+:deep(.ant-input-prefix .anticon) {
+  color: #007aff !important;
+}
+
+.login-button {
+  height: 48px;
+  font-size: 18px;
+  background: linear-gradient(90deg, #007aff, #005bb5);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  letter-spacing: 0.5px;
+  transition: all 0.3s ease;
+}
+
+.login-button:hover,
+.login-button:focus {
+  background: linear-gradient(90deg, #005bb5, #007aff);
+  box-shadow: 0 0 15px rgba(0, 122, 255, 0.3);
+  transform: translateY(-2px);
 }
 
 .form-footer {
   text-align: center;
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .register-link {
-  color: #1890ff;
+  color: #007aff;
   font-size: 14px;
+  transition: color 0.3s ease;
+}
+
+.register-link:hover {
+  color: #005bb5;
 }
 
 .login-footer {
   text-align: center;
-  color: rgba(0, 0, 0, 0.45);
+  color: #6b7280;
   font-size: 14px;
-  padding: 16px 0;
+  padding: 20px 0;
   width: 100%;
   z-index: 10;
+  position: absolute;
+  bottom: 0;
+  left: 0;
 }
 
-/* 装饰性元素 */
-.decoration-circle {
-  position: fixed;
-  border-radius: 50%;
-  opacity: 0.4;
-  z-index: 1;
-}
-
-.circle-1 {
-  width: 600px;
-  height: 600px;
-  background: linear-gradient(135deg, #1890ff, #40a9ff);
-  top: -200px;
-  right: -200px;
-}
-
-.circle-2 {
-  width: 800px;
-  height: 800px;
-  background: linear-gradient(135deg, #52c41a, #85e45b);
-  bottom: -300px;
-  left: -300px;
-}
-
-.circle-3 {
-  width: 400px;
-  height: 400px;
-  background: linear-gradient(135deg, #722ed1, #a878eb);
-  top: 40%;
-  right: -100px;
-}
-
+.decoration-circle,
 .decoration-square {
-  position: fixed;
-  opacity: 0.2;
-  transform: rotate(45deg);
-  z-index: 1;
+  display: none;
 }
 
-.square-1 {
-  width: 200px;
-  height: 200px;
-  background: #faad14;
-  bottom: 5%;
-  right: 10%;
-}
-
-.square-2 {
-  width: 150px;
-  height: 150px;
-  background: #f5222d;
-  top: 20%;
-  left: 5%;
-}
-
-@media (min-width: 992px) {
-  .login-container {
-    padding: 0;
-  }
-  
+@media (min-width: 768px) {
   .login-wrapper {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr;
-    gap: 40px;
-    padding: 0 48px;
+    flex-direction: row;
+    justify-content: space-around;
     align-items: center;
-    height: 100%;
+    gap: 40px;
   }
-  
+
   .logo-area {
-    grid-column: 1;
-    grid-row: 1;
     text-align: left;
     margin-bottom: 0;
-    max-width: 500px;
-  }
-
-  .right-section {
-    grid-column: 2;
-    grid-row: 1;
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    width: 100%;
-  }
-  
-  .login-footer {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    max-width: 450px;
   }
   
   .app-title {
-    font-size: 56px;
+    font-size: 54px;
   }
-  
+
   .app-desc {
+    font-size: 20px;
+  }
+
+  .login-card {
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .logo-area {
+    margin-bottom: 40px;
+  }
+  .app-title {
+    font-size: 36px;
+  }
+  .app-desc {
+    font-size: 16px;
+  }
+  .login-card {
+    padding: 20px;
+  }
+  .card-title {
     font-size: 22px;
+  }
+  .login-button {
+    height: 44px;
+    font-size: 16px;
   }
 }
 </style>
