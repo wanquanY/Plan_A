@@ -15,6 +15,7 @@ from backend.services.openai_client import openai_client_service
 from backend.services.chat_tool_handler import chat_tool_handler
 from backend.services.chat_tool_processor import chat_tool_processor
 from backend.services.chat_session_manager import chat_session_manager
+from backend.crud.note_session import note_session
 
 
 class ChatStreamService:
@@ -32,7 +33,7 @@ class ChatStreamService:
         top_p: float, 
         tools: List[Dict[str, Any]], 
         has_tools: bool, 
-        conversation_id: int,
+        session_id: int,
         db: Optional[AsyncSession] = None,
         message_id: Optional[int] = None,
         interaction_flow: List[Dict[str, Any]] = None,
@@ -132,7 +133,8 @@ class ChatStreamService:
                     "tool_name": tool_call_obj.function.name,
                     "status": "executing"
                 }
-                yield ("", conversation_id, tool_status)
+                # 统一使用四元组格式：(content, session_id, reasoning_content, tool_status)
+                yield ("", session_id, "", tool_status)
                 
                 # 执行单个工具调用（传递message_id关联到特定消息）
                 try:
@@ -140,7 +142,7 @@ class ChatStreamService:
                         [tool_call_obj], 
                         agent, 
                         db,  # 传递数据库连接，保存工具调用记录
-                        conversation_id,
+                        session_id,
                         message_id=message_id  # 关联到特定消息
                     )
                     
@@ -162,7 +164,8 @@ class ChatStreamService:
                         "status": "completed",
                         "result": tool_result_content
                     }
-                    yield ("", conversation_id, tool_status)
+                    # 统一使用四元组格式：(content, session_id, reasoning_content, tool_status)
+                    yield ("", session_id, "", tool_status)
                     
                     # 立即将这个工具调用和结果添加到消息列表，然后调用API获取基于此工具结果的响应
                     # 只使用初始内容，避免累积重复
@@ -198,139 +201,96 @@ class ChatStreamService:
                         tools=tools if has_tools else None
                     )
                     
-                    # 处理基于工具结果的流式响应
-                    current_text_segment = ""
-                    current_reasoning_segment = ""  # 添加思考内容收集
-                    new_tool_calls = []
+                    # 收集这次AI响应的内容和新工具调用
+                    stream_content = ""
+                    stream_tool_calls = []
                     
                     async for chunk in next_response:
-                        if hasattr(chunk, 'choices') and chunk.choices:
-                            delta = chunk.choices[0].delta
-                            
-                            # 检查是否有新的工具调用
-                            if hasattr(delta, 'tool_calls') and delta.tool_calls:
-                                # 如果当前有文本内容，先保存到交互流程中
-                                if current_text_segment.strip():
-                                    interaction_flow.append({
-                                        "type": "text",
-                                        "content": current_text_segment,
-                                        "timestamp": datetime.now().isoformat()
-                                    })
-                                    current_text_segment = ""
+                        if chunk.choices[0].delta.content:
+                            stream_content += chunk.choices[0].delta.content
+                            yield chunk.choices[0].delta.content  # 使用单个内容格式，避免混乱的三元组
+                        
+                        # 检查新的工具调用
+                        if chunk.choices[0].delta.tool_calls:
+                            for delta_tool_call in chunk.choices[0].delta.tool_calls:
+                                # 扩展工具调用列表以适应索引
+                                while len(stream_tool_calls) <= delta_tool_call.index:
+                                    stream_tool_calls.append(None)
                                 
-                                # 收集新的工具调用
-                                for tool_call in delta.tool_calls:
-                                    call_index = getattr(tool_call, 'index', None)  # 使用不同的变量名避免冲突
-                                    existing_call = None
-                                    
-                                    if call_index is not None and call_index < len(new_tool_calls):
-                                        existing_call = new_tool_calls[call_index]
-                                    
-                                    if existing_call:
-                                        if tool_call.function and tool_call.function.arguments:
-                                            existing_call['function']['arguments'] += tool_call.function.arguments
-                                    else:
-                                        new_call = {
-                                            'id': tool_call.id if tool_call.id else f"call_followup_{len(new_tool_calls)}",
-                                            'type': tool_call.type if tool_call.type else 'function',
-                                            'function': {
-                                                'name': tool_call.function.name if tool_call.function and tool_call.function.name else '',
-                                                'arguments': tool_call.function.arguments if tool_call.function and tool_call.function.arguments else ''
-                                            }
+                                if stream_tool_calls[delta_tool_call.index] is None:
+                                    stream_tool_calls[delta_tool_call.index] = {
+                                        "id": delta_tool_call.id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": delta_tool_call.function.name if delta_tool_call.function.name else "",
+                                            "arguments": delta_tool_call.function.arguments if delta_tool_call.function.arguments else ""
                                         }
-                                        
-                                        if call_index is not None:
-                                            while len(new_tool_calls) <= call_index:
-                                                new_tool_calls.append(None)
-                                            new_tool_calls[call_index] = new_call
-                                        else:
-                                            new_tool_calls.append(new_call)
-                            
-                            content_chunk = delta.content or ""
-                            reasoning_chunk = ""
-                            # 确保reasoning_chunk只包含真正的思考内容，并且是字符串类型
-                            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                                reasoning_content = delta.reasoning_content
-                                # 只有当reasoning_content是字符串时才使用，避免对象类型的混淆
-                                if isinstance(reasoning_content, str):
-                                    reasoning_chunk = reasoning_content
+                                    }
                                 else:
-                                    api_logger.warning(f"检测到非字符串类型的reasoning_content: {type(reasoning_content)}, 忽略")
-                                    
-                            if content_chunk or reasoning_chunk:
-                                current_text_segment += content_chunk
-                                current_reasoning_segment += reasoning_chunk
-                                current_content += content_chunk
-                                # 只传递真正的思考内容，确保是字符串
-                                yield (content_chunk, reasoning_chunk)
+                                    # 累积参数
+                                    if delta_tool_call.function.arguments:
+                                        stream_tool_calls[delta_tool_call.index]["function"]["arguments"] += delta_tool_call.function.arguments
                     
-                    # 如果有新的文本内容，记录到交互流程
-                    if current_text_segment.strip():
+                    # ✅ 修复：将工具调用后的AI响应内容添加到交互流程中
+                    if stream_content.strip():
                         interaction_flow.append({
                             "type": "text",
-                            "content": current_text_segment,
+                            "content": stream_content,
                             "timestamp": datetime.now().isoformat()
                         })
+                        api_logger.info(f"已将工具调用后的AI响应添加到交互流程: 内容长度={len(stream_content)}")
                     
-                    # 如果有新的思考内容，记录到交互流程
-                    if current_reasoning_segment.strip():
-                        interaction_flow.append({
-                            "type": "reasoning",
-                            "content": current_reasoning_segment,
-                            "timestamp": datetime.now().isoformat()
-                        })
+                    # 更新当前内容和工具调用以供下次循环
+                    current_content = stream_content
+                    current_tool_calls = [tc for tc in stream_tool_calls if tc is not None]
                     
-                    # 如果有新的工具调用，将它们设置为下一轮处理
-                    if new_tool_calls:
-                        valid_new_tool_calls = [tc for tc in new_tool_calls if tc is not None and tc.get('function', {}).get('name')]
-                        if valid_new_tool_calls:
-                            api_logger.info(f"检测到 {len(valid_new_tool_calls)} 个新的工具调用，将在下一轮处理")
-                            # 设置为下一轮的工具调用，而不是添加到当前轮
-                            current_tool_calls = valid_new_tool_calls
-                            # 跳出当前工具处理循环，进入下一轮
-                            break
+                    api_logger.info(f"第 {iteration} 轮工具 {tool_call_obj.function.name} 后得到 AI 响应，内容长度: {len(stream_content)}, 新工具调用数量: {len(current_tool_calls)}")
                     
+                    # 进入下一个工具
+                    tool_index += 1
+                    
+                    # 如果没有新的工具调用，处理下一个工具；如果有新的工具调用，直接跳到下一轮iteration
+                    if current_tool_calls:
+                        api_logger.info(f"检测到新工具调用，跳转到下一轮iteration")
+                        break  # 跳出当前工具循环，进入下一轮iteration
+                        
                 except Exception as e:
-                    # 工具调用失败，更新记录
+                    api_logger.error(f"工具调用失败: {e}")
+                    # 更新交互流程中的工具调用记录
                     tool_call_end_time = datetime.now()
-                    tool_call_record["status"] = "error"
+                    tool_call_record["status"] = "failed"
                     tool_call_record["completed_at"] = tool_call_end_time.isoformat()
                     tool_call_record["error"] = str(e)
                     
-                    api_logger.error(f"工具调用失败: {tool_call_obj.function.name}, 错误: {str(e)}")
-                    
-                    # 发送工具调用错误状态
+                    # 发送工具调用失败状态
                     tool_status = {
-                        "type": "tool_call_error",
+                        "type": "tool_call_failed",
                         "tool_call_id": tool_call_obj.id,
                         "tool_name": tool_call_obj.function.name,
-                        "status": "error",
+                        "status": "failed",
                         "error": str(e)
                     }
-                    yield ("", conversation_id, tool_status)
-                
-                # 增加索引，处理下一个工具调用
-                tool_index += 1
+                    yield ("", session_id, "", tool_status)
+                    
+                    # 跳过这个工具，继续下一个
+                    tool_index += 1
+                    continue
             
-            # 内层循环结束，检查是否有新的工具调用需要处理
-            # 如果current_tool_calls没有被内层循环修改，说明没有新的工具调用
-            # 将其设置为空列表以结束外层循环
-            if current_tool_calls == valid_tool_calls:
-                current_tool_calls = []
+            # 如果没有更多工具调用了，结束循环
+            if not current_tool_calls:
+                api_logger.info(f"第 {iteration} 轮处理完成，没有更多工具调用")
+                break
         
-        if iteration >= max_iterations:
-            api_logger.warning(f"工具调用达到最大迭代次数 {max_iterations}，强制结束")
+        # 发送最终完成状态
+        final_status = {
+            "type": "tools_processing_completed",
+            "total_iterations": iteration,
+            "interaction_flow": interaction_flow
+        }
+        yield ("", session_id, "", final_status)
         
-        api_logger.info(f"流式工具调用处理完成，共进行了 {iteration} 轮，最终内容长度: {len(current_content)}")
-        
-        # 发送工具处理完成状态
-        if iteration > 0:
-            tool_status = {
-                "type": "tools_completed",
-                "status": "completed"
-            }
-            yield ("", conversation_id, tool_status)
-    
+        api_logger.info(f"工具调用处理完成，共进行了 {iteration} 轮，交互流程记录数: {len(interaction_flow)}")
+
     @staticmethod
     async def generate_chat_stream(
         chat_request: ChatRequest,
@@ -340,7 +300,7 @@ class ChatStreamService:
         """
         调用OpenAI API生成对话流式响应，并保存对话记录
         
-        返回的是生成内容的异步生成器。第一个内容会额外返回conversation_id
+        返回的是生成内容的异步生成器。第一个内容会额外返回session_id
         """
         # 初始化交互流程记录
         interaction_flow = []
@@ -349,7 +309,7 @@ class ChatStreamService:
             api_logger.info(f"开始调用OpenAI流式API, 模型: {openai_client_service.model}, API地址: {openai_client_service.async_client.base_url}")
             
             # 获取或确认聊天会话ID
-            conversation_id = chat_request.conversation_id
+            session_id = chat_request.session_id
             new_session_created = False
             note_id = None
             
@@ -376,11 +336,11 @@ class ChatStreamService:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Agent不存在或无权访问"
                     )
-                api_logger.info(f"流式响应使用Agent: {current_agent.name}, ID={current_agent.id}")
+                api_logger.info(f"流式响应使用Agent: AI助手, ID={current_agent.id}")
             
             if db and user_id:
                 # 获取或创建聊天会话
-                if not conversation_id:
+                if not session_id:
                     # 创建新的聊天会话
                     if note_id:
                         # 查询笔记信息，获取标题
@@ -407,19 +367,43 @@ class ChatStreamService:
                         
                         # 如果创建成功，将会话ID关联到笔记
                         if chat and note_id and note:
-                            note.session_id = chat.id
-                            await db.commit()
-                            api_logger.info(f"流式API: 笔记ID {note_id} 已关联到会话ID {chat.id}")
+                            # 🔍 使用新的多对多关联方式
+                            api_logger.info(f"🔍 流式服务: 开始处理笔记关联: note_id={note_id}, session_id={chat.id}")
+                            
+                            # 检查是否已有主要会话，如果没有则设为主要会话
+                            existing_primary = await note_session.get_primary_session_by_note(db, note_id)
+                            is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
+                            
+                            api_logger.info(f"🔍 流式服务: 现有主要会话: {existing_primary}, 新会话是否为主要: {is_primary}")
+                            
+                            await note_session.create_note_session_link(
+                                db, 
+                                note_id=note_id, 
+                                session_id=chat.id,
+                                is_primary=is_primary
+                            )
+                            
+                            api_logger.info(f"🔍 流式服务: 笔记ID {note_id} 已关联到会话ID {chat.id}，是否为主要会话: {is_primary}")
+                            
+                            # 验证关联是否真的被创建
+                            verification_sessions = await note_session.get_sessions_by_note(db, note_id)
+                            verification_session_ids = [s.id for s in verification_sessions]
+                            api_logger.info(f"🔍 流式服务: 验证笔记 {note_id} 关联的会话列表: {verification_session_ids}")
+                            
+                            if chat.id in verification_session_ids:
+                                api_logger.info(f"✅ 流式服务: 笔记 {note_id} 与会话 {chat.id} 关联创建成功")
+                            else:
+                                api_logger.error(f"❌ 流式服务: 笔记 {note_id} 与会话 {chat.id} 关联创建失败！")
                     else:
                         # 常规创建会话
                         chat = await create_chat(db, user_id, agent_id=agent_id)
                     
-                    conversation_id = chat.id
+                    session_id = chat.id
                     new_session_created = True
-                    api_logger.info(f"创建新聊天会话: conversation_id={conversation_id}, user_id={user_id}, agent_id={agent_id}")
+                    api_logger.info(f"创建新聊天会话: session_id={session_id}, user_id={user_id}, agent_id={agent_id}")
                 else:
                     # 验证会话存在且属于当前用户
-                    chat = await get_chat(db, conversation_id)
+                    chat = await get_chat(db, session_id)
                     if not chat or chat.user_id != user_id:
                         raise HTTPException(
                             status_code=status.HTTP_404_NOT_FOUND,
@@ -428,139 +412,145 @@ class ChatStreamService:
                     
                     # 如果当前会话没有关联Agent，但请求中有Agent，则更新会话
                     if agent_id and not chat.agent_id:
-                        await update_chat_agent(db, conversation_id=conversation_id, agent_id=agent_id)
-                        api_logger.info(f"更新会话的Agent: conversation_id={conversation_id}, agent_id={agent_id}")
+                        await update_chat_agent(db, session_id=session_id, agent_id=agent_id)
+                        api_logger.info(f"更新会话的Agent: session_id={session_id}, agent_id={agent_id}")
                     
                     # 如果当前会话已关联Agent，使用该Agent的信息
                     elif chat.agent_id and not agent_id:
                         agent_id = chat.agent_id
                         current_agent = await agent_crud.get_agent_by_id(db, agent_id=agent_id)
                         if current_agent:
-                            api_logger.info(f"从会话加载Agent: {current_agent.name}, ID={current_agent.id}")
+                            api_logger.info(f"从会话加载Agent: AI助手, ID={current_agent.id}")
                             
-                    api_logger.info(f"使用现有会话: conversation_id={conversation_id}")
+                    api_logger.info(f"使用现有会话: session_id={session_id}")
             else:
-                # 如果conversation_id已经存在，直接使用（API层预创建的情况）
-                if conversation_id:
-                    api_logger.info(f"使用API层预创建的会话: conversation_id={conversation_id}")
+                # 如果session_id已经存在，直接使用（API层预创建的情况）
+                if session_id:
+                    api_logger.info(f"使用API层预创建的会话: session_id={session_id}")
                 else:
                     api_logger.warning("没有数据库连接或用户ID，无法创建或验证会话")
             
             # 获取用户发送的内容
             user_content = chat_request.content
             
-            # 处理图片消息 - 构建包含图片的消息格式
-            user_message_content = []
+            # 检查是否跳过用户消息创建（用于编辑重新执行场景）
+            skip_user_message = getattr(chat_request, '_skip_user_message', False)
             
-            # 添加文本内容
-            if user_content and user_content.strip():
-                user_message_content.append({
-                    "type": "text",
-                    "text": user_content
-                })
-            
-            # 添加图片内容
-            if hasattr(chat_request, 'images') and chat_request.images:
-                api_logger.info(f"流式聊天用户消息包含 {len(chat_request.images)} 张图片，已尝试转换为base64格式")
-                for image in chat_request.images:
-                    try:
-                        # 尝试下载图片并转换为base64
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(image.url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                                if response.status == 200:
-                                    image_data = await response.read()
-                                    # 检测图片格式
-                                    content_type = response.headers.get('content-type', 'image/png')
-                                    if 'image/' in content_type:
-                                        image_format = content_type.split('/')[-1]
-                                    else:
-                                        image_format = 'png'  # 默认格式
-                                    
-                                    # 转换为base64
-                                    base64_image = base64.b64encode(image_data).decode('utf-8')
-                                    data_url = f"data:{content_type};base64,{base64_image}"
-                                    
-                                    user_message_content.append({
-                                        "type": "image_url",
-                                        "image_url": {
-                                            "url": data_url,
-                                            "detail": "high"  # 使用高细节模式
-                                        }
-                                    })
-                                else:
-                                    # 如果下载失败，仍然尝试使用原URL
-                                    user_message_content.append({
-                                        "type": "image_url",
-                                        "image_url": {
-                                            "url": image.url,
-                                            "detail": "high"
-                                        }
-                                    })
-                    except Exception as download_error:
-                        # 如果转换失败，回退到原URL
-                        user_message_content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": image.url,
-                                "detail": "high"
-                            }
-                        })
+            if not skip_user_message:
+                # 正常情况：处理图片消息 - 构建包含图片的消息格式
+                user_message_content = []
                 
-                api_logger.info(f"流式聊天用户消息包含 {len(chat_request.images)} 张图片，已尝试转换为base64格式")
-            
-            # 构建最终的用户消息
-            if len(user_message_content) > 1:  # 有图片或多个内容元素
-                final_user_message = user_message_content
-                # 用于记忆和数据库的纯文本内容
-                content_for_memory = user_content
+                # 添加文本内容
+                if user_content and user_content.strip():
+                    user_message_content.append({
+                        "type": "text",
+                        "text": user_content
+                    })
+                
+                # 添加图片内容
                 if hasattr(chat_request, 'images') and chat_request.images:
-                    image_info = f" [包含{len(chat_request.images)}张图片]"
-                    content_for_memory = (user_content + image_info) if user_content else f"发送了{len(chat_request.images)}张图片"
-            else:  # 只有文本
-                final_user_message = user_content
-                content_for_memory = user_content
-            
-            # 将用户消息添加到记忆中（使用纯文本格式）
-            memory_service.add_user_message(conversation_id, content_for_memory, user_id)
-            
-            # 保存用户消息到数据库（保存完整的图片信息）
-            if db and user_id and conversation_id:
-                # 构建完整的消息内容，包含图片信息
-                if hasattr(chat_request, 'images') and chat_request.images:
-                    # 构建包含图片和文本的完整消息结构
-                    full_message_content = {
-                        "type": "user_message",
-                        "text_content": user_content,
-                        "images": [
-                            {
-                                "url": image.url,
-                                "name": image.name,
-                                "size": image.size
-                            } for image in chat_request.images
-                        ]
-                    }
-                    # 保存JSON格式的完整消息
-                    await add_message(
-                        db=db,
-                        conversation_id=conversation_id,
-                        role="user",
-                        content=json.dumps(full_message_content, ensure_ascii=False)
-                    )
-                    api_logger.info(f"保存包含{len(chat_request.images)}张图片的用户消息到数据库")
-                else:
-                    # 纯文本消息，直接保存
-                    await add_message(
-                        db=db,
-                        conversation_id=conversation_id,
-                        role="user",
-                        content=content_for_memory
-                    )
+                    api_logger.info(f"流式聊天用户消息包含 {len(chat_request.images)} 张图片，已尝试转换为base64格式")
+                    for image in chat_request.images:
+                        try:
+                            # 尝试下载图片并转换为base64
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(image.url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                                    if response.status == 200:
+                                        image_data = await response.read()
+                                        # 检测图片格式
+                                        content_type = response.headers.get('content-type', 'image/png')
+                                        if 'image/' in content_type:
+                                            image_format = content_type.split('/')[-1]
+                                        else:
+                                            image_format = 'png'  # 默认格式
+                                        
+                                        # 转换为base64
+                                        base64_image = base64.b64encode(image_data).decode('utf-8')
+                                        data_url = f"data:{content_type};base64,{base64_image}"
+                                        
+                                        user_message_content.append({
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": data_url,
+                                                "detail": "high"  # 使用高细节模式
+                                            }
+                                        })
+                                    else:
+                                        # 如果下载失败，仍然尝试使用原URL
+                                        user_message_content.append({
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": image.url,
+                                                "detail": "high"
+                                            }
+                                        })
+                        except Exception as download_error:
+                            # 如果转换失败，回退到原URL
+                            user_message_content.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image.url,
+                                    "detail": "high"
+                                }
+                            })
+                    
+                    api_logger.info(f"流式聊天用户消息包含 {len(chat_request.images)} 张图片，已尝试转换为base64格式")
+                
+                # 构建最终的用户消息
+                if len(user_message_content) > 1:  # 有图片或多个内容元素
+                    final_user_message = user_message_content
+                    # 用于记忆和数据库的纯文本内容
+                    content_for_memory = user_content
+                    if hasattr(chat_request, 'images') and chat_request.images:
+                        image_info = f" [包含{len(chat_request.images)}张图片]"
+                        content_for_memory = (user_content + image_info) if user_content else f"发送了{len(chat_request.images)}张图片"
+                else:  # 只有文本
+                    final_user_message = user_content
+                    content_for_memory = user_content
+                
+                # 将用户消息添加到记忆中（使用纯文本格式）
+                memory_service.add_user_message(session_id, content_for_memory, user_id)
+                
+                # 保存用户消息到数据库（保存完整的图片信息）
+                if db and user_id and session_id:
+                    # 构建完整的消息内容，包含图片信息
+                    if hasattr(chat_request, 'images') and chat_request.images:
+                        # 构建包含图片和文本的完整消息结构
+                        full_message_content = {
+                            "type": "user_message",
+                            "text_content": user_content,
+                            "images": [
+                                {
+                                    "url": image.url,
+                                    "name": image.name,
+                                    "size": image.size
+                                } for image in chat_request.images
+                            ]
+                        }
+                        # 保存JSON格式的完整消息
+                        await add_message(
+                            db=db,
+                            session_id=session_id,
+                            role="user",
+                            content=json.dumps(full_message_content, ensure_ascii=False)
+                        )
+                        api_logger.info(f"保存包含{len(chat_request.images)}张图片的用户消息到数据库")
+                    else:
+                        # 纯文本消息，直接保存
+                        await add_message(
+                            db=db,
+                            session_id=session_id,
+                            role="user",
+                            content=content_for_memory
+                        )
+            else:
+                api_logger.info(f"编辑重新执行模式：跳过用户消息创建，直接使用现有记忆")
             
             # 从记忆服务获取完整的消息记录
-            messages = memory_service.get_messages(conversation_id)
+            messages = memory_service.get_messages(session_id)
             
             # 如果当前请求包含图片，需要替换最后一条用户消息为包含图片的格式
-            if hasattr(chat_request, 'images') and chat_request.images and len(user_message_content) > 1:
+            if not skip_user_message and hasattr(chat_request, 'images') and chat_request.images and len(user_message_content) > 1:
                 api_logger.info(f"检测到图片消息，准备替换最后一条用户消息格式")
                 
                 # 找到最后一条用户消息并替换为包含图片的格式
@@ -787,11 +777,14 @@ class ChatStreamService:
                             
                             current_text_segment += content_chunk
                         
-                        if is_first_chunk and (content_chunk or reasoning_chunk):
-                            is_first_chunk = False
-                            yield (content_chunk, conversation_id, reasoning_chunk)
-                        elif content_chunk or reasoning_chunk:
-                            yield (content_chunk, reasoning_chunk)
+                            # 修复yield格式：统一使用四元组格式或单内容格式
+                            if is_first_chunk and (content_chunk or reasoning_chunk):
+                                is_first_chunk = False
+                                # 第一个chunk需要传递session_id，使用四元组格式
+                                yield (content_chunk, session_id, reasoning_chunk or "", None)
+                            elif content_chunk or reasoning_chunk:
+                                # 后续chunk使用三元组格式：(content, reasoning_content, tool_status)
+                                yield (content_chunk, reasoning_chunk or "", None)
                 
                 # 如果最后还有未保存的文本内容，保存到交互流程中
                 if current_text_segment.strip():
@@ -818,7 +811,7 @@ class ChatStreamService:
                 # 先保存AI消息（即使内容为空，也要保存以便后续更新）
                 ai_message = None
                 saved_prompt_tokens = 0  # 提前保存prompt_tokens
-                if db and user_id and conversation_id:
+                if db and user_id and session_id:
                     # 估算token数量（简单实现）
                     tokens = len(collected_content) // 4 if collected_content else 0
                     prompt_tokens = len(str(messages)) // 4
@@ -827,7 +820,7 @@ class ChatStreamService:
                     
                     ai_message = await add_message(
                         db=db,
-                        conversation_id=conversation_id,
+                        session_id=session_id,
                         role="assistant",
                         content=collected_content or "",  # 即使为空也保存
                         tokens=tokens,
@@ -855,7 +848,7 @@ class ChatStreamService:
                         top_p, 
                         tools, 
                         has_tools, 
-                        conversation_id,
+                        session_id,
                         db,
                         message_id=ai_message.id if ai_message else None,
                         interaction_flow=interaction_flow
@@ -885,7 +878,7 @@ class ChatStreamService:
                     
                     # 保存到记忆 - 使用最终完整内容（纯文本，用于对话上下文）
                     if final_content:
-                        memory_service.add_assistant_message(conversation_id, final_content, user_id)
+                        memory_service.add_assistant_message(session_id, final_content, user_id)
                         api_logger.info(f"流式聊天完成，最终内容长度: {len(final_content)}")
                 else:
                     # 没有工具调用，检查是否有交互流程
@@ -905,12 +898,12 @@ class ChatStreamService:
                     
                     # 保存纯文本内容到记忆（用于对话上下文）
                     if collected_content:
-                        memory_service.add_assistant_message(conversation_id, collected_content, user_id)
+                        memory_service.add_assistant_message(session_id, collected_content, user_id)
                         api_logger.info(f"fallback模式：流式聊天完成，内容长度: {len(collected_content)}")
                 
                 # 检查是否需要自动生成标题
-                if db and conversation_id and user_content:
-                    await chat_session_manager.auto_generate_title_if_needed(db, conversation_id, user_content)
+                if db and session_id and user_content:
+                    await chat_session_manager.auto_generate_title_if_needed(db, session_id, user_content)
             
             except Exception as api_error:
                 api_logger.error(f"流式API调用出错: {str(api_error)}", exc_info=True)
@@ -1037,11 +1030,14 @@ class ChatStreamService:
                                     
                                     current_text_segment += content_chunk
                                 
+                                # 修复yield格式：统一使用四元组格式或单内容格式
                                 if is_first_chunk and (content_chunk or reasoning_chunk):
                                     is_first_chunk = False
-                                    yield (content_chunk, conversation_id, reasoning_chunk)
+                                    # 第一个chunk需要传递session_id，使用四元组格式
+                                    yield (content_chunk, session_id, reasoning_chunk or "", None)
                                 elif content_chunk or reasoning_chunk:
-                                    yield (content_chunk, reasoning_chunk)
+                                    # 后续chunk使用三元组格式：(content, reasoning_content, tool_status)
+                                    yield (content_chunk, reasoning_chunk or "", None)
                         
                         # 如果最后还有文本内容，保存到交互流程中
                         if current_text_segment.strip():
@@ -1062,7 +1058,7 @@ class ChatStreamService:
                         # 处理工具调用和保存消息（与上面相同的逻辑）
                         ai_message = None
                         saved_prompt_tokens_fallback = 0  # 提前保存prompt_tokens
-                        if db and user_id and conversation_id:
+                        if db and user_id and session_id:
                             tokens = len(collected_content) // 4 if collected_content else 0
                             prompt_tokens = len(str(messages)) // 4
                             total_tokens = tokens + prompt_tokens
@@ -1070,7 +1066,7 @@ class ChatStreamService:
                             
                             ai_message = await add_message(
                                 db=db,
-                                conversation_id=conversation_id,
+                                session_id=session_id,
                                 role="assistant",
                                 content=collected_content or "",
                                 tokens=tokens,
@@ -1096,7 +1092,7 @@ class ChatStreamService:
                                 top_p, 
                                 tools, 
                                 has_tools, 
-                                conversation_id,
+                                session_id,
                                 db,
                                 message_id=ai_message.id if ai_message else None,
                                 interaction_flow=interaction_flow
@@ -1124,7 +1120,7 @@ class ChatStreamService:
                             
                             # 保存最终内容到记忆
                             if final_content:
-                                memory_service.add_assistant_message(conversation_id, final_content, user_id)
+                                memory_service.add_assistant_message(session_id, final_content, user_id)
                                 api_logger.info(f"流式聊天完成，最终内容长度: {len(final_content)}")
                         else:
                             # 没有工具调用，检查是否有交互流程
@@ -1144,12 +1140,12 @@ class ChatStreamService:
                             
                             # 保存纯文本内容到记忆（用于对话上下文）
                             if collected_content:
-                                memory_service.add_assistant_message(conversation_id, collected_content, user_id)
+                                memory_service.add_assistant_message(session_id, collected_content, user_id)
                                 api_logger.info(f"fallback模式：流式聊天完成，内容长度: {len(collected_content)}")
                         
                         # 检查是否需要自动生成标题
-                        if db and conversation_id and user_content:
-                            await chat_session_manager.auto_generate_title_if_needed(db, conversation_id, user_content)
+                        if db and session_id and user_content:
+                            await chat_session_manager.auto_generate_title_if_needed(db, session_id, user_content)
                     
                     except Exception as fallback_error:
                         api_logger.error(f"使用默认模型 {openai_client_service.model} 流式响应仍然失败: {str(fallback_error)}", exc_info=True)
@@ -1158,13 +1154,14 @@ class ChatStreamService:
                 error_message = f"AI服务暂时不可用: {str(api_error)}"
                 
                 # 总是返回会话ID，不管是否是新会话
-                yield (error_message, conversation_id)
+                # 使用四元组格式保持一致性
+                yield (error_message, session_id, "", None)
                 
                 # 保存错误信息到数据库
-                if db and user_id and conversation_id:
+                if db and user_id and session_id:
                     await add_message(
                         db=db,
-                        conversation_id=conversation_id,
+                        session_id=session_id,
                         role="assistant",
                         content=error_message
                     )
@@ -1174,7 +1171,8 @@ class ChatStreamService:
             
             # 发送一个错误消息，包含会话ID
             error_message = f"AI服务发生错误: {str(e)}"
-            yield (error_message, conversation_id)
+            # 使用四元组格式保持一致性
+            yield (error_message, session_id, "", None)
 
 
 # 创建全局流式聊天服务实例

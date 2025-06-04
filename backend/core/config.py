@@ -54,6 +54,25 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4.1-2025-04-14")
     
+    # 默认Agent配置
+    DEFAULT_AGENT_MODEL: str = os.getenv("DEFAULT_AGENT_MODEL", "gpt-4.1-2025-04-14")
+    DEFAULT_AGENT_SYSTEM_PROMPT: str = os.getenv(
+        "DEFAULT_AGENT_SYSTEM_PROMPT", 
+        "你是一个智能、友善、有用的AI助手。你可以帮助用户回答问题、协助写作、整理思路，并提供各种有价值的建议。请保持回答的准确性和有用性。"
+    )
+    DEFAULT_AGENT_MAX_MEMORY: int = int(os.getenv("DEFAULT_AGENT_MAX_MEMORY", "20"))
+    DEFAULT_AGENT_MODEL_SETTINGS: str = os.getenv(
+        "DEFAULT_AGENT_MODEL_SETTINGS", 
+        '{"temperature": 0.7, "top_p": 0.95, "presence_penalty": 0, "frequency_penalty": 0}'
+    )
+    DEFAULT_AGENT_TOOLS_ENABLED: str = os.getenv(
+        "DEFAULT_AGENT_TOOLS_ENABLED", 
+        '{"note_reader": {"enabled": true}, "note_editor": {"enabled": true}}'
+    )
+    DEFAULT_AGENT_TEMPERATURE: float = float(os.getenv("DEFAULT_AGENT_TEMPERATURE", "0.7"))
+    DEFAULT_AGENT_TOP_P: float = float(os.getenv("DEFAULT_AGENT_TOP_P", "1.0"))
+    DEFAULT_AGENT_MAX_TOKENS: int = int(os.getenv("DEFAULT_AGENT_MAX_TOKENS", "2048"))
+    
     # Redis配置
     REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))

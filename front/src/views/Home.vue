@@ -58,26 +58,10 @@ routeManager.initializeRoute(
     
     const result = await noteManager.fetchNoteDetail(noteId);
     if (result && result.note) {
-      // 如果笔记有关联的session_id，加载会话历史记录到侧边栏
-      if (result.note.session_id && !routeManager.route.query.id) {
-        console.log(`笔记关联了会话ID: ${result.note.session_id}，设置currentSessionId并加载历史记录`);
-        sessionManager.currentSessionId.value = result.note.session_id;
-        
-        try {
-          await sessionManager.loadSessionHistoryToSidebar(result.note.session_id);
-        } catch (error) {
-          console.error('加载关联会话历史记录失败:', error);
-        }
-      } else {
-        console.log('笔记没有关联的session_id或URL中已有会话ID，清空会话历史');
-      }
-    }
-  },
-  async (sessionId: number) => {
-    const result = await sessionManager.fetchSessionDetail(sessionId);
-    if (result) {
-      noteManager.editorContent.value = result.content;
-      noteManager.editorTitle.value = result.title;
+      // 切换笔记时，清空当前会话ID，让AgentSidebarHeader自动选择最近的会话
+      sessionManager.currentSessionId.value = null;
+      
+      console.log(`路由变化：笔记加载完成，清空当前会话ID，等待侧边栏自动选择最近聊天的会话`);
       
       // 处理复杂的渲染逻辑
       if (result.needsComplexRendering) {
@@ -88,7 +72,7 @@ routeManager.initializeRoute(
             
             // 导入需要的渲染服务
             const { renderContentComponents, cleanupMarkmapElements } = await import('../services/renderService');
-        
+            
             // 先清理所有已存在的思维导图元素
             cleanupMarkmapElements();
             
@@ -107,7 +91,7 @@ routeManager.initializeRoute(
               if (content.includes('```markdown') || content.includes('# ')) {
                 console.log('检测到可能包含思维导图的内容，再次尝试渲染');
                 renderContentComponents(true);
-          }
+              }
             }, 800);
           } catch (error) {
             console.error('思维导图渲染失败:', error);
@@ -116,8 +100,55 @@ routeManager.initializeRoute(
       } else {
         nextTick(() => {
           renderContentComponents(true);
-      });
+        });
       }
+    }
+  },
+  async (sessionId: number) => {
+    const result = await sessionManager.fetchSessionDetail(sessionId);
+    if (result) {
+      noteManager.editorContent.value = result.content;
+      noteManager.editorTitle.value = result.title;
+      
+      // 处理复杂的渲染逻辑
+      if (result.needsComplexRendering) {
+        nextTick(async () => {
+          try {
+            // 先立即尝试渲染一次
+            console.log('立即强制渲染思维导图，不等待DOM完全加载');
+            
+            // 导入需要的渲染服务
+            const { renderContentComponents, cleanupMarkmapElements } = await import('../services/renderService');
+            
+            // 先清理所有已存在的思维导图元素
+            cleanupMarkmapElements();
+            
+            // 立即强制渲染一次
+            renderContentComponents(true);
+            
+            // 设置短延迟后再次尝试渲染，确保内容完全加载
+            setTimeout(() => {
+              console.log('设置短延迟再次尝试渲染思维导图');
+              renderContentComponents(true);
+            }, 300);
+            
+            // 如果检测到特殊内容，给予更长的时间再尝试一次
+            setTimeout(() => {
+              const content = result.note.content || '';
+              if (content.includes('```markdown') || content.includes('# ')) {
+                console.log('检测到可能包含思维导图的内容，再次尝试渲染');
+                renderContentComponents(true);
+              }
+            }, 800);
+          } catch (error) {
+            console.error('思维导图渲染失败:', error);
+          }
+        });
+      } else {
+      nextTick(() => {
+        renderContentComponents(true);
+      });
+    }
     }
   },
   async (sessionId: number) => {
@@ -322,10 +353,17 @@ const handleSidebarSend = async (data: any) => {
     
     // 定义工具状态处理回调
     const handleToolStatus = (toolStatus: any) => {
+      console.log('🔧 [Home.vue] handleToolStatus 被调用');
+      console.log('🔧 [Home.vue] 收到工具状态更新:', toolStatus);
+      console.log('🔧 [Home.vue] agentSidebarRef存在:', !!agentSidebarRef.value);
+      console.log('🔧 [Home.vue] agentSidebarRef.handleToolStatus存在:', !!(agentSidebarRef.value && agentSidebarRef.value.handleToolStatus));
+      
       if (toolStatus && agentSidebarRef.value && agentSidebarRef.value.handleToolStatus) {
-        console.log('Home.vue 收到工具状态更新:', toolStatus);
-        console.log('调用 AgentSidebar.handleToolStatus');
+        console.log('🔧 [Home.vue] 调用 AgentSidebar.handleToolStatus');
         agentSidebarRef.value.handleToolStatus(toolStatus);
+        console.log('🔧 [Home.vue] AgentSidebar.handleToolStatus 调用完成');
+      } else {
+        console.warn('🔧 [Home.vue] 无法调用AgentSidebar.handleToolStatus，缺少必要条件');
       }
     };
     

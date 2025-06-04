@@ -14,8 +14,8 @@
           <button
             v-if="sessions.length > 1"
             class="session-close"
-            @click.stop="removeSession(session.id)"
-            title="取消关联"
+            @click.stop="hideSession(session.id)"
+            title="隐藏对话"
           >
             ×
           </button>
@@ -78,12 +78,16 @@
               v-for="session in sessions" 
               :key="session.id"
               class="history-item"
-              :class="{ active: session.id === currentSessionId }"
+              :class="{ 
+                active: session.id === currentSessionId,
+                hidden: hiddenSessionIds.has(session.id)
+              }"
               @click="switchToSessionFromHistory(session.id)"
             >
               <div class="history-item-content">
                 <div class="history-item-title">
                   {{ getSessionDisplayTitle(session) }}
+                  <span v-if="hiddenSessionIds.has(session.id)" class="hidden-indicator">(已隐藏)</span>
                 </div>
                 <div class="history-item-meta">
                   <span class="history-item-time">{{ formatSessionTime(session.updated_at) }}</span>
@@ -91,16 +95,6 @@
                 </div>
               </div>
               <div class="history-item-actions">
-                <button 
-                  v-if="!session.is_primary && sessions.length > 1"
-                  class="set-primary-btn"
-                  @click.stop="setPrimarySession(session.id)"
-                  title="设为主要会话"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polygon points="12,2 15.09,8.26 22,9 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9 8.91,8.26"></polygon>
-                  </svg>
-                </button>
                 <button 
                   v-if="sessions.length > 1"
                   class="unlink-btn"
@@ -148,6 +142,9 @@ const showHistoryDropdown = ref(false);
 const historyButtonRef = ref(null);
 const historyDropdownPosition = ref({});
 
+// 隐藏的会话ID列表
+const hiddenSessionIds = ref<Set<number>>(new Set());
+
 // 从全局注入当前会话ID
 const globalCurrentSessionId = inject<any>('currentSessionId');
 
@@ -165,13 +162,14 @@ const loadNoteSessions = async (noteId: number) => {
       display_title: getSessionDisplayTitle(s)
     })));
     
-    // 如果没有当前会话ID，设置为主要会话
+    // 如果没有当前会话ID，设置为最近使用的会话（列表中第一个）
     if (!currentSessionId.value && sessionList.length > 0) {
-      const primarySession = sessionList.find(s => s.is_primary) || sessionList[0];
-      console.log('[AgentSidebarHeader] 设置当前会话ID:', primarySession.id);
-      currentSessionId.value = primarySession.id;
+      // 由于会话列表已经按最近使用时间排序，直接选择第一个会话
+      const recentSession = sessionList[0];
+      console.log('[AgentSidebarHeader] 设置当前会话ID为最近使用的会话:', recentSession.id);
+      currentSessionId.value = recentSession.id;
       if (globalCurrentSessionId) {
-        globalCurrentSessionId.value = primarySession.id;
+        globalCurrentSessionId.value = recentSession.id;
       }
     }
   } catch (error) {
@@ -180,15 +178,18 @@ const loadNoteSessions = async (noteId: number) => {
   }
 };
 
-// 计算属性：最多显示3个会话，优先显示当前活跃会话
+// 计算属性：最多显示3个会话，优先显示当前活跃会话，排除隐藏的会话
 const displayedSessions = computed(() => {
-  if (sessions.value.length <= 3) {
-    return sessions.value;
+  // 过滤掉隐藏的会话
+  const visibleSessions = sessions.value.filter(s => !hiddenSessionIds.value.has(s.id));
+  
+  if (visibleSessions.length <= 3) {
+    return visibleSessions;
   }
   
   // 如果有超过3个会话，优先显示当前活跃会话
-  const currentSession = sessions.value.find(s => s.id === currentSessionId.value);
-  const otherSessions = sessions.value.filter(s => s.id !== currentSessionId.value);
+  const currentSession = visibleSessions.find(s => s.id === currentSessionId.value);
+  const otherSessions = visibleSessions.filter(s => s.id !== currentSessionId.value);
   
   const result = [];
   
@@ -324,7 +325,30 @@ const createNewSession = async () => {
   }
 };
 
-// 移除会话关联
+// 隐藏会话（从标签中移除，但不取消关联）
+const hideSession = async (sessionId: number) => {
+  // 检查是否是最后一个可见的会话
+  const visibleSessions = sessions.value.filter(s => !hiddenSessionIds.value.has(s.id));
+  if (visibleSessions.length <= 1) {
+    message.warning('至少需要保留一个显示的对话');
+    return;
+  }
+  
+  // 将会话ID添加到隐藏列表
+  hiddenSessionIds.value.add(sessionId);
+  
+  // 如果隐藏的是当前会话，切换到第一个可见的会话
+  if (sessionId === currentSessionId.value) {
+    const remainingVisibleSessions = sessions.value.filter(s => !hiddenSessionIds.value.has(s.id));
+    if (remainingVisibleSessions.length > 0) {
+      switchToSession(remainingVisibleSessions[0].id);
+    }
+  }
+  
+  message.success('对话已从标签中移除，可在历史记录中找到');
+};
+
+// 移除会话关联（保持原有功能，仅在历史记录弹窗中使用）
 const removeSession = async (sessionId: number) => {
   if (!props.noteId || sessions.value.length <= 1) {
     message.warning('至少需要保留一个对话');
@@ -379,6 +403,12 @@ const closeHistoryDropdown = () => {
 
 // 从历史记录中切换会话
 const switchToSessionFromHistory = (sessionId: number) => {
+  // 如果是隐藏的会话，先显示它
+  if (hiddenSessionIds.value.has(sessionId)) {
+    hiddenSessionIds.value.delete(sessionId);
+    message.success('对话已重新添加到标签');
+  }
+  
   switchToSession(sessionId);
   closeHistoryDropdown();
 };
@@ -387,26 +417,6 @@ const switchToSessionFromHistory = (sessionId: number) => {
 const removeSessionFromHistory = async (sessionId: number) => {
   await removeSession(sessionId);
   // 弹窗会在loadNoteSessions重新加载后自动更新
-};
-
-// 设置主要会话
-const setPrimarySession = async (sessionId: number) => {
-  if (!props.noteId) {
-    message.error('请先选择一个笔记');
-    return;
-  }
-  
-  try {
-    await noteSessionService.setPrimarySession(Number(props.noteId), sessionId);
-    
-    // 重新加载会话列表
-    await loadNoteSessions(Number(props.noteId));
-    
-    message.success('主要会话设置成功');
-  } catch (error) {
-    console.error('设置主要会话失败:', error);
-    message.error('设置主要会话失败');
-  }
 };
 
 // 格式化会话时间
@@ -734,22 +744,33 @@ defineExpose({
   align-items: flex-start;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #f1f5f9;
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.history-item:last-child {
-  border-bottom: none;
+  transition: all 0.2s ease;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
 }
 
 .history-item:hover {
   background: #f8fafc;
+  border-color: #e2e8f0;
 }
 
 .history-item.active {
   background: #eff6ff;
-  border-left: 3px solid #3b82f6;
+  border-color: #3b82f6;
+}
+
+.history-item.hidden {
+  opacity: 0.6;
+  background: #f9fafb;
+  border-color: #e5e7eb;
+  border-style: dashed;
+}
+
+.history-item.hidden:hover {
+  opacity: 0.8;
+  background: #f3f4f6;
 }
 
 .history-item-content {
@@ -758,40 +779,43 @@ defineExpose({
 }
 
 .history-item-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  color: #1e40af;
   margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: #1f2937;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hidden-indicator {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: normal;
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #d1d5db;
 }
 
 .history-item-meta {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: #64748b;
-  margin-bottom: 4px;
+  font-size: 12px;
+  color: #6b7280;
 }
 
 .history-item-time {
-  color: #64748b;
+  color: #9ca3af;
 }
 
 .message-count {
   color: #6b7280;
-}
-
-.history-item-preview {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
   font-size: 11px;
-  color: #9ca3af;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .history-item-actions {
@@ -800,30 +824,25 @@ defineExpose({
   gap: 4px;
   margin-left: 8px;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.2s ease;
 }
 
 .history-item:hover .history-item-actions {
   opacity: 1;
 }
 
-.set-primary-btn, .unlink-btn {
+.unlink-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  background: transparent;
+  width: 24px;
+  height: 24px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  color: #64748b;
-  transition: all 0.15s ease;
-}
-
-.set-primary-btn:hover {
-  background: #fef3c7;
-  color: #92400e;
+  transition: all 0.2s ease;
+  background: transparent;
+  color: #ef4444;
 }
 
 .unlink-btn:hover {

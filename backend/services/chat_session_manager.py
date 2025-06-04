@@ -12,95 +12,113 @@ class ChatSessionManager:
     """聊天会话管理器"""
     
     @staticmethod
-    async def auto_generate_title_if_needed(db: AsyncSession, conversation_id: int, user_content: str):
+    async def auto_generate_title_if_needed(db: AsyncSession, session_id: int, user_content: str):
         """
-        如果需要，自动生成会话标题
+        如果需要，自动为聊天会话生成标题
         
         Args:
             db: 数据库会话
-            conversation_id: 会话ID
+            session_id: 会话ID
             user_content: 用户消息内容
         """
         try:
-            # 获取当前会话信息
-            current_chat = await get_chat(db, conversation_id)
-            if current_chat and current_chat.title == "新对话":
-                # 获取会话的消息数量，判断是否是第一次对话
-                messages_count = await get_chat_messages(db, conversation_id)
-                # 只要是新会话（标题为"新对话"）且有用户消息，就生成标题
-                user_messages = [msg for msg in messages_count if msg.role == "user"]
-                if len(user_messages) == 1:  # 只有一条用户消息，说明是第一次对话
-                    api_logger.info(f"检测到第一次对话，开始自动生成标题，会话ID: {conversation_id}")
-                    
-                    # 使用用户的第一条消息生成标题
-                    generated_title = await generate_title_with_ai(conversation_id, user_content)
+            # 检查会话是否存在且标题为默认值
+            chat = await get_chat(db, session_id)
+            
+            if not chat:
+                api_logger.warning(f"会话不存在: session_id={session_id}")
+                return
+            
+            # 如果标题是默认值或为空，且用户内容不为空，则生成标题
+            if (not chat.title or chat.title in ["新对话", "新会话", ""]) and user_content.strip():
+                try:
+                    # 调用AI生成标题
+                    new_title = await generate_title_with_ai(session_id, user_content)
                     
                     # 更新会话标题
-                    await update_chat_title(db, conversation_id, generated_title)
-                    api_logger.info(f"自动生成标题成功: {generated_title}, 会话ID: {conversation_id}")
-        except Exception as title_error:
-            api_logger.error(f"自动生成标题失败: {str(title_error)}")
-            # 标题生成失败不影响主要功能，继续执行
+                    await update_chat_title(db, session_id, new_title)
+                    
+                    api_logger.info(f"会话标题已自动生成: session_id={session_id}, title={new_title}")
+                    
+                except Exception as e:
+                    api_logger.error(f"自动生成标题失败: session_id={session_id}, error={str(e)}")
+                
+        except Exception as e:
+            api_logger.error(f"检查并生成标题时出错: {str(e)}")
     
     @staticmethod
-    async def clear_memory(conversation_id: int):
+    async def clear_memory(session_id: int):
         """
         清空指定会话的记忆
-        """
-        memory_service.clear_memory(conversation_id)
-        api_logger.info(f"已清空会话 {conversation_id} 的记忆")
-    
-    @staticmethod
-    async def truncate_memory_after_message(conversation_id: int, message_index: int) -> bool:
-        """
-        截断指定消息后的所有记忆
         
         Args:
-            conversation_id: 会话ID
-            message_index: 消息索引，保留该索引及之前的消息，删除之后的消息
+            session_id: 会话ID
+        """
+        try:
+            memory_service.clear_memory(session_id)
+            api_logger.info(f"会话记忆已清空: session_id={session_id}")
+        except Exception as e:
+            api_logger.error(f"清空记忆失败: session_id={session_id}, error={str(e)}")
+    
+    @staticmethod
+    async def truncate_memory_after_message(session_id: int, message_index: int) -> bool:
+        """
+        截断指定消息索引之后的记忆
+        
+        Args:
+            session_id: 会话ID
+            message_index: 消息索引
         
         Returns:
             bool: 是否截断成功
         """
-        result = memory_service.truncate_memory_after_message(conversation_id, message_index)
-        if result:
-            api_logger.info(f"已截断会话 {conversation_id} 的记忆，保留到索引 {message_index}")
-        else:
-            api_logger.warning(f"截断会话 {conversation_id} 的记忆失败")
-        return result
+        try:
+            result = memory_service.truncate_memory_after_message(session_id, message_index)
+            if result:
+                    api_logger.info(f"会话记忆已截断: session_id={session_id}, message_index={message_index}")
+            else:
+                    api_logger.warning(f"会话记忆截断失败: session_id={session_id}, message_index={message_index}")
+            return result
+        except Exception as e:
+            api_logger.error(f"截断记忆时出错: session_id={session_id}, message_index={message_index}, error={str(e)}")
+            return False
     
     @staticmethod
-    async def replace_message_and_truncate(conversation_id: int, message_index: int, new_content: str, role: str = None) -> bool:
+    async def replace_message_and_truncate(session_id: int, message_index: int, new_content: str, role: str = None) -> bool:
         """
-        替换指定消息的内容，并截断该消息之后的所有记忆
+        替换指定索引的消息内容并截断后续消息
         
         Args:
-            conversation_id: 会话ID
+            session_id: 会话ID
             message_index: 消息索引
             new_content: 新的消息内容
-            role: 消息角色，如果为None则保持原角色
+            role: 消息角色
         
         Returns:
             bool: 是否操作成功
         """
-        result = memory_service.replace_message_and_truncate(conversation_id, message_index, new_content, role)
-        if result:
-            api_logger.info(f"已替换会话 {conversation_id} 的消息 {message_index} 并截断后续消息")
-        else:
-            api_logger.warning(f"替换会话 {conversation_id} 的消息失败")
-        return result
+        try:
+            result = memory_service.replace_message_and_truncate(session_id, message_index, new_content, role)
+            if result:
+                api_logger.info(f"会话消息已替换并截断: session_id={session_id}, message_index={message_index}")
+            else:
+                api_logger.warning(f"会话消息替换截断失败: session_id={session_id}, message_index={message_index}")
+            return result
+        except Exception as e:
+            api_logger.error(f"替换消息并截断时出错: session_id={session_id}, message_index={message_index}, error={str(e)}")
+            return False
     
     @staticmethod
     async def get_chat_history(
         db: AsyncSession, 
-        conversation_id: int, 
+        session_id: int, 
         user_id: int
     ) -> List[Dict[str, Any]]:
         """
         获取指定会话的聊天历史记录
         """
         # 验证会话存在且属于当前用户
-        chat = await get_chat(db, conversation_id)
+        chat = await get_chat(db, session_id)
         if not chat or chat.user_id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -108,7 +126,7 @@ class ChatSessionManager:
             )
         
         # 获取聊天消息
-        messages = await get_chat_messages(db, conversation_id)
+        messages = await get_chat_messages(db, session_id)
         
         # 转换为前端需要的格式
         return [

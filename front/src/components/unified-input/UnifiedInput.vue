@@ -192,19 +192,19 @@ const fetchAvailableModels = async () => {
   }
 };
 
-// 获取默认Agent（优先使用id为1，否则使用第一个可用Agent）
+// 获取默认Agent（获取用户自己的Agent）
 const fetchDefaultAgent = async () => {
   try {
-    // 首先尝试获取ID为1的Agent
-    let agent = await agentService.getAgentDetail(1);
+    // 首先尝试获取用户自己的Agent
+    let agent = await agentService.getMyAgent();
     
     if (!agent) {
-      console.log('未找到ID为1的Agent，尝试获取用户的第一个可用Agent');
-      // 如果没有ID为1的Agent，获取用户能看到的所有Agent
+      console.log('用户还没有AI助手，尝试获取第一个可用Agent');
+      // 如果用户没有自己的Agent，获取用户能看到的所有Agent
       const allAgents = await agentService.getAllAgents();
       if (allAgents && allAgents.length > 0) {
         agent = allAgents[0]; // 使用第一个可用的Agent
-        console.log('使用第一个可用Agent作为默认:', agent.name, '模型:', agent.model);
+        console.log('使用第一个可用Agent作为默认，模型:', agent.model);
       }
     }
     
@@ -214,7 +214,7 @@ const fetchDefaultAgent = async () => {
       if (!selectedModel.value && agent.model) {
         selectedModel.value = agent.model;
       }
-      console.log('默认Agent加载成功:', agent.name, '模型:', agent.model);
+      console.log('默认Agent加载成功，模型:', agent.model);
       
       // 通知父组件默认agent已选择
       emit('select-agent', agent);
@@ -239,8 +239,6 @@ const createDefaultAgent = async () => {
     const defaultModel = models.length > 0 ? models[0] : 'gpt-3.5-turbo';
     
     const defaultAgentData = {
-      name: '默认助手',
-      avatar_url: 'https://placehold.co/40x40?text=AI',
       system_prompt: '你是一个有用的AI助手，能够帮助用户解答问题和完成各种任务。',
       model: defaultModel,
       max_memory: 50,
@@ -251,15 +249,14 @@ const createDefaultAgent = async () => {
         presence_penalty: 0,
         max_tokens: 4000
       },
-      tools_enabled: {},
-      is_public: false
+      tools_enabled: {}
     };
     
     const newAgent = await agentService.createAgent(defaultAgentData);
     if (newAgent) {
       defaultAgent.value = newAgent;
       selectedModel.value = newAgent.model;
-      console.log('默认Agent创建成功:', newAgent.name, '模型:', newAgent.model);
+      console.log('默认Agent创建成功，模型:', newAgent.model);
       emit('select-agent', newAgent);
     } else {
       console.error('创建默认Agent失败');

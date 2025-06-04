@@ -11,7 +11,7 @@ class ToolCallHistory(BaseModel):
 
     id = Column(Integer, primary_key=True, index=True)
     message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=False, index=True)
-    conversation_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=True, index=True)
     
     # 工具调用基本信息

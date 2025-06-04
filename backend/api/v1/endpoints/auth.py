@@ -29,8 +29,17 @@ async def create_user(
     """
     try:
         auth_logger.info(f"用户注册请求: {user_data.username}, 请求ID: {getattr(request.state, 'request_id', '')}")
-        user, default_note = await register_user(user_data, db)
-        auth_logger.info(f"用户注册成功: {user.username}")
+        user, default_note, default_agent = await register_user(user_data, db)
+        
+        # 在访问用户属性之前，先确保数据库会话仍然有效，并预先获取所需属性
+        username = user.username
+        user_id = user.id
+        phone = user.phone
+        is_active = user.is_active
+        created_at = user.created_at
+        updated_at = user.updated_at
+        
+        auth_logger.info(f"用户注册成功: {username}")
         
         # 将UTC时间转换为北京时间（UTC+8）
         def to_beijing_time(dt):
@@ -45,15 +54,15 @@ async def create_user(
         
         # 转换User对象为可序列化的字典
         user_dict = {
-            "id": user.id,
-            "username": user.username,
-            "phone": user.phone,
-            "is_active": user.is_active,
-            "created_at": to_beijing_time(user.created_at).isoformat() if user.created_at else None,
-            "updated_at": to_beijing_time(user.updated_at).isoformat() if user.updated_at else None
+            "id": user_id,
+            "username": username,
+            "phone": phone,
+            "is_active": is_active,
+            "created_at": to_beijing_time(created_at).isoformat() if created_at else None,
+            "updated_at": to_beijing_time(updated_at).isoformat() if updated_at else None
         }
         
-        # 添加默认笔记信息到响应中
+        # 添加默认笔记和agent信息到响应中
         response_data = {
             "user": user_dict
         }
@@ -64,9 +73,15 @@ async def create_user(
                 "title": default_note.title
             }
         
+        if default_agent:
+            response_data["default_agent"] = {
+                "id": default_agent.id,
+                "model": default_agent.model
+            }
+        
         return SuccessResponse(
             data=response_data,
-            msg="注册成功",
+            msg="注册成功，已为您创建默认AI助手",
             request_id=getattr(request.state, "request_id", None)
         )
     except ValueError as e:

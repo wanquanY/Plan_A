@@ -244,6 +244,7 @@ export function useStreamingResponse() {
         
         // 提取纯文本内容用于显示
         const displayContent = extractTextFromInteractionFlow(parsedResponse.interaction_flow);
+        console.log('提取的显示内容长度:', displayContent.length, '内容预览:', displayContent.substring(0, 100));
         
         // 将interaction_flow转换为contentChunks格式，保持时间顺序
         const contentChunks: ContentChunk[] = parsedResponse.interaction_flow.map(segment => {
@@ -274,7 +275,7 @@ export function useStreamingResponse() {
           return null;
         }).filter(chunk => chunk !== null) as ContentChunk[];
         
-        // 更新消息内容
+        // 更新消息内容 - 使用提取的完整文本内容
         currentMsg.content = displayContent;
         currentMsg.originalContent = response;
         currentMsg.contentChunks = contentChunks;
@@ -282,6 +283,7 @@ export function useStreamingResponse() {
         console.log('转换后的contentChunks:', contentChunks.map(chunk => 
           `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`
         ));
+        console.log('最终设置的消息内容长度:', currentMsg.content.length);
         
         return true; // 表示处理了完整响应
       }

@@ -1,10 +1,11 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
+import uuid
 
 from backend.utils.logging import api_logger
 from backend.services.openai_client import openai_client_service
-from backend.services.chat_tool_handler import chat_tool_handler
+from backend.services.chat_tool_handler import chat_tool_handler, ChatToolHandler
 
 
 class ChatToolProcessor:
@@ -22,7 +23,7 @@ class ChatToolProcessor:
         top_p: float, 
         tools: List[Dict[str, Any]], 
         has_tools: bool, 
-        conversation_id: int,
+        session_id: int,
         db: Optional[AsyncSession] = None,
         message_id: Optional[int] = None,
         max_iterations: int = 10  # 防止无限循环
@@ -89,7 +90,7 @@ class ChatToolProcessor:
                 tool_call_objects, 
                 agent, 
                 None,  # 不传递数据库连接，避免重复保存
-                conversation_id,
+                session_id,
                 message_id=None  # 不保存到数据库
             )
             
@@ -171,7 +172,7 @@ class ChatToolProcessor:
         top_p: float, 
         tools: List[Dict[str, Any]], 
         has_tools: bool, 
-        conversation_id: int,
+        session_id: int,
         db: Optional[AsyncSession] = None,
         message_id: Optional[int] = None,
         max_iterations: int = 10  # 防止无限循环
@@ -253,14 +254,14 @@ class ChatToolProcessor:
                     "tool_name": tool_call_obj.function.name,
                     "status": "executing"
                 }
-                yield ("", conversation_id, tool_status)
+                yield ("", session_id, None, json.dumps(tool_status))
                 
                 # 执行单个工具调用（传递message_id关联到特定消息）
                 single_result, single_tool_data = await chat_tool_handler.handle_tool_calls(
                     [tool_call_obj], 
                     agent, 
                     db,  # 传递数据库连接，保存工具调用记录
-                    conversation_id,
+                    session_id,
                     message_id=message_id  # 关联到特定消息
                 )
                 
@@ -276,7 +277,7 @@ class ChatToolProcessor:
                     "status": "completed",
                     "result": tool_result_content
                 }
-                yield ("", conversation_id, tool_status)
+                yield ("", session_id, tool_result_content, json.dumps(tool_status))
             
             # 将工具调用和结果添加到消息列表
             messages.append({
@@ -385,7 +386,7 @@ class ChatToolProcessor:
                                     "tool_name": new_call['function']['name'],
                                     "status": "preparing"
                                 }
-                                yield ("", conversation_id, tool_status)
+                                yield ("", session_id, None, json.dumps(tool_status))
                     
                     content_chunk = delta.content or ""
                     next_collected_content += content_chunk
@@ -416,7 +417,129 @@ class ChatToolProcessor:
                 "type": "tools_completed",
                 "status": "completed"
             }
-            yield ("", conversation_id, tool_status)
+            yield ("", session_id, None, json.dumps(tool_status))
+
+    async def process_tools_streaming(
+        self,
+        tools: List[Dict[str, Any]],
+        has_tools: bool,
+        session_id: int,
+        db: Optional[AsyncSession] = None,
+        message_id: Optional[int] = None,
+    ) -> AsyncGenerator[Tuple[str, int, Optional[str], str], None]:
+        """
+        流式处理工具调用
+        
+        Args:
+            tools: 工具调用信息
+            has_tools: 是否存在工具调用
+            session_id: 会话ID
+            db: 数据库会话
+            message_id: 消息ID
+            
+        Yields:
+            tuple: (content, session_id, reasoning_content, tool_status)
+        """
+        try:
+            if not has_tools or not tools:
+                yield ("", session_id, None, "no_tools")
+                return
+            
+            # 处理每个工具调用
+            for tool in tools:
+                api_logger.info(f"开始处理工具调用: {tool.get('function', {}).get('name', 'unknown')}")
+                
+                tool_call_id = tool.get('id', str(uuid.uuid4()))
+                function_info = tool.get('function', {})
+                function_name = function_info.get('name', '')
+                arguments_str = function_info.get('arguments', '{}')
+                
+                # 解析参数
+                try:
+                    arguments = json.loads(arguments_str) if arguments_str else {}
+                except json.JSONDecodeError:
+                    arguments = {}
+                    api_logger.warning(f"工具调用参数解析失败: {arguments_str}")
+                
+                # 创建工具调用处理器
+                handler = ChatToolHandler(
+                    tool_call_id=tool_call_id,
+                    function_name=function_name,
+                    arguments=arguments,
+                    session_id=session_id,
+                    db=db,
+                    message_id=message_id
+                )
+                
+                async for status_update in handler.handle_streaming():
+                    yield ("", session_id, None, status_update)
+                
+        except Exception as e:
+            api_logger.error(f"工具处理发生错误: {e}", exc_info=True)
+            yield ("", session_id, None, "error")
+
+    async def process_tools(
+        self,
+        tools: List[Dict[str, Any]],
+        has_tools: bool,
+        session_id: int,
+        db: Optional[AsyncSession] = None,
+        message_id: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """
+        处理工具调用（非流式）
+        
+        Args:
+            tools: 工具调用信息
+            has_tools: 是否存在工具调用
+            session_id: 会话ID
+            db: 数据库会话
+            message_id: 消息ID
+            
+        Returns:
+            tuple: (处理结果列表, 状态)
+        """
+        try:
+            if not has_tools or not tools:
+                return [], "no_tools"
+            
+            results = []
+            
+            # 处理每个工具调用
+            for tool in tools:
+                api_logger.info(f"开始处理工具调用: {tool.get('function', {}).get('name', 'unknown')}")
+                
+                tool_call_id = tool.get('id', str(uuid.uuid4()))
+                function_info = tool.get('function', {})
+                function_name = function_info.get('name', '')
+                arguments_str = function_info.get('arguments', '{}')
+                
+                # 解析参数
+                try:
+                    arguments = json.loads(arguments_str) if arguments_str else {}
+                except json.JSONDecodeError:
+                    arguments = {}
+                    api_logger.warning(f"工具调用参数解析失败: {arguments_str}")
+                
+                # 创建工具调用处理器
+                handler = ChatToolHandler(
+                    tool_call_id=tool_call_id,
+                    function_name=function_name,
+                    arguments=arguments,
+                    session_id=session_id,
+                    db=db,
+                    message_id=message_id
+                )
+                
+                # 执行工具调用
+                result = await handler.handle()
+                results.append(result)
+            
+            return results, "completed"
+            
+        except Exception as e:
+            api_logger.error(f"工具处理发生错误: {e}", exc_info=True)
+            return [], "error"
 
 
 # 创建全局工具处理器实例

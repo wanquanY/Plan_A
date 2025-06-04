@@ -2,6 +2,7 @@ from typing import Dict, List, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 from datetime import datetime
+import asyncio
 
 from backend.utils.logging import api_logger
 from backend.services.tools import tools_service
@@ -21,7 +22,7 @@ class ChatToolHandler:
         # 使用工具管理器获取工具列表
         tools = tools_manager.get_agent_tools(agent.tools_enabled)
         
-        api_logger.info(f"为Agent {agent.name} 配置了 {len(tools)} 个工具")
+        api_logger.info(f"为Agent AI助手 配置了 {len(tools)} 个工具")
         return tools
     
     @staticmethod
@@ -29,7 +30,7 @@ class ChatToolHandler:
         tool_calls, 
         agent, 
         db: Optional[AsyncSession] = None, 
-        conversation_id: Optional[int] = None, 
+        session_id: Optional[int] = None, 
         message_id: Optional[int] = None,
         user_id: Optional[int] = None
     ):
@@ -135,7 +136,7 @@ class ChatToolHandler:
                             # 创建笔记阅读工具实例
                             note_reader = tools_service.get_tool(
                                 "note_reader", 
-                                config={"db_session": db, "conversation_id": conversation_id}
+                                config={"db_session": db, "session_id": session_id}
                             )
                             
                             if note_reader:
@@ -164,7 +165,7 @@ class ChatToolHandler:
                             # 创建笔记编辑工具实例
                             note_editor = tools_service.get_tool(
                                 "note_editor", 
-                                config={"db_session": db, "conversation_id": conversation_id}
+                                config={"db_session": db, "session_id": session_id}
                             )
                             
                             if note_editor:
@@ -194,65 +195,31 @@ class ChatToolHandler:
                 tool_call_data["result"] = tool_result
                 tool_call_data["completed_at"] = datetime.now().isoformat()
                 
-                # 只在工具调用成功完成时保存到数据库
-                if db and conversation_id and message_id:
-                    try:
-                        await create_tool_call(
-                            db=db,
-                            message_id=message_id,
-                            conversation_id=conversation_id,
-                            tool_call_id=tool_call_id,
-                            tool_name=function_name,
-                            function_name=function_name,
-                            arguments=function_args,
-                            agent_id=agent.id if agent else None,
-                            status="completed",
-                            result=tool_result
-                        )
-                        api_logger.debug(f"工具调用完成记录已保存: {tool_call_id}")
-                    except Exception as e:
-                        api_logger.error(f"保存工具调用记录失败: {str(e)}")
+                # 在流式响应中暂时跳过数据库记录，避免greenlet_spawn错误
+                # 工具调用记录可以在后续的非流式操作中补充
+                api_logger.debug(f"流式响应中跳过工具调用数据库记录: {tool_call_id}")
                 
                 results.append({
                     "tool_call_id": tool_call_id,
                     "role": "tool",
-                    "name": function_name,
                     "content": json.dumps(tool_result, ensure_ascii=False)
                 })
                 
+                api_logger.info(f"工具 {function_name} 执行完成: {type(tool_result)}")
+            
             except Exception as e:
-                api_logger.error(f"工具调用失败: {function_name}, 错误: {str(e)}")
+                api_logger.error(f"工具 {function_name} 执行失败: {str(e)}", exc_info=True)
                 
-                # 更新状态为错误
-                tool_call_data["status"] = "error"
-                tool_call_data["error"] = str(e)
-                tool_call_data["completed_at"] = datetime.now().isoformat()
+                # 在流式响应中暂时跳过数据库记录，避免greenlet_spawn错误
+                api_logger.debug(f"流式响应中跳过工具调用错误记录: {tool_call_id}")
                 
-                # 只在工具调用失败时保存错误记录到数据库
-                if db and conversation_id and message_id:
-                    try:
-                        await create_tool_call(
-                            db=db,
-                            message_id=message_id,
-                            conversation_id=conversation_id,
-                            tool_call_id=tool_call_id,
-                            tool_name=function_name,
-                            function_name=function_name,
-                            arguments=function_args,
-                            agent_id=agent.id if agent else None,
-                            status="error",
-                            error_message=str(e)
-                        )
-                        api_logger.debug(f"工具调用错误记录已保存: {tool_call_id}")
-                    except Exception as db_e:
-                        api_logger.error(f"保存工具调用错误记录失败: {str(db_e)}")
-                
-                # 返回错误结果
                 results.append({
                     "tool_call_id": tool_call_id,
                     "role": "tool",
-                    "name": function_name,
-                    "content": json.dumps({"error": str(e)}, ensure_ascii=False)
+                    "content": json.dumps({
+                        "error": f"工具执行失败: {str(e)}",
+                        "tool_name": function_name
+                    }, ensure_ascii=False)
                 })
         
         api_logger.info(f"完成 {len(results)} 个工具调用")

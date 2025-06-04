@@ -25,11 +25,18 @@ class NoteSessionService {
       if (response.data && response.data.code === 200) {
         const sessions = response.data.data.sessions || [];
         
-        // 按优先级排序：主要会话在前，然后按创建时间降序
+        // 按最近使用时间排序：最近使用的会话在前，主要会话优先级较高但不强制在最前
         return sessions.sort((a: NoteSession, b: NoteSession) => {
-          if (a.is_primary && !b.is_primary) return -1;
-          if (!a.is_primary && b.is_primary) return 1;
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          // 首先按更新时间降序排序（最近使用的在前）
+          const timeCompare = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+          
+          // 如果更新时间相同，主要会话优先
+          if (timeCompare === 0) {
+            if (a.is_primary && !b.is_primary) return -1;
+            if (!a.is_primary && b.is_primary) return 1;
+          }
+          
+          return timeCompare;
         });
       }
       throw new Error(response.data.msg || '获取笔记会话列表失败');

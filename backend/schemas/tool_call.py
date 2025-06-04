@@ -7,7 +7,7 @@ class ToolCallHistoryResponse(BaseModel):
     """工具调用历史响应模式"""
     id: int
     message_id: int
-    conversation_id: int
+    session_id: int
     agent_id: Optional[int]
     
     # 工具调用基本信息
@@ -29,3 +29,6 @@ class ToolCallHistoryResponse(BaseModel):
 
     class Config:
         from_attributes = True 
+
+class ToolCallHistoryCreate(BaseModel):
+    session_id: int 

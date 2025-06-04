@@ -11,8 +11,10 @@ import type { ToolDetail, ToolLevelConfig, ProviderLevelConfig } from '@/service
 const router = useRouter();
 const route = useRoute();
 const isEditMode = ref(false);
-const agentId = ref<number | null>(null);
+const hasAgent = ref(false);
+const currentAgent = ref<Agent | null>(null);
 const submitLoading = ref(false);
+const pageLoading = ref(true);
 
 // 表单引用
 const formRef = ref();
@@ -26,6 +28,7 @@ const activeProviders = ref<string[]>([]);
 
 // 表单数据
 const formState = reactive({
+  name: '智能助手',
   system_prompt: '你是一个有用的助手',
   model: 'claude-3-7-sonnet-20250219',
   max_memory: 100,
@@ -36,15 +39,29 @@ const formState = reactive({
     presence_penalty: 0,
     max_tokens: 6400
   },
-  tools_enabled: {} as ToolLevelConfig | ProviderLevelConfig
+  tools_enabled: {} as ToolLevelConfig | ProviderLevelConfig,
+  is_public: false
 });
 
 // 表单验证规则
 const rules = {
+  name: [
+    { required: true, message: '请输入AI助手名称', trigger: 'blur' }
+  ],
   system_prompt: [
     { required: true, message: '请输入系统提示词', trigger: 'blur' }
   ]
 };
+
+// 页面标题
+const pageTitle = computed(() => {
+  return hasAgent.value ? '设置我的AI助手' : '创建我的AI助手';
+});
+
+// 提交按钮文字
+const submitButtonText = computed(() => {
+  return hasAgent.value ? '保存设置' : '创建助手';
+});
 
 // 计算属性：获取启用的工具数量
 const enabledToolsCount = computed(() => {
@@ -56,6 +73,88 @@ const enabledToolsCount = computed(() => {
     return Object.values(providerConfig).filter(config => config.enabled).length;
   }
 });
+
+// 检查用户是否有AI助手
+const checkUserAgent = async () => {
+  try {
+    pageLoading.value = true;
+    const agent = await agentService.getMyAgent();
+    
+    if (agent) {
+      // 用户已有AI助手，进入编辑模式
+      hasAgent.value = true;
+      isEditMode.value = true;
+      currentAgent.value = agent;
+      await loadAgentData(agent);
+      console.log('用户已有AI助手，进入编辑模式');
+    } else {
+      // 用户没有AI助手，进入创建模式
+      hasAgent.value = false;
+      isEditMode.value = false;
+      currentAgent.value = null;
+      initializeDefaultData();
+      console.log('用户没有AI助手，进入创建模式');
+    }
+  } catch (error) {
+    console.error('检查用户AI助手状态失败:', error);
+    // 出错时默认为创建模式
+    hasAgent.value = false;
+    isEditMode.value = false;
+    initializeDefaultData();
+  } finally {
+    pageLoading.value = false;
+  }
+};
+
+// 初始化默认数据
+const initializeDefaultData = () => {
+  // 重置为默认值
+  formState.system_prompt = '你是一个有用的助手';
+  formState.model = 'claude-3-7-sonnet-20250219';
+  formState.max_memory = 100;
+  formState.model_settings = {
+    temperature: 0.7,
+    top_p: 1,
+    frequency_penalty: 0,
+    presence_penalty: 0,
+    max_tokens: 6400
+  };
+  
+  // 初始化工具配置
+  if (availableTools.value.length > 0) {
+    initializeToolsConfig();
+  }
+};
+
+// 加载用户AI助手数据
+const loadAgentData = async (agent: Agent) => {
+  try {
+    formState.system_prompt = agent.system_prompt;
+    formState.model = agent.model;
+    formState.max_memory = agent.max_memory;
+    
+    if (agent.model_settings) {
+      formState.model_settings = {
+        temperature: agent.model_settings.temperature,
+        top_p: agent.model_settings.top_p,
+        frequency_penalty: agent.model_settings.frequency_penalty,
+        presence_penalty: agent.model_settings.presence_penalty,
+        max_tokens: agent.model_settings.max_tokens
+      };
+    }
+    
+    if (agent.tools_enabled) {
+      formState.tools_enabled = await detectAndConvertConfig(agent.tools_enabled);
+    } else {
+      initializeToolsConfig();
+    }
+    
+    console.log('AI助手数据加载完成');
+  } catch (error) {
+    console.error('加载AI助手数据失败:', error);
+    message.error('加载AI助手数据失败');
+  }
+};
 
 // 加载工具列表
 const loadToolsList = async () => {
@@ -76,7 +175,7 @@ const loadToolsList = async () => {
     // activeProviders.value = Object.keys(grouped);
     
     // 如果是新建模式，初始化工具配置
-    if (!isEditMode.value) {
+    if (!hasAgent.value) {
       initializeToolsConfig();
     }
   } catch (error) {
@@ -162,44 +261,6 @@ const detectAndConvertConfig = async (config: any) => {
   }
 };
 
-// 加载Agent详情
-const loadAgentDetails = async (id: number) => {
-  try {
-    const agent = await agentService.getAgentDetail(id);
-    if (agent) {
-      formState.system_prompt = agent.system_prompt;
-      formState.model = agent.model;
-      formState.max_memory = agent.max_memory;
-      
-      if (agent.model_settings) {
-        formState.model_settings = {
-          temperature: agent.model_settings.temperature,
-          top_p: agent.model_settings.top_p,
-          frequency_penalty: agent.model_settings.frequency_penalty,
-          presence_penalty: agent.model_settings.presence_penalty,
-          max_tokens: agent.model_settings.max_tokens
-        };
-      }
-      
-      if (agent.tools_enabled) {
-        formState.tools_enabled = await detectAndConvertConfig(agent.tools_enabled);
-      } else {
-        initializeToolsConfig();
-      }
-      
-      agentId.value = agent.id;
-      isEditMode.value = true;
-    } else {
-      message.error('获取Agent详情失败');
-      router.push('/');
-    }
-  } catch (error) {
-    console.error('加载Agent详情失败:', error);
-    message.error('加载Agent详情失败');
-    router.push('/');
-  }
-};
-
 // 切换工具启用状态
 const toggleTool = (toolName: string) => {
   const toolConfig = formState.tools_enabled as ToolLevelConfig;
@@ -258,25 +319,61 @@ const submitForm = async (values: any) => {
   submitLoading.value = true;
   try {
     let result;
-    if (isEditMode.value && agentId.value) {
-      // 编辑已有Agent
+    if (hasAgent.value) {
+      // 更新现有AI助手
       const dataToUpdate = { ...formState };
-      result = await agentService.updateAgent(agentId.value, dataToUpdate);
+      result = await agentService.updateMyAgent(dataToUpdate);
       if (result && result.id) {
-        message.success('Agent更新成功');
+        message.success('AI助手更新成功');
+        currentAgent.value = result;
       } else {
-        message.error(result?.message || 'Agent更新失败');
+        message.error('AI助手更新失败');
       }
     } else {
-      // 这个分支理论上不会进入，因为我们总是编辑 agent 1
-      message.error('无效的操作');
-      router.push('/');
+      // 创建新的AI助手
+      const dataToCreate = { ...formState };
+      result = await agentService.createOrUpdateMyAgent(dataToCreate);
+      if (result && result.id) {
+        message.success('AI助手创建成功');
+        hasAgent.value = true;
+        isEditMode.value = true;
+        currentAgent.value = result;
+      } else {
+        message.error('AI助手创建失败');
+      }
     }
   } catch (error: any) {
-    console.error('更新Agent失败:', error);
-    message.error(error.message || '更新Agent失败');
+    console.error('保存AI助手失败:', error);
+    message.error(error.message || '保存AI助手失败');
   } finally {
     submitLoading.value = false;
+  }
+};
+
+// 删除AI助手
+const deleteAgent = async () => {
+  if (!hasAgent.value || !currentAgent.value) {
+    message.error('没有可删除的AI助手');
+    return;
+  }
+  
+  const confirmed = confirm(`确定要删除AI助手"${currentAgent.value.name}"吗？此操作不可恢复。`);
+  if (!confirmed) return;
+  
+  try {
+    const success = await agentService.deleteMyAgent();
+    if (success) {
+      message.success('AI助手删除成功');
+      hasAgent.value = false;
+      isEditMode.value = false;
+      currentAgent.value = null;
+      initializeDefaultData();
+    } else {
+      message.error('AI助手删除失败');
+    }
+  } catch (error: any) {
+    console.error('删除AI助手失败:', error);
+    message.error(error.message || '删除AI助手失败');
   }
 };
 
@@ -310,22 +407,16 @@ const fetchAvailableModels = async () => {
 };
 
 onMounted(async () => {
+  // 先加载工具列表
   await loadToolsList();
   
-  if (route.params.id) {
-    const id = Number(route.params.id);
-    if (!isNaN(id)) {
-      agentId.value = id;
-      isEditMode.value = true;
-      await loadAgentDetails(id);
-    } else {
-      message.error('无效的Agent ID');
-      router.push('/');
-    }
-  } else {
-    console.log('非编辑模式，但路由中没有ID。当前路由:', route.fullPath);
-    router.push('/');
-  }
+  // 然后检查用户agent状态
+  await checkUserAgent();
+  
+  // 获取可用模型列表
+  await fetchAvailableModels();
+  
+  console.log('页面初始化完成');
 });
 </script>
 

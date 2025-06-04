@@ -18,6 +18,13 @@
               <template v-for="(chunk, index) in getSortedContentChunks(parsedContentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
                 <!-- 文本块 - 内联显示，流式输出时也使用实时markdown渲染 -->
                 <span v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content, true)" class="text-chunk"></span>
+                <!-- 思考内容块 - 可折叠显示 -->
+                <div v-else-if="chunk.type === 'reasoning'" class="reasoning-chunk">
+                  <details class="reasoning-details">
+                    <summary class="reasoning-summary">深度思考过程</summary>
+                    <div class="reasoning-content" v-html="renderMarkdown(chunk.content, true)"></div>
+                  </details>
+                </div>
                 <!-- 工具状态块 - 独立成行 -->
                 <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
                   <AgentToolCall 
@@ -33,7 +40,7 @@
             </div>
             <!-- 兼容旧的消息格式 -->
             <div v-else>
-              <span v-html="renderMarkdown(agentResponse, true)"></span>
+              <span v-html="renderMarkdown(currentMessage.content || agentResponse, true)"></span>
             </div>
             <span class="typing-indicator">|</span>
           </div>
@@ -46,6 +53,13 @@
               <template v-for="(chunk, index) in getSortedContentChunks(parsedContentChunks)" :key="`chunk-${chunk.type}-${chunk.tool_call_id || index}`">
                 <!-- 文本块 - 内联显示 -->
                 <span v-if="chunk.type === 'text'" v-html="renderMarkdown(chunk.content, false)" class="text-chunk"></span>
+                <!-- 思考内容块 - 可折叠显示 -->
+                <div v-else-if="chunk.type === 'reasoning'" class="reasoning-chunk">
+                  <details class="reasoning-details">
+                    <summary class="reasoning-summary">深度思考过程</summary>
+                    <div class="reasoning-content" v-html="renderMarkdown(chunk.content, false)"></div>
+                  </details>
+                </div>
                 <!-- 工具状态块 - 独立成行 -->
                 <div v-else-if="chunk.type === 'tool_status'" class="tool-chunk">
                   <AgentToolCall 
@@ -60,7 +74,7 @@
               </template>
             </div>
             <!-- 兼容旧的消息格式（历史消息） -->
-            <div v-else v-html="renderMarkdown(agentResponse, false)"></div>
+            <div v-else v-html="renderMarkdown(currentMessage.content || agentResponse, false)"></div>
           </div>
           
           <!-- 操作按钮（仅图标，与侧边栏样式一致） -->
@@ -253,6 +267,11 @@ const parsedContentChunks = computed(() => {
   // 如果currentMessage中有contentChunks（无论是否正在响应），优先使用它们
   if (currentMessage.value.contentChunks && currentMessage.value.contentChunks.length > 0) {
     console.log('[AgentInputModal] 使用currentMessage的contentChunks，数量:', currentMessage.value.contentChunks.length, '响应状态:', props.isAgentResponding);
+    console.log('[AgentInputModal] contentChunks详情:', currentMessage.value.contentChunks.map(chunk => ({
+      type: chunk.type,
+      contentLength: chunk.content?.length || 0,
+      contentPreview: chunk.content?.substring(0, 50) || 'empty'
+    })));
     return currentMessage.value.contentChunks;
   }
   
@@ -263,13 +282,25 @@ const parsedContentChunks = computed(() => {
     const parsedResponse = parseAgentMessage(props.agentResponse);
     
     if (typeof parsedResponse === 'object' && parsedResponse.type === 'agent_response') {
-      console.log('检测到JSON结构的agent响应，interaction_flow长度:', parsedResponse.interaction_flow?.length || 0);
+      console.log('[AgentInputModal] 检测到JSON结构的agent响应，interaction_flow长度:', parsedResponse.interaction_flow?.length || 0);
+      console.log('[AgentInputModal] interaction_flow详情:', parsedResponse.interaction_flow.map((segment, index) => ({
+        index,
+        type: segment.type,
+        contentLength: segment.content?.length || 0,
+        contentPreview: segment.content?.substring(0, 50) || 'empty'
+      })));
       
       // 将interaction_flow转换为contentChunks格式，保持时间顺序
       const contentChunks = parsedResponse.interaction_flow.map(segment => {
         if (segment.type === 'text') {
           return {
             type: 'text',
+            content: segment.content,
+            timestamp: new Date(segment.timestamp)
+          };
+        } else if (segment.type === 'reasoning') {
+          return {
+            type: 'reasoning',
             content: segment.content,
             timestamp: new Date(segment.timestamp)
           };
@@ -287,14 +318,15 @@ const parsedContentChunks = computed(() => {
         return segment;
       });
       
-      console.log('转换后的contentChunks:', contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
+      console.log('[AgentInputModal] 转换后的contentChunks:', contentChunks.map(chunk => `${chunk.type}:${chunk.tool_name || chunk.content?.substring(0, 20) || 'empty'}`));
       return contentChunks;
     }
   } catch (error) {
-    console.log('解析agent响应失败，使用原始内容:', error.message);
+    console.log('[AgentInputModal] 解析agent响应失败，使用原始内容:', error.message);
   }
   
   // 不是JSON结构或解析失败，返回空数组，使用原始内容显示
+  console.log('[AgentInputModal] 返回空数组，将使用原始内容显示');
   return [];
 });
 
@@ -323,12 +355,12 @@ watch(() => props.agentResponse, (newValue) => {
   console.log('[AgentInputModal] prop agentResponse updated:', newValue);
   
   if (newValue) {
-    // 更新currentMessage的内容
-    currentMessage.value.content = newValue;
-    currentMessage.value.isTyping = props.isAgentResponding;
-    
     // 如果正在响应中，处理流式文本更新
     if (props.isAgentResponding) {
+      // 更新currentMessage的内容
+      currentMessage.value.content = newValue;
+      currentMessage.value.isTyping = props.isAgentResponding;
+      
       // 尝试解析是否包含工具状态信息
       let responseData = null;
       try {
@@ -354,25 +386,27 @@ watch(() => props.agentResponse, (newValue) => {
         handleStreamingText(newValue, currentMessage.value);
       }
     } else {
-      // 响应完成，尝试处理完整响应
+      // 响应完成，处理完整响应
       console.log('[AgentInputModal] 响应完成，处理完整响应');
       
       // 先尝试处理完整的JSON响应
       const completeResponseHandled = handleCompleteResponse(newValue, currentMessage.value);
       
       if (!completeResponseHandled) {
-        // 如果不是完整的JSON响应，使用流式处理
-        handleStreamingText(newValue, currentMessage.value);
+        // 如果不是完整的JSON响应，直接设置内容
+        console.log('[AgentInputModal] 非JSON响应，直接设置内容');
+        currentMessage.value.content = newValue;
+        currentMessage.value.contentChunks = [];
       }
       
       // 确保响应完成后currentMessage的状态正确
-      currentMessage.value.content = newValue;
       currentMessage.value.isTyping = false;
       
       console.log('[AgentInputModal] 响应完成后currentMessage状态:', {
         contentChunksLength: currentMessage.value.contentChunks?.length || 0,
         contentLength: currentMessage.value.content?.length || 0,
-        isTyping: currentMessage.value.isTyping
+        isTyping: currentMessage.value.isTyping,
+        hasContentChunks: currentMessage.value.contentChunks && currentMessage.value.contentChunks.length > 0
       });
       
       // 触发特殊组件渲染
@@ -1333,5 +1367,73 @@ defineExpose({
   overflow-wrap: break-word;
   white-space: normal;
   max-width: 100%;
+}
+
+/* 思考内容块样式 */
+.reasoning-chunk {
+  margin: 8px 0;
+}
+
+.reasoning-details {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.reasoning-summary {
+  background: #f1f5f9;
+  color: #3b82f6;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+  border: none;
+  outline: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reasoning-summary:hover {
+  background: #e2e8f0;
+}
+
+.reasoning-summary::marker {
+  content: none;
+}
+
+.reasoning-summary::before {
+  content: '▶';
+  transition: transform 0.2s ease;
+  font-size: 10px;
+}
+
+.reasoning-details[open] .reasoning-summary::before {
+  transform: rotate(90deg);
+}
+
+.reasoning-content {
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4b5563;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  background: #ffffff;
+}
+
+.reasoning-content p {
+  margin: 0.5em 0;
+}
+
+.reasoning-content p:first-child {
+  margin-top: 0;
+}
+
+.reasoning-content p:last-child {
+  margin-bottom: 0;
 }
 </style> 

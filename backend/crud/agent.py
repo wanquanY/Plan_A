@@ -10,6 +10,19 @@ from backend.schemas.agent import AgentCreate, AgentUpdate
 class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
     """Agent CRUD操作类"""
     
+    async def get_user_agent(
+        self,
+        db: AsyncSession,
+        user_id: int
+    ) -> Optional[Agent]:
+        """获取用户的唯一Agent"""
+        query = select(Agent).filter(
+            Agent.user_id == user_id,
+            Agent.is_deleted == False
+        )
+        result = await db.execute(query)
+        return result.scalars().first()
+    
     async def create_agent(
         self,
         db: AsyncSession,
@@ -17,7 +30,12 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         user_id: int,
         obj_in: AgentCreate
     ) -> Agent:
-        """创建新的Agent"""
+        """创建新的Agent - 每个用户只能有一个"""
+        # 检查用户是否已有Agent
+        existing_agent = await self.get_user_agent(db, user_id)
+        if existing_agent:
+            raise ValueError("每个用户只能拥有一个AI助手，请先删除现有助手")
+        
         # 将obj_in.model_settings转换为字典，确保JSON可序列化
         model_settings = obj_in.model_settings.dict() if obj_in.model_settings else None
         
@@ -29,19 +47,34 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         
         db_obj = Agent(
             user_id=user_id,
-            name=obj_in.name,
-            avatar_url=obj_in.avatar_url,
             system_prompt=obj_in.system_prompt,
             model=obj_in.model,
             max_memory=obj_in.max_memory,
             model_settings=model_settings,
-            tools_enabled=tools_enabled if tools_enabled else None,
-            is_public=obj_in.is_public
+            tools_enabled=tools_enabled if tools_enabled else None
         )
         db.add(db_obj)
         await db.commit()
         await db.refresh(db_obj)
         return db_obj
+    
+    async def create_or_update_agent(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        obj_in: AgentCreate
+    ) -> Agent:
+        """创建或更新用户的Agent - 如果已存在则更新，否则创建"""
+        existing_agent = await self.get_user_agent(db, user_id)
+        
+        if existing_agent:
+            # 如果已存在，则更新
+            update_data = obj_in.dict(exclude_unset=True)
+            return await self.update_agent(db, agent_id=existing_agent.id, obj_in=update_data)
+        else:
+            # 如果不存在，则创建
+            return await self.create_agent(db, user_id=user_id, obj_in=obj_in)
     
     async def update_agent(
         self,
@@ -84,13 +117,9 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         db: AsyncSession,
         user_id: int
     ) -> List[Agent]:
-        """获取用户的所有Agent"""
-        query = select(Agent).filter(
-            Agent.user_id == user_id,
-            Agent.is_deleted == False
-        )
-        result = await db.execute(query)
-        return result.scalars().all()
+        """获取用户的所有Agent - 保持向后兼容"""
+        agent = await self.get_user_agent(db, user_id)
+        return [agent] if agent else []
     
     async def get_public_agents(
         self,
@@ -98,9 +127,8 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         skip: int = 0,
         limit: int = 100
     ) -> List[Agent]:
-        """获取所有公开的Agent"""
+        """获取所有Agent"""
         query = select(Agent).filter(
-            Agent.is_public == True,
             Agent.is_deleted == False
         ).offset(skip).limit(limit)
         result = await db.execute(query)
@@ -125,14 +153,29 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         agent_id: int,
         user_id: int
     ) -> Optional[Agent]:
-        """获取用户可以使用的Agent（包括自己的和公开的）"""
+        """获取用户可以使用的Agent（只能是自己的agent）"""
         query = select(Agent).filter(
             Agent.id == agent_id,
             Agent.is_deleted == False,
-            (Agent.user_id == user_id) | (Agent.is_public == True)
+            Agent.user_id == user_id
         )
         result = await db.execute(query)
         return result.scalars().first()
+    
+    async def check_agent_ownership(
+        self,
+        db: AsyncSession,
+        agent_id: int,
+        user_id: int
+    ) -> bool:
+        """检查agent是否属于指定用户"""
+        query = select(Agent).filter(
+            Agent.id == agent_id,
+            Agent.user_id == user_id,
+            Agent.is_deleted == False
+        )
+        result = await db.execute(query)
+        return result.scalars().first() is not None
 
 
 agent = CRUDAgent(Agent) 

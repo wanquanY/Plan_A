@@ -127,9 +127,9 @@ const sendMessage = async () => {
     // 启动与Agent的聊天
     chatController.value = chatService.chatWithAgent(
       {
-        content: userMessage,
         agent_id: props.agent.id,
-        conversation_id: chatState.conversationId || undefined
+        content: userMessage,
+        session_id: chatState.conversationId || undefined
       },
       (content, done, conversationId, toolStatus, reasoningContent) => {
         // 处理工具状态更新

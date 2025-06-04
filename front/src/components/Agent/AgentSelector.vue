@@ -30,9 +30,9 @@
         @click="selectAgent(agent)"
         @mouseenter="selectedIndex = displayAgents.indexOf(agent)"
       >
-        <img :src="agent.avatar_url" alt="avatar" class="agent-avatar" />
+        <img src="https://via.placeholder.com/40x40?text=AI" alt="avatar" class="agent-avatar" />
         <div class="agent-info">
-          <div class="agent-name">{{ agent.name }}</div>
+          <div class="agent-name">AI助手</div>
           <div class="agent-model">{{ agent.model }}</div>
         </div>
       </li>
@@ -208,8 +208,6 @@ const fetchAgents = async () => {
       {
         id: 99,
         user_id: currentUserId.value || 1,
-        name: "备用助手",
-        avatar_url: "https://via.placeholder.com/150",
         system_prompt: "备用系统",
         model: "gpt-4",
         max_memory: 100,
@@ -220,7 +218,6 @@ const fetchAgents = async () => {
           presence_penalty: 0,
           max_tokens: 4000
         },
-        is_public: true,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }
@@ -240,7 +237,6 @@ const filterAgents = () => {
   
   const query = props.query.toLowerCase();
   filteredAgents.value = agents.value.filter(agent => 
-    agent.name.toLowerCase().includes(query) ||
     agent.model.toLowerCase().includes(query)
   );
   

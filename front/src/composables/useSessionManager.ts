@@ -164,19 +164,14 @@ export function useSessionManager() {
       const noteIdValue = currentNoteId?.value;
       console.log('发送请求时的笔记ID:', noteIdValue);
       
-      // 构建聊天请求对象
+      // 准备聊天请求
       const chatRequest: any = {
-        agent_id: data.agentId || data.agent?.id || 1, // 使用agentId或agent.id
+        agent_id: data.agentId || data.agent?.id || 1,
         content: data.content,
-        conversation_id: currentSessionId?.value ? Number(currentSessionId.value) : undefined,
-        note_id: noteIdValue
+        session_id: currentSessionId?.value ? Number(currentSessionId.value) : null,
+        note_id: noteIdValue ? Number(noteIdValue) : null,
+        model: data.model
       };
-      
-      // 如果有模型信息，添加到请求中
-      if (data.model) {
-        chatRequest.model = data.model;
-        console.log('发送聊天请求包含模型信息:', data.model);
-      }
       
       // 如果有图片数据，添加到请求中
       if (data.images && data.images.length > 0) {
@@ -184,6 +179,18 @@ export function useSessionManager() {
         console.log('发送聊天请求包含图片:', data.images.length, '张');
         console.log('图片URL列表:', data.images.map((img: any) => img.url));
       }
+      
+      console.log('准备发送的聊天请求数据:', JSON.stringify(chatRequest, null, 2));
+      
+      // 验证关键数据
+      console.log('关键数据验证:', {
+        '请求中的note_id': chatRequest.note_id,
+        '请求中的session_id': chatRequest.session_id,
+        '请求中的agent_id': chatRequest.agent_id,
+        '当前全局SessionId': currentSessionId?.value,
+        '传入的noteId': data.noteId || 'undefined',
+        '从noteIdRef获取的值': noteIdValue
+      });
       
       // 使用chatService的streamChat方法，保存控制器引用
       currentResponseController.value = await chatService.streamChat(chatRequest, (response, isComplete, conversationId, toolStatus, reasoningContent) => {
@@ -193,12 +200,26 @@ export function useSessionManager() {
         let content = '';
         
         // 正确解析响应数据格式
-        if (response && response.data && response.data.data) {
-          // 优先使用full_content，如果没有则使用message.content
-          content = response.data.data.full_content || 
-                    (response.data.data.message && response.data.data.message.content) || '';
+        // 现在response是完整的API响应数据，不是字符串
+        if (response && response.code === 200 && response.data) {
+          const responseData = response.data;
+          
+          // 优先使用full_content进行累积显示，这是完整的累积内容
+          if (responseData.full_content !== undefined) {
+            content = responseData.full_content;
+          } else if (responseData.message && responseData.message.content) {
+            // 如果没有full_content，使用增量的message.content
+            content = responseData.message.content;
+          }
+          
+          console.log('useSessionManager 解析到的内容:', {
+            full_content: responseData.full_content,
+            message_content: responseData.message?.content,
+            使用的内容: content,
+            内容长度: content.length
+          });
         } else if (typeof response === 'string') {
-          // 兼容处理：如果直接是字符串
+          // 兼容处理：如果直接是字符串（旧格式）
           content = response;
         }
         
@@ -220,11 +241,26 @@ export function useSessionManager() {
         // 处理工具状态更新
         if (toolStatus) {
           console.log('useSessionManager 收到工具状态更新:', toolStatus);
+          console.log('工具状态详细信息:', JSON.stringify(toolStatus, null, 2));
+          
+          // 🔧 修复：检查工具状态的数据格式并确保正确传递
+          let processedToolStatus = toolStatus;
+          
+          // 如果工具状态嵌套在data字段中，提取出来
+          if (toolStatus.data && toolStatus.data.tool_status) {
+            console.log('检测到嵌套的工具状态数据，提取tool_status字段');
+            processedToolStatus = toolStatus.data.tool_status;
+          }
+          
+          console.log('处理后的工具状态:', processedToolStatus);
           
           // 注意：不再将工具状态插入到文本中，现在使用 contentChunks 系统
           // 只调用工具状态处理回调，让新的组件系统处理显示
           if (onToolStatus) {
-            onToolStatus(toolStatus);
+            console.log('调用工具状态处理回调函数');
+            onToolStatus(processedToolStatus);
+          } else {
+            console.warn('没有提供工具状态处理回调函数');
           }
         }
         
@@ -266,6 +302,37 @@ export function useSessionManager() {
             if (sidebarAgentResponse.value && (finalConversationId || currentSessionId?.value)) {
               const sessionIdToUse = finalConversationId || currentSessionId?.value;
               console.log('流式输出完成，刷新会话历史记录以获取消息ID，会话ID:', sessionIdToUse);
+              
+              // **新增：验证笔记关联**
+              if (noteIdValue) {
+                try {
+                  console.log('🔍 验证笔记关联：开始查询笔记 ', noteIdValue, ' 的关联会话');
+                  const noteSessionsResponse = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:1314/api/v1'}/note/${noteIdValue}/sessions`, {
+                    headers: {
+                      'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+                    }
+                  });
+                  
+                  if (noteSessionsResponse.ok) {
+                    const noteSessionsData = await noteSessionsResponse.json();
+                    console.log('🔍 笔记关联查询结果:', noteSessionsData);
+                    console.log('🔍 关联的会话数量:', noteSessionsData.data?.sessions?.length || 0);
+                    console.log('🔍 关联的会话列表:', noteSessionsData.data?.sessions?.map((s: any) => ({ id: s.id, title: s.title })) || []);
+                    
+                    if (noteSessionsData.data?.sessions?.some((s: any) => s.id === sessionIdToUse)) {
+                      console.log('✅ 验证成功：新会话已正确关联到笔记');
+                    } else {
+                      console.error('❌ 验证失败：新会话未关联到笔记！');
+                      console.error('❌ 期望的会话ID:', sessionIdToUse);
+                      console.error('❌ 实际关联的会话:', noteSessionsData.data?.sessions || []);
+                    }
+                  } else {
+                    console.error('🔍 查询笔记关联失败:', noteSessionsResponse.status, noteSessionsResponse.statusText);
+                  }
+                } catch (error) {
+                  console.error('🔍 验证笔记关联时出错:', error);
+                }
+              }
               
               try {
                 // 重新获取会话历史记录，包含正确的消息ID

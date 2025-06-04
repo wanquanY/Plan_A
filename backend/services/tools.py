@@ -19,7 +19,11 @@ class TavilyTool:
         self.search_endpoint = f"{self.base_url}/search"
         self.extract_endpoint = f"{self.base_url}/extract"
         
-        api_logger.info(f"Tavily工具初始化，API密钥: {self.api_key[:5]}*** (如果有)")
+        # 修复：在切片操作之前检查api_key是否为None
+        if self.api_key:
+            api_logger.info(f"Tavily工具初始化，API密钥: {self.api_key[:5]}***")
+        else:
+            api_logger.info("Tavily工具初始化，未提供API密钥")
     
     def search(
         self, 
@@ -122,7 +126,11 @@ class SerperTool:
         
         self.base_host = "google.serper.dev"
         
-        api_logger.info(f"Serper工具初始化，API密钥: {self.api_key[:5]}*** (如果有)")
+        # 修复：在切片操作之前检查api_key是否为None
+        if self.api_key:
+            api_logger.info(f"Serper工具初始化，API密钥: {self.api_key[:5]}***")
+        else:
+            api_logger.info("Serper工具初始化，未提供API密钥")
     
     def search(
         self, 
@@ -285,11 +293,17 @@ class SerperTool:
 class NoteReaderTool:
     """笔记阅读工具"""
     
-    def __init__(self, db_session = None, conversation_id: Optional[int] = None):
-        """初始化笔记阅读工具"""
+    def __init__(self, db_session = None, session_id: Optional[int] = None):
+        """
+        初始化笔记阅读器工具
+        
+        Args:
+            db_session: 数据库会话
+            session_id: 可选的会话ID，用于确定当前对话的上下文
+        """
         self.db_session = db_session
-        self.conversation_id = conversation_id
-        api_logger.info(f"笔记阅读工具初始化，会话ID: {conversation_id}")
+        self.session_id = session_id
+        api_logger.info(f"笔记阅读工具初始化，会话ID: {session_id}")
     
     async def read_note(
         self,
@@ -315,19 +329,19 @@ class NoteReaderTool:
             # 获取用户权限
             user_id = None
             session_note_id = None
-            if self.conversation_id:
+            if self.session_id:
                 try:
-                    chat_stmt = select(Chat).where(Chat.id == self.conversation_id)
+                    chat_stmt = select(Chat).where(Chat.id == self.session_id)
                     chat_result = await self.db_session.execute(chat_stmt)
                     chat = chat_result.scalar_one_or_none()
                     if chat:
                         user_id = chat.user_id
-                        api_logger.info(f"从会话 {self.conversation_id} 获取用户ID: {user_id}")
+                        api_logger.info(f"从会话 {self.session_id} 获取用户ID: {user_id}")
                         
                         # 查找与此会话关联的笔记
                         from backend.models.note_session import NoteSession
                         note_session_stmt = select(NoteSession).where(
-                            NoteSession.session_id == self.conversation_id
+                            NoteSession.session_id == self.session_id
                         )
                         note_session_result = await self.db_session.execute(note_session_stmt)
                         note_session = note_session_result.scalar_one_or_none()
@@ -344,7 +358,7 @@ class NoteReaderTool:
                                 session_note_id = session_note.id
                                 api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
                         else:
-                            api_logger.info(f"未找到会话 {self.conversation_id} 关联的笔记")
+                            api_logger.info(f"未找到会话 {self.session_id} 关联的笔记")
                 except Exception as e:
                     api_logger.error(f"获取会话信息时出错: {str(e)}", exc_info=True)
                     # 继续执行，不因会话信息获取失败而中断
@@ -499,11 +513,17 @@ class NoteReaderTool:
 class NoteEditorTool:
     """笔记编辑工具"""
     
-    def __init__(self, db_session = None, conversation_id: Optional[int] = None):
-        """初始化笔记编辑工具"""
+    def __init__(self, db_session = None, session_id: Optional[int] = None):
+        """
+        初始化笔记编辑器工具
+        
+        Args:
+            db_session: 数据库会话  
+            session_id: 可选的会话ID，用于自动关联新创建的笔记
+        """
         self.db_session = db_session
-        self.conversation_id = conversation_id
-        api_logger.info(f"笔记编辑工具初始化，会话ID: {conversation_id}")
+        self.session_id = session_id
+        api_logger.info(f"笔记编辑工具初始化，会话ID: {session_id}")
     
     async def edit_note(
         self,
@@ -549,19 +569,19 @@ class NoteEditorTool:
             # 获取用户权限
             user_id = None
             session_note_id = None
-            if self.conversation_id:
+            if self.session_id:
                 try:
-                    chat_stmt = select(Chat).where(Chat.id == self.conversation_id)
+                    chat_stmt = select(Chat).where(Chat.id == self.session_id)
                     chat_result = await self.db_session.execute(chat_stmt)
                     chat = chat_result.scalar_one_or_none()
                     if chat:
                         user_id = chat.user_id
-                        api_logger.info(f"从会话 {self.conversation_id} 获取用户ID: {user_id}")
+                        api_logger.info(f"从会话 {self.session_id} 获取用户ID: {user_id}")
                         
                         # 查找与此会话关联的笔记
                         from backend.models.note_session import NoteSession
                         note_session_stmt = select(NoteSession).where(
-                            NoteSession.session_id == self.conversation_id
+                            NoteSession.session_id == self.session_id
                         )
                         note_session_result = await self.db_session.execute(note_session_stmt)
                         note_session = note_session_result.scalar_one_or_none()
@@ -578,7 +598,7 @@ class NoteEditorTool:
                                 session_note_id = session_note.id
                                 api_logger.info(f"找到会话关联的笔记ID: {session_note_id}")
                         else:
-                            api_logger.info(f"未找到会话 {self.conversation_id} 关联的笔记")
+                            api_logger.info(f"未找到会话 {self.session_id} 关联的笔记")
                 except Exception as e:
                     api_logger.error(f"获取会话信息时出错: {str(e)}", exc_info=True)
                     # 继续执行，不因会话信息获取失败而中断

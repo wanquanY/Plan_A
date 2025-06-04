@@ -98,6 +98,18 @@ def run_database_migrations():
         )
         app_logger.info(f"当前迁移状态: {current_result.stdout.strip()}")
         
+        # 检查是否有多个头部迁移
+        heads_result = subprocess.run(
+            ["alembic", "heads"],
+            capture_output=True,
+            text=True
+        )
+        head_lines = [line.strip() for line in heads_result.stdout.strip().split('\n') if line.strip()]
+        
+        # 如果有多个头部，记录警告但继续
+        if len(head_lines) > 1:
+            app_logger.warning(f"检测到多个迁移头部: {head_lines}")
+        
         # 执行迁移
         result = subprocess.run(
             ["alembic", "upgrade", "head"],
@@ -121,10 +133,15 @@ def run_database_migrations():
         app_logger.error(f"数据库迁移失败: {e}")
         app_logger.error(f"错误输出: {e.stderr}")
         
-        # 检查是否是工具调用相关的索引错误
-        if "ix_tool_calls_agent_id" in e.stderr and "does not exist" in e.stderr:
-            app_logger.info("检测到工具调用索引不存在错误，尝试修复...")
-            return fix_tool_calls_migration_issue()
+        # 检查是否是列已存在的错误
+        if "already exists" in e.stderr and "column" in e.stderr:
+            app_logger.info("检测到列已存在错误，可能数据库结构已是最新，尝试标记为当前状态...")
+            return try_stamp_current_migration()
+        
+        # 检查是否是多头部错误
+        if "Multiple head revisions" in e.stderr:
+            app_logger.info("检测到多头部迁移错误，尝试解决...")
+            return fix_multiple_heads_issue()
         
         return False
     except Exception as e:
@@ -132,63 +149,95 @@ def run_database_migrations():
         return False
 
 
-def fix_tool_calls_migration_issue():
-    """修复工具调用迁移问题"""
+def try_stamp_current_migration():
+    """尝试将数据库标记为当前迁移状态"""
     try:
-        app_logger.info("尝试修复工具调用迁移问题...")
+        app_logger.info("尝试将数据库标记为最新迁移状态...")
         
-        # 首先，标记当前迁移为已完成（跳过有问题的迁移）
-        # 我们需要手动将数据库标记到 26d9be805451 版本
-        result = subprocess.run(
-            ["alembic", "stamp", "26d9be805451"],
+        # 获取最新的头部迁移
+        heads_result = subprocess.run(
+            ["alembic", "heads"],
             capture_output=True,
             text=True,
             check=True
         )
-        app_logger.info("已标记 26d9be805451 迁移为完成状态")
         
-        # 然后继续执行剩余的迁移
-        result = subprocess.run(
-            ["alembic", "upgrade", "head"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        app_logger.info("修复后的数据库迁移执行成功")
-        app_logger.debug(f"修复迁移输出: {result.stdout}")
-        return True
+        head_lines = [line.strip() for line in heads_result.stdout.strip().split('\n') if line.strip()]
         
+        if head_lines:
+            latest_head = head_lines[0].split()[0]  # 获取第一个头部的哈希
+            app_logger.info(f"将数据库标记为迁移: {latest_head}")
+            
+            result = subprocess.run(
+                ["alembic", "stamp", latest_head],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            app_logger.info("数据库迁移状态标记成功")
+            return True
+        else:
+            app_logger.error("无法获取迁移头部信息")
+            return False
+            
     except subprocess.CalledProcessError as e:
-        app_logger.error(f"修复工具调用迁移失败: {e}")
-        app_logger.error(f"修复错误输出: {e.stderr}")
-        
-        # 如果还是失败，尝试更激进的修复方法
-        return force_fix_migration_state()
-        
+        app_logger.error(f"标记迁移状态失败: {e}")
+        app_logger.error(f"错误输出: {e.stderr}")
+        return False
     except Exception as e:
-        app_logger.error(f"修复工具调用迁移时发生异常: {e}")
+        app_logger.error(f"标记迁移状态时发生异常: {e}")
         return False
 
 
-def force_fix_migration_state():
-    """强制修复迁移状态"""
+def fix_multiple_heads_issue():
+    """修复多头部迁移问题"""
     try:
-        app_logger.info("尝试强制修复迁移状态...")
+        app_logger.info("尝试修复多头部迁移问题...")
         
-        # 直接标记到最新版本
-        result = subprocess.run(
-            ["alembic", "stamp", "head"],
+        # 获取所有头部
+        heads_result = subprocess.run(
+            ["alembic", "heads"],
             capture_output=True,
             text=True,
             check=True
         )
-        app_logger.info("已强制标记数据库为最新迁移状态")
         
-        # 手动确保必要的列存在（返回True，让调用者处理异步部分）
-        return True
+        head_lines = [line.strip() for line in heads_result.stdout.strip().split('\n') if line.strip()]
         
+        if len(head_lines) > 1:
+            app_logger.info(f"发现多个头部: {head_lines}")
+            
+            # 创建合并迁移
+            head_hashes = [line.split()[0] for line in head_lines]
+            merge_command = ["alembic", "merge"] + head_hashes + ["-m", "auto_merge_heads"]
+            
+            merge_result = subprocess.run(
+                merge_command,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            app_logger.info("合并迁移创建成功")
+            
+            # 执行升级
+            result = subprocess.run(
+                ["alembic", "upgrade", "head"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            app_logger.info("合并后迁移执行成功")
+            return True
+        else:
+            app_logger.info("没有发现多头部问题")
+            return True
+            
+    except subprocess.CalledProcessError as e:
+        app_logger.error(f"修复多头部迁移失败: {e}")
+        app_logger.error(f"错误输出: {e.stderr}")
+        return False
     except Exception as e:
-        app_logger.error(f"强制修复迁移状态失败: {e}")
+        app_logger.error(f"修复多头部迁移时发生异常: {e}")
         return False
 
 

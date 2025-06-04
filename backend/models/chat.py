@@ -42,7 +42,7 @@ class ChatMessage(BaseModel):
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
     role = Column(String, nullable=False)  # user, assistant, system
     content = Column(Text, nullable=False)
     tokens = Column(Integer, nullable=True)  # 消息的token数量

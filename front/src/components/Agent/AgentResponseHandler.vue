@@ -411,7 +411,7 @@ const handleInputChat = async (inputElement, agentId, userInput, containerElemen
     const payload = {
       prompt: processedInput,
       agent_id: agentId,
-      conversation_id: conversationId.value || null,
+      session_id: conversationId.value || null,
       note_id: currentNoteId.value
     };
     
@@ -424,9 +424,9 @@ const handleInputChat = async (inputElement, agentId, userInput, containerElemen
       const completionData = response.data.data;
       
       // 保存会话ID
-      if (completionData.conversation_id) {
-        conversationId.value = completionData.conversation_id;
-        localStorage.setItem('lastConversationId', completionData.conversation_id.toString());
+      if (completionData.session_id) {
+        conversationId.value = completionData.session_id;
+        localStorage.setItem('lastConversationId', completionData.session_id.toString());
         console.log(`更新会话ID: ${conversationId.value}`);
       }
       
@@ -529,23 +529,13 @@ const triggerChatRequest = async (agentId, userInputContent, responseParagraph =
 
   try {
     const chatRequest = {
-      content: userInputContent, // Already processed by caller if needed
-      agent_id: parseInt(agentId)
+      agent_id: parseInt(agentId),
+      content: userInputContent,
+      session_id: conversationId.value || null,
+      note_id: currentNoteId.value || null,
+      model: model,
+      images: chatImages.value.length > 0 ? chatImages.value : undefined
     };
-
-    // 如果提供了模型参数，添加到请求中
-    if (model) {
-      chatRequest.model = model;
-    }
-
-    if (conversationId.value && conversationId.value !== 'null' && conversationId.value !== 'undefined') {
-      chatRequest.conversation_id = parseInt(conversationId.value);
-    } else {
-      chatRequest.conversation_id = 0; // Backend handles 0 as new conversation
-      if (currentNoteId.value) {
-        chatRequest.note_id = parseInt(currentNoteId.value);
-      }
-    }
 
     const streamCallback = async (response, isComplete, convId, toolStatus) => {
       if (streamSignaledEnd) {
@@ -554,8 +544,18 @@ const triggerChatRequest = async (agentId, userInputContent, responseParagraph =
       }
 
       try {
-        const data = response.data?.data || {};
+        // 现在response是完整的API响应数据
+        const data = (response && response.code === 200 && response.data) ? response.data : {};
         let chunkContent = '';
+        
+        console.log('[AgentResponseHandler] 流式响应数据:', {
+          has_response: !!response,
+          response_code: response?.code,
+          has_data: !!response?.data,
+          full_content_length: data.full_content?.length || 0,
+          message_content: data.message?.content || '',
+          done: data.done
+        });
         
         // 处理工具状态更新
         if (toolStatus) {
@@ -585,22 +585,31 @@ const triggerChatRequest = async (agentId, userInputContent, responseParagraph =
           emit('agent-tool-status', toolStatus);
         }
         
-        // 检查是否有增量内容字段
-        if (data.content) {
-          // 如果有增量内容，直接使用
-          chunkContent = data.content;
-        } else if (data.full_content) {
-          // 如果只有完整内容，计算与上次的差异
+        // 优先使用full_content进行累积显示
+        if (data.full_content !== undefined) {
+          // 使用完整的累积内容直接更新显示
           const currentFullContent = data.full_content;
-          if (currentFullContent.length > fullResponseAccumulator.length) {
-            // 提取新增的部分
-            chunkContent = currentFullContent.substring(fullResponseAccumulator.length);
+          
+          // 实时更新响应内容的markdown渲染
+          if (currentResponseElement) {
+            // 移除加载动画（如果存在）
+            const loadingElement = currentResponseElement.querySelector('.loading-animation-container, .agent-response-loading');
+            if (loadingElement) {
+              loadingElement.remove();
+            }
+            
+            // 实时渲染完整的累积内容
+            updateResponseContent(currentResponseElement, currentFullContent);
           }
-        }
-        
-        const isStreamDone = data.done || isComplete;
-
-        if (chunkContent) {
+          
+          // 计算增量部分用于事件发射
+          if (currentFullContent.length > fullResponseAccumulator.length) {
+            chunkContent = currentFullContent.substring(fullResponseAccumulator.length);
+            fullResponseAccumulator = currentFullContent; // 更新累积器
+          }
+        } else if (data.message && data.message.content) {
+          // 如果没有full_content，使用增量的message.content
+          chunkContent = data.message.content;
           fullResponseAccumulator += chunkContent;
           
           // 实时更新响应内容的markdown渲染
@@ -614,7 +623,11 @@ const triggerChatRequest = async (agentId, userInputContent, responseParagraph =
             // 实时渲染累积的内容
             updateResponseContent(currentResponseElement, fullResponseAccumulator);
           }
-          
+        }
+        
+        const isStreamDone = data.done || isComplete;
+
+        if (chunkContent) {
           emit('agent-response-chunk', chunkContent);
         }
 
@@ -622,6 +635,8 @@ const triggerChatRequest = async (agentId, userInputContent, responseParagraph =
           streamSignaledEnd = true;
           // 确保最终内容是完整的
           const finalContent = data.full_content || fullResponseAccumulator;
+          
+          console.log('[AgentResponseHandler] 流式响应完成，最终内容长度:', finalContent.length);
           
           // 最终渲染完整内容
           if (currentResponseElement) {

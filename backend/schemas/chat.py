@@ -21,7 +21,7 @@ class ChatRequest(BaseModel):
     content: str = Field(..., description="用户消息内容")
     images: Optional[List[ImageData]] = Field(default=[], description="用户上传的图片列表")
     stream: Optional[bool] = Field(False, description="是否启用流式响应")
-    conversation_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
+    session_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
     agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
     note_id: Optional[int] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
     model: Optional[str] = Field(None, description="指定使用的模型，如果提供则覆盖Agent默认模型")
@@ -42,7 +42,7 @@ class ChatCompletionResponse(BaseModel):
     """聊天完成响应"""
     message: Message = Field(..., description="AI生成的消息")
     usage: Dict[str, Any] = Field(None, description="token使用统计")
-    conversation_id: Optional[int] = Field(None, description="聊天会话ID")
+    session_id: Optional[int] = Field(None, description="聊天会话ID")
 
 
 class ChatMemory(BaseModel):
@@ -70,7 +70,7 @@ class ChatStreamRequest(BaseModel):
     """流式聊天请求"""
     content: str = Field(..., description="用户消息内容")
     images: Optional[List[ImageData]] = Field(default=[], description="用户上传的图片列表")
-    conversation_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
+    session_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
     agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
     note_id: Optional[int] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
 
@@ -83,13 +83,13 @@ class ChatMessageBase(BaseModel):
 
 class ChatMessageCreate(ChatMessageBase):
     """创建聊天消息的请求模型"""
-    conversation_id: int
+    session_id: int
 
 
 class ChatMessageResponse(ChatMessageBase):
     """聊天消息响应模型"""
     id: int
-    conversation_id: int
+    session_id: int
     created_at: Optional[datetime] = None
     tokens: Optional[int] = None
     prompt_tokens: Optional[int] = None

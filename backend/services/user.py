@@ -1,14 +1,19 @@
 from typing import Optional, Tuple
 import os
+import json
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.user import User
 from backend.models.note import Note
+from backend.models.agent import Agent
 from backend.schemas.user import UserCreate, UserLogin, TokenData
+from backend.schemas.agent import AgentCreate, ModelSettings
 from backend.crud.user import get_user_by_username, get_user_by_phone, create_user
+from backend.crud.agent import agent as agent_crud
 from backend.utils.security import get_password_hash, verify_password, create_access_token
 from backend.utils.logging import auth_logger
+from backend.core.config import settings
 
 
 # 读取用户手册模板
@@ -51,8 +56,65 @@ async def create_default_manual_note(db: AsyncSession, user_id: int) -> Optional
         return None
 
 
+# 创建默认AI助手
+async def create_default_agent(db: AsyncSession, user_id: int) -> Optional[Agent]:
+    """为新用户创建默认的AI助手"""
+    try:
+        # 检查用户是否已有Agent
+        existing_agent = await agent_crud.get_user_agent(db, user_id)
+        if existing_agent:
+            auth_logger.info(f"用户ID {user_id} 已有AI助手，跳过创建")
+            return existing_agent
+        
+        # 从环境变量解析JSON字符串，并为每个工具添加name字段
+        # 解析默认工具配置
+        try:
+            raw_tools_config = json.loads(settings.DEFAULT_AGENT_TOOLS_ENABLED) if hasattr(settings, 'DEFAULT_AGENT_TOOLS_ENABLED') else {}
+            # 为每个工具添加name字段
+            tools_enabled_config = {}
+            for tool_name, tool_config in raw_tools_config.items():
+                tools_enabled_config[tool_name] = {
+                    "enabled": tool_config.get("enabled", True),
+                    "name": tool_name  # 添加name字段
+                }
+        except (json.JSONDecodeError, AttributeError):
+            tools_enabled_config = {}
+        
+        # 解析默认模型设置
+        try:
+            model_settings_config = json.loads(settings.DEFAULT_AGENT_MODEL_SETTINGS) if hasattr(settings, 'DEFAULT_AGENT_MODEL_SETTINGS') else {}
+        except (json.JSONDecodeError, AttributeError):
+            model_settings_config = {"temperature": 0.7, "top_p": 0.95, "presence_penalty": 0, "frequency_penalty": 0}
+        
+        # 创建默认的模型设置
+        default_model_settings = ModelSettings(**model_settings_config)
+        
+        # 创建默认agent的配置，使用配置文件中的值
+        default_agent_data = AgentCreate(
+            system_prompt=getattr(settings, 'DEFAULT_AGENT_SYSTEM_PROMPT', '你是一个有用的AI助手'),
+            model=getattr(settings, 'DEFAULT_AGENT_MODEL', settings.OPENAI_MODEL),
+            max_memory=getattr(settings, 'DEFAULT_AGENT_MAX_MEMORY', 10),
+            model_settings=default_model_settings,
+            tools_enabled=tools_enabled_config
+        )
+        
+        # 创建或更新agent
+        default_agent = await agent_crud.create_or_update_agent(
+            db=db,
+            user_id=user_id,
+            obj_in=default_agent_data
+        )
+        
+        auth_logger.info(f"成功为用户ID {user_id} 创建默认AI助手")
+        return default_agent
+    except Exception as e:
+        auth_logger.error(f"创建默认AI助手失败: {str(e)}")
+        await db.rollback()
+        return None
+
+
 # 用户注册服务
-async def register_user(user_data: UserCreate, db: AsyncSession) -> Tuple[User, Optional[Note]]:
+async def register_user(user_data: UserCreate, db: AsyncSession) -> Tuple[User, Optional[Note], Optional[Agent]]:
     # 检查用户名是否已存在
     existing_username = await get_user_by_username(db, user_data.username)
     if existing_username:
@@ -80,7 +142,10 @@ async def register_user(user_data: UserCreate, db: AsyncSession) -> Tuple[User, 
     # 为新用户创建默认用户手册笔记
     default_note = await create_default_manual_note(db, user.id)
     
-    return user, default_note
+    # 为新用户创建默认AI助手
+    default_agent = await create_default_agent(db, user.id)
+    
+    return user, default_note, default_agent
 
 
 # 验证用户登录

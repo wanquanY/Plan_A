@@ -3,6 +3,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import json
 
 from backend.models.tool_call import ToolCallHistory
 from backend.utils.logging import db_logger
@@ -11,7 +12,7 @@ from backend.utils.logging import db_logger
 async def create_tool_call(
     db: AsyncSession,
     message_id: int,
-    conversation_id: int,
+    session_id: int,
     tool_call_id: str,
     tool_name: str,
     function_name: str,
@@ -26,7 +27,7 @@ async def create_tool_call(
     
     tool_call = ToolCallHistory(
         message_id=message_id,
-        conversation_id=conversation_id,
+        session_id=session_id,
         agent_id=agent_id,
         tool_call_id=tool_call_id,
         tool_name=tool_name,
@@ -97,19 +98,16 @@ async def get_tool_calls_by_message(
 
 async def get_tool_calls_by_conversation(
     db: AsyncSession,
-    conversation_id: int,
-    limit: Optional[int] = None
+    session_id: int,
+    limit: int = 100
 ) -> List[ToolCallHistory]:
-    """获取会话的所有工具调用记录"""
-    stmt = select(ToolCallHistory).where(
-        ToolCallHistory.conversation_id == conversation_id
-    ).order_by(ToolCallHistory.started_at.desc())
-    
-    if limit:
-        stmt = stmt.limit(limit)
-    
-    query_result = await db.execute(stmt)
-    return query_result.scalars().all()
+    """根据会话ID获取工具调用记录"""
+    result = await db.execute(
+        select(ToolCallHistory).where(
+            ToolCallHistory.session_id == session_id
+        ).order_by(ToolCallHistory.created_at.desc()).limit(limit)
+    )
+    return result.scalars().all()
 
 
 async def get_tool_call_by_id(
@@ -138,22 +136,22 @@ async def delete_tool_calls_by_message(
 
 async def delete_tool_calls_by_conversation(
     db: AsyncSession,
-    conversation_id: int
+    session_id: int
 ) -> int:
-    """删除会话的所有工具调用记录"""
-    stmt = delete(ToolCallHistory).where(ToolCallHistory.conversation_id == conversation_id)
-    query_result = await db.execute(stmt)
+    """删除指定会话的所有工具调用记录"""
+    stmt = delete(ToolCallHistory).where(ToolCallHistory.session_id == session_id)
+    result = await db.execute(stmt)
     await db.commit()
     
-    deleted_count = query_result.rowcount
-    db_logger.debug(f"已删除会话 {conversation_id} 的 {deleted_count} 条工具调用记录")
+    deleted_count = result.rowcount
+    db_logger.debug(f"已删除会话 {session_id} 的 {deleted_count} 条工具调用记录")
     return deleted_count
 
 
 async def get_or_create_tool_call(
     db: AsyncSession,
     message_id: int,
-    conversation_id: int,
+    session_id: int,
     tool_call_id: str,
     tool_name: str,
     function_name: str,
@@ -176,7 +174,7 @@ async def get_or_create_tool_call(
     return await create_tool_call(
         db=db,
         message_id=message_id,
-        conversation_id=conversation_id,
+        session_id=session_id,
         tool_call_id=tool_call_id,
         tool_name=tool_name,
         function_name=function_name,
@@ -186,3 +184,68 @@ async def get_or_create_tool_call(
         result=result,
         error_message=error_message
     ) 
+
+
+async def create_tool_call_history(
+    db: AsyncSession,
+    session_id: int,
+    message_id: int,
+    function_name: str,
+    function_arguments: str,
+    function_result: str,
+    agent_id: Optional[int] = None,
+    user_id: Optional[int] = None
+) -> ToolCallHistory:
+    """创建工具调用历史记录"""
+    # 创建记录
+    db_tool_call = ToolCallHistory(
+        message_id=message_id,
+        session_id=session_id,
+        function_name=function_name,
+        function_arguments=function_arguments,
+        function_result=function_result,
+        agent_id=agent_id,
+        user_id=user_id
+    )
+    
+    db.add(db_tool_call)
+    await db.commit()
+    await db.refresh(db_tool_call)
+    
+    db_logger.debug(f"工具调用历史记录已创建: id={db_tool_call.id}")
+    return db_tool_call
+
+
+async def create_tool_call_with_result(
+    db: AsyncSession,
+    session_id: int,
+    message_id: int,
+    function_name: str,
+    function_arguments: Dict[str, Any],
+    function_result: Any,
+    agent_id: Optional[int] = None,
+    user_id: Optional[int] = None
+) -> ToolCallHistory:
+    """创建包含结果的工具调用记录"""
+    
+    # 序列化参数和结果
+    serialized_args = json.dumps(function_arguments, ensure_ascii=False)
+    serialized_result = json.dumps(function_result, ensure_ascii=False, default=str)
+    
+    # 创建记录
+    db_tool_call = ToolCallHistory(
+        message_id=message_id,
+        session_id=session_id,
+        function_name=function_name,
+        function_arguments=serialized_args,
+        function_result=serialized_result,
+        agent_id=agent_id,
+        user_id=user_id
+    )
+    
+    db.add(db_tool_call)
+    await db.commit()
+    await db.refresh(db_tool_call)
+    
+    db_logger.debug(f"包含结果的工具调用记录已创建: id={db_tool_call.id}")
+    return db_tool_call 

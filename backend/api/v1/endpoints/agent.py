@@ -19,14 +19,11 @@ def agent_to_dict(db_agent) -> Dict[str, Any]:
     return {
         "id": db_agent.id,
         "user_id": db_agent.user_id,
-        "name": db_agent.name,
-        "avatar_url": db_agent.avatar_url,
         "system_prompt": db_agent.system_prompt,
         "model": db_agent.model,
         "max_memory": db_agent.max_memory,
         "model_settings": db_agent.model_settings,
         "tools_enabled": db_agent.tools_enabled,
-        "is_public": db_agent.is_public,
         "created_at": db_agent.created_at.isoformat() if db_agent.created_at else None,
         "updated_at": db_agent.updated_at.isoformat() if db_agent.updated_at else None
     }
@@ -62,75 +59,141 @@ async def list_models(
     )
 
 
-@router.post("/agents", response_model=AgentInDB)
-async def create_agent(
+@router.get("/my-agent", response_model=AgentInDB)
+async def get_my_agent(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    获取当前用户的AI助手
+    """
+    api_logger.info(f"获取用户AI助手: {current_user.username}")
+    
+    user_agent = await agent.get_user_agent(db, user_id=current_user.id)
+    
+    if not user_agent:
+        api_logger.warning(f"用户没有AI助手: {current_user.username}")
+        raise HTTPException(status_code=404, detail="您还没有AI助手，请先创建")
+    
+    # 转换为字典
+    agent_dict = agent_to_dict(user_agent)
+    
+    return SuccessResponse(
+        data=agent_dict,
+        msg="获取AI助手成功",
+        request_id=getattr(request.state, "request_id", None)
+    )
+
+
+@router.post("/my-agent", response_model=AgentInDB)
+async def create_or_update_my_agent(
     request: Request,
     agent_in: AgentCreate = Body(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    创建新的Agent
+    创建或更新当前用户的AI助手
     """
-    api_logger.info(f"创建新Agent: {agent_in.name}, 用户: {current_user.username}, 模型: {agent_in.model}")
+    api_logger.info(f"创建或更新AI助手: 用户: {current_user.username}, 模型: {agent_in.model}")
     
-    # 移除模型验证逻辑，允许使用任何模型
+    try:
+        # 创建或更新用户的Agent
+        db_agent = await agent.create_or_update_agent(db, user_id=current_user.id, obj_in=agent_in)
+        
+        # 转换为字典以确保JSON可序列化
+        agent_dict = agent_to_dict(db_agent)
+        
+        return SuccessResponse(
+            data=agent_dict,
+            msg="AI助手保存成功",
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except ValueError as e:
+        api_logger.error(f"创建或更新AI助手失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/my-agent", response_model=AgentInDB)
+async def update_my_agent(
+    request: Request,
+    agent_in: AgentUpdate = Body(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    更新当前用户的AI助手
+    """
+    api_logger.info(f"更新AI助手, 用户: {current_user.username}")
     
-    db_agent = await agent.create_agent(db, user_id=current_user.id, obj_in=agent_in)
+    # 获取用户的Agent
+    user_agent = await agent.get_user_agent(db, user_id=current_user.id)
+    if not user_agent:
+        api_logger.warning(f"用户没有AI助手: {current_user.username}")
+        raise HTTPException(status_code=404, detail="您还没有AI助手，请先创建")
     
-    # 转换为字典以确保JSON可序列化
-    agent_dict = agent_to_dict(db_agent)
+    # 更新Agent
+    updated_agent = await agent.update_agent(db, agent_id=user_agent.id, obj_in=agent_in)
+    
+    # 转换为字典
+    agent_dict = agent_to_dict(updated_agent)
     
     return SuccessResponse(
         data=agent_dict,
-        msg="Agent创建成功",
+        msg="AI助手更新成功",
         request_id=getattr(request.state, "request_id", None)
     )
 
 
-@router.get("/agents", response_model=List[AgentListResponse])
-async def list_agents(
+@router.delete("/my-agent")
+async def delete_my_agent(
     request: Request,
-    is_public: Optional[bool] = Query(None, description="是否只查询公开的Agent。不传返回用户能看到的所有Agent（包括自己的和公开的），true返回所有公开的，false返回用户自己的Agent"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    删除当前用户的AI助手
+    """
+    api_logger.info(f"删除AI助手, 用户: {current_user.username}")
+    
+    # 获取用户的Agent
+    user_agent = await agent.get_user_agent(db, user_id=current_user.id)
+    if not user_agent:
+        api_logger.warning(f"用户没有AI助手: {current_user.username}")
+        raise HTTPException(status_code=404, detail="您还没有AI助手")
+    
+    # 软删除Agent
+    await agent.remove(db, id=user_agent.id)
+    
+    return SuccessResponse(
+        data={"deleted_agent_id": user_agent.id},
+        msg="AI助手删除成功",
+        request_id=getattr(request.state, "request_id", None)
+    )
+
+
+@router.get("/public-agents", response_model=List[AgentListResponse])
+async def list_public_agents(
+    request: Request,
     skip: int = Query(0, description="分页起始位置"),
     limit: int = Query(100, description="分页大小，最大100条"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    获取Agent列表
-    
-    - 不传入is_public：返回用户能看到的所有Agent（包括自己的和所有公开的）
-    - is_public=true：返回所有公开的Agent
-    - is_public=false：返回用户自己的Agent（包括私有和公开的）
+    获取公开的AI助手列表
     """
-    if is_public is True:
-        api_logger.info(f"获取所有公开Agent列表, 用户: {current_user.username}")
-        agents_list = await agent.get_public_agents(db, skip=skip, limit=limit)
-    elif is_public is False:
-        api_logger.info(f"获取用户自己的所有Agent列表: {current_user.username}")
-        agents_list = await agent.get_user_agents(db, user_id=current_user.id)
-    else:
-        api_logger.info(f"获取用户能看到的所有Agent列表: {current_user.username}")
-        # 获取用户自己的Agent
-        user_agents = await agent.get_user_agents(db, user_id=current_user.id)
-        # 获取所有公开的Agent
-        public_agents = await agent.get_public_agents(db, skip=skip, limit=limit)
-        
-        # 合并并去重
-        user_agent_ids = set(a.id for a in user_agents)
-        agents_list = list(user_agents)
-        
-        for public_agent in public_agents:
-            if public_agent.id not in user_agent_ids:
-                agents_list.append(public_agent)
+    api_logger.info(f"获取公开AI助手列表, 用户: {current_user.username}")
+    
+    public_agents = await agent.get_public_agents(db, skip=skip, limit=limit)
     
     # 转换为字典列表
-    agent_list = [agent_to_dict(a) for a in agents_list]
+    agent_list = [agent_to_dict(a) for a in public_agents]
     
     return SuccessResponse(
         data=agent_list,
-        msg="获取Agent列表成功",
+        msg="获取公开AI助手列表成功",
         request_id=getattr(request.state, "request_id", None)
     )
 
@@ -143,23 +206,67 @@ async def get_agent_detail(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    获取Agent详情
+    获取AI助手详情（只能查看自己的或公开的）
     """
-    api_logger.info(f"获取Agent详情: {agent_id}, 用户: {current_user.username}")
+    api_logger.info(f"获取AI助手详情: {agent_id}, 用户: {current_user.username}")
     
     # 检查权限 - 只能查看自己的或公开的Agent
     db_agent = await agent.get_agent_for_user(db, agent_id=agent_id, user_id=current_user.id)
     
     if not db_agent:
-        api_logger.warning(f"Agent不存在或无权访问: {agent_id}, 用户: {current_user.username}")
-        raise HTTPException(status_code=404, detail="Agent不存在或无权访问")
+        api_logger.warning(f"AI助手不存在或无权访问: {agent_id}, 用户: {current_user.username}")
+        raise HTTPException(status_code=404, detail="AI助手不存在或无权访问")
     
     # 转换为字典
     agent_dict = agent_to_dict(db_agent)
     
     return SuccessResponse(
         data=agent_dict,
-        msg="获取Agent详情成功",
+        msg="获取AI助手详情成功",
+        request_id=getattr(request.state, "request_id", None)
+    )
+
+
+# 保留旧的API端点以向后兼容，但限制功能
+
+@router.post("/agents", response_model=AgentInDB)
+async def create_agent(
+    request: Request,
+    agent_in: AgentCreate = Body(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    创建新的Agent（已弃用，请使用 POST /my-agent）
+    """
+    api_logger.warning(f"使用已弃用的创建Agent接口: {current_user.username}")
+    # 重定向到新接口
+    return await create_or_update_my_agent(request, agent_in, db, current_user)
+
+
+@router.get("/agents", response_model=List[AgentListResponse])
+async def list_agents(
+    request: Request,
+    skip: int = Query(0, description="分页起始位置"),
+    limit: int = Query(100, description="分页大小，最大100条"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    获取Agent列表（只返回用户自己的agent）
+    """
+    api_logger.info(f"获取用户的Agent列表: {current_user.username}")
+    
+    # 获取用户自己的Agent
+    user_agent = await agent.get_user_agent(db, user_id=current_user.id)
+    agents_list = [user_agent] if user_agent else []
+    
+    # 转换为字典列表
+    agent_list = [agent_to_dict(a) for a in agents_list]
+    
+    return SuccessResponse(
+        data=agent_list,
+        msg="获取Agent列表成功",
         request_id=getattr(request.state, "request_id", None)
     )
 
@@ -173,17 +280,14 @@ async def update_agent_detail(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    更新Agent信息
+    更新Agent信息（只能更新自己的agent）
     """
     api_logger.info(f"更新Agent: {agent_id}, 用户: {current_user.username}")
     
-    # 检查Agent是否存在且属于当前用户
-    db_agent = await agent.get_agent_by_id(db, agent_id=agent_id)
-    if not db_agent or db_agent.user_id != current_user.id:
+    # 检查Agent是否属于当前用户
+    if not await agent.check_agent_ownership(db, agent_id, current_user.id):
         api_logger.warning(f"Agent不存在或无权更新: {agent_id}, 用户: {current_user.username}")
         raise HTTPException(status_code=404, detail="Agent不存在或无权更新")
-    
-    # 移除模型验证逻辑，允许使用任何模型
     
     updated_agent = await agent.update_agent(db, agent_id=agent_id, obj_in=agent_in)
     
@@ -198,28 +302,26 @@ async def update_agent_detail(
 
 
 @router.delete("/agents/{agent_id}")
-async def delete_agent(
+async def delete_agent_detail(
     request: Request,
     agent_id: int = Path(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    删除Agent
+    删除Agent（只能删除自己的agent）
     """
     api_logger.info(f"删除Agent: {agent_id}, 用户: {current_user.username}")
     
-    # 检查Agent是否存在且属于当前用户
-    db_agent = await agent.get_agent_by_id(db, agent_id=agent_id)
-    if not db_agent or db_agent.user_id != current_user.id:
+    # 检查Agent是否属于当前用户
+    if not await agent.check_agent_ownership(db, agent_id, current_user.id):
         api_logger.warning(f"Agent不存在或无权删除: {agent_id}, 用户: {current_user.username}")
         raise HTTPException(status_code=404, detail="Agent不存在或无权删除")
     
-    # 软删除Agent
-    removed_agent = await agent.remove(db, id=agent_id)
+    await agent.remove(db, id=agent_id)
     
     return SuccessResponse(
-        data={"success": removed_agent is not None},
-        msg="删除Agent成功" if removed_agent else "删除Agent失败",
+        data={"deleted_agent_id": agent_id},
+        msg="删除Agent成功",
         request_id=getattr(request.state, "request_id", None)
     ) 

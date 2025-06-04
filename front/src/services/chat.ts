@@ -18,7 +18,7 @@ export interface ChatStreamMessage {
       reasoning_content?: string;
     };
     full_content: string;
-    conversation_id: number;
+    session_id: number;
     done: boolean;
     tool_status?: {
       type: string;
@@ -42,7 +42,7 @@ export interface ChatStreamMessage {
 export type StreamCallback = (
   response: any, 
   isComplete: boolean, 
-  conversationId: number, 
+  sessionId: number, 
   toolStatus?: any,
   reasoningContent?: string
 ) => void;
@@ -56,7 +56,7 @@ export interface ChatRequest {
     name?: string;
     size?: number;
   }>;
-  conversation_id?: number;
+  session_id?: number;
   note_id?: number;
   model?: string;
 }
@@ -77,7 +77,7 @@ export interface ChatMessage {
   id: number;
   role: string;
   content: string;
-  conversation_id: number;
+  session_id: number;
   created_at: string;
   agent_id?: number;
   agent_info?: {
@@ -173,7 +173,7 @@ export interface EditMessageResponse {
   message?: {
     content: string;
   };
-  conversation_id?: number;
+  session_id?: number;
   agent_info?: {
     id: number;
     name: string;
@@ -188,7 +188,7 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
   const controller = new AbortController();
   
   console.log('初始化聊天请求:', {
-    conversation_id: request.conversation_id,
+    session_id: request.session_id,
     agent_id: request.agent_id,
     content_length: request.content.length,
     note_id: request.note_id,
@@ -200,86 +200,64 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
       // 获取token
       const token = localStorage.getItem('access_token');
       if (!token) {
-        throw new Error('需要登录');
+        throw new Error('未找到认证令牌');
       }
       
-      // 构造请求体 - 添加图片支持
-      const requestBody: {
-        content: string;
-        conversation_id: number;
-        agent_id: number;
-        note_id?: number;
-        model?: string;
-        images?: Array<{
-          url: string;
-          name?: string;
-          size?: number;
-        }>;
-      } = {
+      // 获取API基础URL
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:1314/api/v1';
+      const streamUrl = `${apiBaseUrl}/chat/stream`;
+      
+      console.log('发送流式聊天请求到:', streamUrl);
+      
+      // 构建请求体
+      const requestBody = {
         content: request.content,
-        conversation_id: request.conversation_id ?? 0,
         agent_id: request.agent_id,
-        note_id: request.note_id
+        session_id: request.session_id,
+        images: request.images,
+        note_id: request.note_id,
+        model: request.model
       };
       
-      // 如果有模型参数，添加到请求体中
-      if (request.model) {
-        requestBody.model = request.model;
-      }
-      
-      // 如果有图片数据，添加到请求体中
-      if (request.images && request.images.length > 0) {
-        requestBody.images = request.images;
-      }
-      
-      const body = JSON.stringify(requestBody);
-      
-      // 打印完整请求信息用于调试
-      console.log('发送聊天请求完整信息:', {
-        content_length: request.content.length,
-        conversation_id: request.conversation_id ?? 0,
-        agent_id: request.agent_id,
-        note_id: request.note_id || '未提供',
-        images_count: request.images?.length || 0,
-        images_urls: request.images?.map(img => img.url) || []
+      console.log('发送的请求体:', JSON.stringify(requestBody, null, 2));
+      console.log('🔍 关键字段检查:', {
+        'note_id值': request.note_id,
+        'note_id类型': typeof request.note_id,
+        'session_id值': request.session_id,
+        'session_id类型': typeof request.session_id,
+        'agent_id值': request.agent_id
       });
       
       // 发送请求
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/chat/chat/stream`, {
+      const response = await fetch(streamUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Authorization': `Bearer ${token}`,
         },
-        body,
+        body: JSON.stringify(requestBody),
         signal: controller.signal
       });
       
-      // 检查响应是否成功
       if (!response.ok) {
         const errorText = await response.text();
-        onProgress(`服务器返回错误: ${response.status} - ${errorText}`, true, request.conversation_id || 0);
+        onProgress(`服务器返回错误: ${response.status} - ${errorText}`, true, request.session_id || 0);
         return;
       }
       
-      // 确保响应体存在
       if (!response.body) {
         throw new Error('响应体为空');
       }
       
-      // 处理文本流
-      const finalId = await processTextStream(response.body.getReader(), onProgress, request.conversation_id);
-      console.log('流式聊天完成，最终conversation_id:', finalId);
+      const finalId = await processTextStream(response.body.getReader(), onProgress, request.session_id);
+      console.log('流式聊天完成，最终session_id:', finalId);
       
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        console.log('用户取消了聊天请求');
-        onProgress('用户取消了聊天请求', true, request.conversation_id || 0);
-      } else {
-        console.error('聊天时出错:', error);
-        onProgress(`聊天失败: ${error.message}`, true, request.conversation_id || 0);
+        onProgress('用户取消了聊天请求', true, request.session_id || 0);
+        return;
       }
+      onProgress(`聊天失败: ${error.message}`, true, request.session_id || 0);
     }
   })();
   
@@ -290,185 +268,142 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
 const processTextStream = async (
   reader: ReadableStreamDefaultReader<Uint8Array>,
   callback: StreamCallback,
-  conversationId: number | null = null
+  sessionId: number | null = null
 ): Promise<number> => {
+  const decoder = new TextDecoder();
   let buffer = '';
-  let currentConversationId = conversationId;
-  let previousContent = '';
-  let finalContent = ''; // 保存最终内容
-  let finalResponse: any = null; // 保存最终响应对象
+  let currentSessionId = sessionId || 0;
 
   try {
-    const decoder = new TextDecoder();
-    
-    // 读取数据流
     while (true) {
       const { done, value } = await reader.read();
       
       if (done) {
-        console.log('流读取完成');
-        // 最后一次回调，确保UI知道流已结束
-        // 使用最终累积的响应对象
-        if (finalResponse) {
-          // 确保设置done=true
-          if (finalResponse.data && finalResponse.data.data) {
-            finalResponse.data.data.done = true;
+        // 处理最后的缓冲区内容
+        if (buffer.trim()) {
+          try {
+            processSSELine(buffer.trim());
+          } catch (e) {
+            console.warn('处理最后缓冲区数据失败:', e);
           }
-          callback(finalResponse, true, currentConversationId || 0);
-        } else {
-          // 如果没有最终响应对象，创建一个基本的响应
-          const basicResponse = {
-            data: {
-              data: {
-                full_content: finalContent,
-                done: true,
-                conversation_id: currentConversationId || 0
-              }
-            }
-          };
-          callback(basicResponse, true, currentConversationId || 0);
         }
-        return currentConversationId || 0;
+        console.log('流式传输完成，最终session_id:', currentSessionId);
+        break;
       }
       
-      // 将二进制数据解码为文本
-      if (value) {
-        const chunk = decoder.decode(value, { stream: true });
-        console.log(`收到${value.length}字节数据`);
+      // 将新数据添加到缓冲区
+      buffer += decoder.decode(value, { stream: true });
         
-        // 添加到缓冲区
-        buffer += chunk;
+      // 按行处理数据 - 修复换行符分割问题
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // 保留最后一行（可能不完整）
         
-        // 按行处理数据
-        const lines = buffer.split('\n');
-        // 保留最后一行，可能是不完整的
-        buffer = lines.pop() || '';
-        
-        // 处理完整的行
-        for (const line of lines) {
-          if (line.trim()) {
-            processSSELine(line.trim());
-          }
+      for (const line of lines) {
+        try {
+          processSSELine(line.trim());
+        } catch (e) {
+          console.warn('处理SSE行失败:', e, '行内容:', line);
+          continue;
         }
       }
     }
-  } catch (error: any) {
-    console.error('处理流式数据时出错:', error);
-    const errorResponse = {
-      data: {
-        data: {
-          full_content: `读取响应流时出错: ${error.message}`,
-          done: true,
-          conversation_id: currentConversationId || 0
-        }
-      }
-    };
-    callback(errorResponse, true, currentConversationId || 0);
-    return currentConversationId || 0;
+  } catch (error) {
+    console.error('读取流时出错:', error);
+    throw error;
   }
   
-  // 处理SSE行数据
   function processSSELine(line: string) {
+    if (!line || line === 'data: [DONE]') return;
+    
+    // 移除 'data: ' 前缀
+    if (line.startsWith('data: ')) {
+      line = line.substring(6);
+    } else {
+      // 如果没有 'data: ' 前缀，可能是不完整的行，直接跳过
+      return;
+    }
+      
     try {
-      // 检查是否是SSE格式
-      let jsonStr = line;
-      if (line.startsWith('data: ')) {
-        jsonStr = line.substring(6).trim();
-      }
+      const data = JSON.parse(line);
       
-      console.log('准备解析JSON:', jsonStr);
-      const data = JSON.parse(jsonStr);
-      
-      if (data.code !== 200) {
-        console.error('服务器返回错误:', data.msg);
-        return;
-      }
-      
-      // 创建包含完整响应的对象
-      const response = { data: data };
-      
-      // 保存最终响应
-      finalResponse = response;
-      
-      // 提取消息内容和会话ID
-      if (data.data) {
-        // 详细日志记录data.data的结构
-        console.log('chat.ts 收到data.data结构:', {
-          has_message: !!data.data.message,
-          has_full_content: !!data.data.full_content,
-          has_tool_status: !!data.data.tool_status,
-          has_reasoning_content: !!(data.data.message && data.data.message.reasoning_content),
-          conversation_id: data.data.conversation_id,
-          done: data.data.done,
-          tool_status_content: data.data.tool_status
-        });
+      // 处理标准的API响应格式
+      if (data.code === 200 && data.data) {
+        const responseData = data.data;
         
-        // 优先使用full_content字段
-        const content = data.data.full_content || 
-                        (data.data.message ? data.data.message.content : '') || '';
-        
-        // 提取思考内容
-        const reasoningContent = data.data.message && data.data.message.reasoning_content ? 
-                                data.data.message.reasoning_content : '';
-        
-        // 记录思考内容信息
-        if (reasoningContent) {
-          console.log(`处理思考内容: 长度=${reasoningContent.length}, 会话ID=${currentConversationId || 'null'}`);
+        if (responseData.session_id) {
+          currentSessionId = responseData.session_id;
         }
         
-        // 判断是否完成
-        const isComplete = data.data.done || false;
-        
-        // 更新会话ID，确保不为0
-        if (data.data.conversation_id && data.data.conversation_id !== 0) {
-          currentConversationId = data.data.conversation_id;
-          console.log(`更新会话ID: ${currentConversationId}`);
+        // 🔧 修复：首先处理工具状态信息
+        if (responseData.tool_status) {
+          console.log('🔧 检测到工具状态信息，立即传递:', responseData.tool_status);
+          // 立即传递工具状态信息，即使没有文本内容
+          callback(data, responseData.done || false, currentSessionId, responseData.tool_status);
         }
         
-        // 如果内容非空，则更新最终内容
-        if (content) {
-          finalContent = content;
-        }
-        
-        // 记录agent信息（如果存在）
-        if (data.data.agent_info) {
-          console.log('接收到agent信息:', data.data.agent_info);
-        }
-        
-        // 检查是否有工具状态信息
-        let toolStatus = null;
-        if (data.data.tool_status) {
-          toolStatus = data.data.tool_status;
-          console.log('chat.ts 接收到工具状态:', JSON.stringify(toolStatus, null, 2));
-          console.log('chat.ts 工具状态详情:', {
-            type: toolStatus.type,
-            tool_name: toolStatus.tool_name,
-            status: toolStatus.status,
-            tool_call_id: toolStatus.tool_call_id,
-            has_result: !!toolStatus.result,
-            result_preview: toolStatus.result ? JSON.stringify(toolStatus.result).substring(0, 100) + '...' : null
+        // 然后处理文本消息
+        if (responseData.message) {
+          const content = responseData.message.content || '';
+          const reasoning = responseData.message.reasoning_content || null;
+          
+          console.log('processSSELine 传递数据:', {
+            content_length: content.length,
+            full_content_length: responseData.full_content?.length || 0,
+            reasoning_content_length: reasoning?.length || 0,
+            done: responseData.done,
+            session_id: responseData.session_id,
+            has_tool_status: !!responseData.tool_status
           });
-        } else {
-          console.log('chat.ts 没有工具状态信息，data.data keys:', Object.keys(data.data));
+          
+          // 调用回调函数，传递完整的响应数据而不仅仅是content字符串
+          // 这样前端可以访问 full_content 字段进行正确的累积显示
+          // 🔧 修复：如果已经处理了工具状态，这里不要重复传递工具状态
+          callback(data, responseData.done || false, currentSessionId, responseData.tool_status ? null : null, reasoning);
         }
         
-        console.log(`处理流式数据: 内容长度=${content.length}, 思考内容长度=${reasoningContent.length}, 是否完成=${isComplete}, 会话ID=${currentConversationId || 'null'}, 有工具状态=${!!toolStatus}`);
-        
-        // 确保有效会话ID
-        const idToSend = currentConversationId ?? conversationId ?? 0;
-        
-        // 回调UI更新，传递工具状态和思考内容
-        callback(response, isComplete, idToSend, toolStatus, reasoningContent);
-        
-        // 保存上一个内容以防下一次回调为空
-        if (content) {
-          previousContent = content;
+        // 如果是完成状态
+        if (responseData.done) {
+          callback(data, true, currentSessionId);
         }
       }
+      
+      // 保持对旧格式的兼容性
+      else if (data.type === 'session_info') {
+        // 从session_info中获取session_id
+        if (data.session_id) {
+          currentSessionId = data.session_id;
+          console.log('获取到session_id:', currentSessionId);
+        }
+        return;
+      } else if (data.type === 'content') {
+        const content = data.content || '';
+        const reasoning = data.reasoning || null;
+        
+        // 调用回调函数，传递内容和推理信息
+        callback(content, false, currentSessionId, null, reasoning);
+      } else if (data.type === 'tool_status') {
+        // 处理工具状态更新
+        callback('', false, currentSessionId, data);
+      } else if (data.type === 'complete') {
+        // 流式传输完成
+        if (data.session_id) {
+          currentSessionId = data.session_id;
+        }
+        callback('', true, currentSessionId);
+      } else if (data.type === 'error') {
+        // 错误信息
+        if (data.session_id) {
+          currentSessionId = data.session_id;
+        }
+        callback(data.error || '发生未知错误', true, currentSessionId);
+      }
+      
     } catch (e) {
-      console.error('解析JSON失败:', e, '原始数据:', line);
+      console.warn('解析JSON失败:', e, '原始数据:', line);
     }
   }
+  
+  return currentSessionId;
 };
 
 // 获取聊天会话列表
@@ -697,36 +632,33 @@ if (typeof window !== 'undefined') {
 
 // 编辑消息并可选择重新执行
 const editMessage = async (
-  conversationId: number, 
+  sessionId: number, 
   request: EditMessageRequest, 
   onProgress?: StreamCallback
 ): Promise<EditMessageResponse | AbortController> => {
   try {
-    console.log('编辑消息请求:', {
-      conversationId,
-      message_index: request.message_index,
-      is_user_message: request.is_user_message,
-      rerun: request.rerun,
-      content_length: request.content?.length || 0
-    });
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      throw new Error('未找到认证令牌');
+    }
 
-    // 如果是流式请求且需要重新执行，返回AbortController
-    if (request.stream && request.is_user_message && request.rerun) {
+    if (request.stream && onProgress) {
+      // 流式编辑
       const controller = new AbortController();
       
       (async () => {
         try {
-          const token = localStorage.getItem('access_token');
-          if (!token) {
-            throw new Error('需要登录');
-          }
-
-          const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/chat/ask-again/${conversationId}`, {
+          // 获取API基础URL
+          const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:1314/api/v1';
+          const editUrl = `${apiBaseUrl}/chat/ask-again/${sessionId}`;
+          
+          console.log('发送流式编辑请求到:', editUrl);
+          
+          const response = await fetch(editUrl, {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${token}`,
               'Content-Type': 'application/json',
-              'Accept': 'application/json'
+              'Authorization': `Bearer ${token}`,
             },
             body: JSON.stringify(request),
             signal: controller.signal
@@ -734,7 +666,7 @@ const editMessage = async (
 
           if (!response.ok) {
             const errorText = await response.text();
-            onProgress?.(`编辑消息失败: ${response.status} - ${errorText}`, true, conversationId);
+            onProgress(`服务器返回错误: ${response.status} - ${errorText}`, true, sessionId);
             return;
           }
 
@@ -742,63 +674,47 @@ const editMessage = async (
             throw new Error('响应体为空');
           }
 
-          // 处理流式响应
-          await processTextStream(response.body.getReader(), onProgress!, conversationId);
+          await processTextStream(response.body.getReader(), onProgress, sessionId);
+          
         } catch (error: any) {
           if (error.name === 'AbortError') {
-            console.log('用户取消了编辑请求');
-            onProgress?.('用户取消了编辑请求', true, conversationId);
-          } else {
-            console.error('编辑消息时出错:', error);
-            onProgress?.(`编辑消息失败: ${error.message}`, true, conversationId);
+            onProgress('用户取消了编辑请求', true, sessionId);
+            return;
           }
+          onProgress(`编辑失败: ${error.message}`, true, sessionId);
         }
       })();
 
       return controller;
-    }
-
-    // 非流式请求
-    const response = await apiClient.post(`/chat/ask-again/${conversationId}`, request);
-    
-    if (response.data.code === 200) {
-      console.log('编辑消息成功:', response.data.data);
-      return response.data.data as EditMessageResponse;
     } else {
-      throw new Error(response.data.msg || '编辑消息失败');
+      // 非流式编辑
+      const response = await apiClient.post(`/chat/ask-again/${sessionId}`, request);
+      return response.data.data;
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error('编辑消息失败:', error);
     throw error;
   }
 };
 
-// 停止响应并保存当前内容
-const stopAndSaveResponse = async (conversationId: number, currentContent: string, userContent: string, agentId?: number): Promise<boolean> => {
+// 强制停止并保存响应
+const stopAndSaveResponse = async (sessionId: number, currentContent: string, userContent: string, agentId?: number): Promise<boolean> => {
   try {
-    console.log('调用停止并保存响应API:', {
-      conversation_id: conversationId,
-      current_content_length: currentContent.length,
-      user_content_length: userContent.length,
-      agent_id: agentId
-    });
-
-    const response = await apiClient.post('/chat/stop-and-save', {
-      conversation_id: conversationId,
+    await apiClient.post(`/chat/${sessionId}/stop`, {
+      session_id: sessionId,
       current_content: currentContent,
       user_content: userContent,
       agent_id: agentId
     });
 
-    if (response.data.code === 200) {
-      console.log('停止并保存响应成功:', response.data.data);
+    await apiClient.post(`/chat/${sessionId}/save`, {
+      session_id: sessionId,
+      current_content: currentContent
+    });
+    
       return true;
-    } else {
-      console.error('停止并保存响应失败:', response.data.msg);
-      return false;
-    }
   } catch (error) {
-    console.error('调用停止并保存响应API失败:', error);
+    console.error('停止并保存响应失败:', error);
     return false;
   }
 };

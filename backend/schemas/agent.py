@@ -21,14 +21,11 @@ class ToolConfig(BaseModel):
 
 # Agent基础属性
 class AgentBase(BaseModel):
-    name: str = Field(..., description="Agent昵称")
-    avatar_url: Optional[str] = Field(None, description="头像链接")
     system_prompt: Optional[str] = Field(None, description="系统提示词")
     model: str = Field(..., description="使用的模型")
     max_memory: Optional[int] = Field(10, description="最大记忆条数")
     model_settings: Optional[ModelSettings] = Field(None, description="模型相关设置")
     tools_enabled: Optional[Dict[str, ToolConfig]] = Field(None, description="启用的工具配置")
-    is_public: Optional[bool] = Field(False, description="是否公开")
 
 
 # 创建Agent时的请求
@@ -38,14 +35,11 @@ class AgentCreate(AgentBase):
 
 # 更新Agent时的请求
 class AgentUpdate(BaseModel):
-    name: Optional[str] = None
-    avatar_url: Optional[str] = None
     system_prompt: Optional[str] = None
     model: Optional[str] = None
     max_memory: Optional[int] = None
     model_settings: Optional[Dict[str, Any]] = None
     tools_enabled: Optional[Dict[str, Any]] = None
-    is_public: Optional[bool] = None
 
 
 # 返回Agent详情
@@ -62,10 +56,7 @@ class AgentInDB(AgentBase):
 # 返回Agent列表
 class AgentListResponse(BaseModel):
     id: int
-    name: str
-    avatar_url: Optional[str] = None
     model: str
-    is_public: bool
     created_at: datetime
     user_id: int
 

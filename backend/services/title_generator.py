@@ -19,19 +19,22 @@ client = AsyncOpenAI(
     base_url=base_url
 )
 
-async def generate_title_with_ai(conversation_id: int, user_message: str) -> str:
+async def generate_title_with_ai(session_id: int, user_message: str) -> str:
     """
-    调用AI模型生成会话的标题
+    使用AI为聊天会话生成标题
     
     Args:
-        conversation_id: 会话ID
-        user_message: 用户输入的消息内容
+        session_id: 会话ID
+        user_message: 用户消息内容
     
     Returns:
         str: 生成的标题
+        
+    Raises:
+        Exception: 当AI请求失败时抛出异常
     """
     try:
-        api_logger.info(f"开始调用AI生成会话标题, 会话ID: {conversation_id}")
+        api_logger.info(f"开始调用AI生成会话标题, 会话ID: {session_id}")
         
         # 构建消息
         messages = [
@@ -57,7 +60,7 @@ async def generate_title_with_ai(conversation_id: int, user_message: str) -> str
         if len(title) > 20:
             title = title[:20] + "..."
             
-        api_logger.info(f"AI生成标题成功: {title}, 会话ID: {conversation_id}")
+        api_logger.info(f"AI生成标题成功: {title}, 会话ID: {session_id}")
         return title
         
     except Exception as e:

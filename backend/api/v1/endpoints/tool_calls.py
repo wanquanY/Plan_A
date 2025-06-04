@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
@@ -28,38 +28,44 @@ async def get_message_tool_calls(
     
     tool_calls = await get_tool_calls_by_message(db, message_id)
     
-    # 验证权限：检查消息是否属于当前用户
+    # 验证权限
     if tool_calls:
-        # 通过第一个工具调用获取会话信息来验证权限
-        chat = await get_chat(db, tool_calls[0].conversation_id)
+        chat = await get_chat(db, tool_calls[0].session_id)
         if not chat or chat.user_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="无权访问此消息的工具调用记录"
+                detail="您没有权限访问这些工具调用记录"
             )
     
     return tool_calls
 
 
-@router.get("/conversation/{conversation_id}", response_model=List[ToolCallHistoryResponse])
+@router.get("/conversation/{session_id}", response_model=List[ToolCallHistoryResponse])
 async def get_conversation_tool_calls(
-    conversation_id: int,
-    limit: int = 50,
+    session_id: int,
+    limit: int = Query(50, ge=1, le=100, description="返回记录数量限制"),
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user)
 ):
-    """获取指定会话的所有工具调用记录"""
-    api_logger.info(f"获取会话工具调用记录: conversation_id={conversation_id}, user_id={current_user.id}")
+    """获取指定会话的工具调用记录"""
+    api_logger.info(f"获取会话工具调用记录: session_id={session_id}, user_id={current_user.id}")
     
-    # 验证权限：检查会话是否属于当前用户
-    chat = await get_chat(db, conversation_id)
-    if not chat or chat.user_id != current_user.id:
+    # 验证会话权限
+    chat = await get_chat(db, session_id)
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="无权访问此会话的工具调用记录"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="会话不存在"
         )
     
-    tool_calls = await get_tool_calls_by_conversation(db, conversation_id, limit)
+    if chat.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="您没有权限访问此会话"
+        )
+    
+    tool_calls = await get_tool_calls_by_conversation(db, session_id, limit)
+    
     return tool_calls
 
 
@@ -79,12 +85,12 @@ async def get_tool_call_detail(
             detail="工具调用记录不存在"
         )
     
-    # 验证权限：检查会话是否属于当前用户
-    chat = await get_chat(db, tool_call.conversation_id)
+    # 验证权限
+    chat = await get_chat(db, tool_call.session_id)
     if not chat or chat.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="无权访问此工具调用记录"
+            detail="您没有权限删除此工具调用记录"
         )
     
     return tool_call 

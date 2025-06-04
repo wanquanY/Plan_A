@@ -19,7 +19,7 @@ from backend.services.chat import (
 )
 from backend.crud.chat import (
     get_user_chats, get_chat, create_chat, update_chat_title, 
-    soft_delete_chat, get_chat_messages, get_latest_chat, soft_delete_messages_after, add_message
+    soft_delete_chat, get_chat_messages, get_latest_chat, soft_delete_messages_after, add_message, update_message_content
 )
 from backend.crud.note_session import note_session
 from backend.core.response import SuccessResponse
@@ -45,10 +45,10 @@ async def chat(
     """
     api_logger.info(f"用户请求聊天: {current_user.username}, 请求ID: {getattr(request.state, 'request_id', '')}")
     
-    # 特殊处理：如果conversation_id为0，视为创建新会话
-    if chat_request.conversation_id == 0:
+    # 特殊处理：如果session_id为0，视为创建新会话
+    if chat_request.session_id == 0:
         api_logger.info(f"用户请求创建新会话: {current_user.username}")
-        chat_request.conversation_id = None
+        chat_request.session_id = None
         
         # 如果提供了note_id，检查是否需要关联到笔记
         if chat_request.note_id:
@@ -81,8 +81,8 @@ async def chat(
         if agent:
             agent_info = {
                 "id": agent.id,
-                "name": agent.name,
-                "avatar_url": agent.avatar_url,
+                "name": "AI助手",  # 使用默认显示名称
+                "avatar_url": None,  # 移除avatar_url字段访问
                 "model": agent.model
             }
     
@@ -94,7 +94,7 @@ async def chat(
     )
     
     # 如果是新创建的会话，并且存在笔记ID，将会话关联到笔记
-    if chat_request.note_id and response.conversation_id:
+    if chat_request.note_id and response.session_id:
         from backend.models.note import Note
         
         # 验证笔记存在且属于当前用户
@@ -115,13 +115,25 @@ async def chat(
             await note_session.create_note_session_link(
                 db, 
                 note_id=chat_request.note_id, 
-                session_id=response.conversation_id,
+                session_id=response.session_id,
                 is_primary=is_primary
             )
             
-            api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {response.conversation_id}，是否为主要会话: {is_primary}")
+            api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {response.session_id}，是否为主要会话: {is_primary}")
+            
+            # 验证关联是否真的被创建
+            verification_sessions = await note_session.get_sessions_by_note(db, chat_request.note_id)
+            verification_session_ids = [s.id for s in verification_sessions]
+            api_logger.info(f"验证笔记 {chat_request.note_id} 关联的会话列表: {verification_session_ids}")
+            
+            if response.session_id in verification_session_ids:
+                api_logger.info(f"✅ 笔记 {chat_request.note_id} 与会话 {response.session_id} 关联创建成功")
+            else:
+                api_logger.error(f"❌ 笔记 {chat_request.note_id} 与会话 {response.session_id} 关联创建失败！")
+        else:
+            api_logger.warning(f"笔记ID {chat_request.note_id} 不存在或不属于用户 {current_user.id}")
     
-    api_logger.info(f"聊天请求完成: {current_user.username}, 会话ID: {response.conversation_id}")
+    api_logger.info(f"聊天请求完成: {current_user.username}, 会话ID: {response.session_id}")
     
     # 将Pydantic模型转换为dict，确保可JSON序列化
     response_dict = {
@@ -129,7 +141,7 @@ async def chat(
             "content": response.message.content
         },
         "usage": response.usage,
-        "conversation_id": response.conversation_id,
+        "session_id": response.session_id,
         "agent_id": agent_id,
         "agent_info": agent_info
     }
@@ -203,7 +215,7 @@ async def test_openai_api(
     )
 
 
-@router.post("/chat/stream")
+@router.post("/stream")
 async def stream_chat(
     request: Request,
     chat_request: ChatRequest,
@@ -215,12 +227,21 @@ async def stream_chat(
     """
     api_logger.info(f"用户请求流式聊天: {current_user.username}, 请求ID: {getattr(request.state, 'request_id', '')}")
     
-    # 特殊处理：如果conversation_id为0，视为创建新会话
+    # 🔍 添加详细的请求参数日志
+    api_logger.info(f"🔍 流式聊天请求参数详情:")
+    api_logger.info(f"   - content: {chat_request.content[:50]}..." if len(chat_request.content) > 50 else f"   - content: {chat_request.content}")
+    api_logger.info(f"   - session_id: {chat_request.session_id} (类型: {type(chat_request.session_id)})")
+    api_logger.info(f"   - note_id: {chat_request.note_id} (类型: {type(chat_request.note_id)})")
+    api_logger.info(f"   - agent_id: {chat_request.agent_id}")
+    api_logger.info(f"   - model: {chat_request.model}")
+    api_logger.info(f"   - stream: {chat_request.stream}")
+    
+    # 特殊处理：如果session_id为0，视为创建新会话
     create_new_session = False
     note_id = None
-    if chat_request.conversation_id == 0:
+    if chat_request.session_id == 0:
         api_logger.info(f"用户请求创建新流式会话: {current_user.username}")
-        chat_request.conversation_id = None
+        chat_request.session_id = None
         create_new_session = True
         
         # 如果提供了note_id，记录下来
@@ -254,8 +275,8 @@ async def stream_chat(
         if agent:
             agent_info = {
                 "id": agent.id,
-                "name": agent.name,
-                "avatar_url": agent.avatar_url,
+                "name": "AI助手",  # 使用默认显示名称
+                "avatar_url": None,  # 移除avatar_url字段访问
                 "model": agent.model
             }
     
@@ -264,7 +285,7 @@ async def stream_chat(
         try:
             # 跟踪生成的完整内容
             full_content = ""
-            conversation_id = None  # 将在流中获取
+            session_id = None  # 将在流中获取
             request_id = getattr(request.state, "request_id", None)
             first_chunk = True  # 标记是否是第一个数据块
             
@@ -276,15 +297,17 @@ async def stream_chat(
                 # 预创建会话
                 chat_data = ChatCreate(title="新对话")
                 new_chat = await create_chat(db, current_user.id, chat_data=chat_data, agent_id=agent_id)
-                conversation_id = new_chat.id
+                session_id = new_chat.id
                 
                 # 更新请求中的会话ID
-                chat_request.conversation_id = conversation_id
+                chat_request.session_id = session_id
                 
-                api_logger.info(f"预创建新会话: conversation_id={conversation_id}")
+                api_logger.info(f"预创建新会话: session_id={session_id}")
                 
                 # 如果有笔记ID，立即关联到会话
                 if note_id:
+                    api_logger.info(f"🔍 开始处理笔记关联: note_id={note_id}, session_id={session_id}")
+                    
                     from backend.models.note import Note
                     from sqlalchemy import select
                     
@@ -296,20 +319,40 @@ async def stream_chat(
                     note_result = await db.execute(note_stmt)
                     note = note_result.scalar_one_or_none()
                     
+                    api_logger.info(f"🔍 笔记查询结果: {'找到笔记' if note else '笔记不存在'}")
+                    
                     if note:
+                        api_logger.info(f"🔍 笔记详情: id={note.id}, title={note.title}, user_id={note.user_id}")
+                        
                         # 使用新的多对多关联方式
                         # 检查是否已有主要会话，如果没有则设为主要会话
                         existing_primary = await note_session.get_primary_session_by_note(db, note_id)
                         is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
                         
+                        api_logger.info(f"🔍 现有主要会话: {existing_primary}, 新会话是否为主要: {is_primary}")
+                        
                         await note_session.create_note_session_link(
                             db, 
                             note_id=note_id, 
-                            session_id=conversation_id,
+                            session_id=session_id,
                             is_primary=is_primary
                         )
                         
-                        api_logger.info(f"笔记ID {note_id} 已关联到预创建会话ID {conversation_id}，是否为主要会话: {is_primary}")
+                        api_logger.info(f"🔍 笔记ID {note_id} 已关联到预创建会话ID {session_id}，是否为主要会话: {is_primary}")
+                        
+                        # 验证关联是否真的被创建
+                        verification_sessions = await note_session.get_sessions_by_note(db, note_id)
+                        verification_session_ids = [s.id for s in verification_sessions]
+                        api_logger.info(f"🔍 验证笔记 {note_id} 关联的会话列表: {verification_session_ids}")
+                        
+                        if session_id in verification_session_ids:
+                            api_logger.info(f"✅ 笔记 {note_id} 与会话 {session_id} 关联创建成功")
+                        else:
+                            api_logger.error(f"❌ 笔记 {note_id} 与会话 {session_id} 关联创建失败！")
+                    else:
+                        api_logger.warning(f"🔍 笔记ID {note_id} 不存在或不属于用户 {current_user.id}")
+                else:
+                    api_logger.info("没有提供笔记ID，跳过笔记关联")
             
             async for chunk_data in generate_chat_stream(
                 chat_request=chat_request,
@@ -323,65 +366,52 @@ async def stream_chat(
                 
                 if isinstance(chunk_data, tuple):
                     if len(chunk_data) == 4:
-                        # 四元组：(content, conversation_id, reasoning_content, tool_status)
-                        content, stream_conversation_id, reasoning_content, tool_status = chunk_data
-                        if stream_conversation_id and conversation_id is None:
-                            conversation_id = stream_conversation_id
+                        # 四元组：(content, session_id, reasoning_content, tool_status)
+                        content, stream_session_id, reasoning_content, tool_status = chunk_data
+                        if stream_session_id and session_id is None:
+                            session_id = stream_session_id
                     elif len(chunk_data) == 3:
-                        # 三元组处理
+                        # 三元组：(content, reasoning_content, tool_status) 或 (content, session_id, reasoning_content/tool_status)
                         first, second, third = chunk_data
                         if isinstance(second, int):
-                            # (content, conversation_id, reasoning_content) 或 (content, conversation_id, tool_status)
-                            if isinstance(third, str):
-                                # (content, conversation_id, reasoning_content)
-                                content, stream_conversation_id, reasoning_content = first, second, third
-                            elif isinstance(third, dict) and third.get("type") in ["tool_call_executing", "tool_call_completed", "tool_call_error", "tools_completed"]:
-                                # (content, conversation_id, tool_status)
-                                content, stream_conversation_id, tool_status = first, second, third
-                            else:
-                                # 默认处理为 (content, conversation_id, tool_status)
-                                content, stream_conversation_id, tool_status = first, second, third
+                            # 格式：(content, session_id, reasoning_content/tool_status)
+                            content = first
+                            stream_session_id = second
+                            if stream_session_id and session_id is None:
+                                session_id = stream_session_id
                             
-                            if stream_conversation_id and conversation_id is None:
-                                conversation_id = stream_conversation_id
+                            # 判断第三个参数类型
+                            if isinstance(third, dict):
+                                tool_status = third
+                            else:
+                                reasoning_content = third or ""
                         else:
-                            # 如果第二个参数不是int，那很可能是错误的数据格式
-                            # 记录警告并按照原来的逻辑处理
-                            api_logger.warning(f"检测到异常的三元组格式: first={type(first)}, second={type(second)}, third={type(third)}")
-                            # 保守处理：只取第一个作为content
+                            # 格式：(content, reasoning_content, tool_status)
                             content = first
+                            reasoning_content = second or ""
+                            if isinstance(third, dict):
+                                tool_status = third
                     elif len(chunk_data) == 2:
-                        # 二元组：可能是 (content, conversation_id) 或 (content, reasoning_content)
+                        # 二元组：(content, session_id) 或 (content, reasoning_content)
                         first, second = chunk_data
+                        content = first
                         if isinstance(second, int):
-                            # (content, conversation_id)
-                            content, stream_conversation_id = first, second
-                            if stream_conversation_id and conversation_id is None:
-                                conversation_id = stream_conversation_id
-                        elif isinstance(second, str):
-                            # (content, reasoning_content) - reasoning_content应该是字符串
-                            content, reasoning_content = first, second
-                        elif isinstance(second, dict) and second.get("type") in ["tool_call_executing", "tool_call_completed", "tool_call_error", "tools_completed"]:
-                            # 这应该是工具状态被错误地当作reasoning_content的情况
-                            # 实际上应该是 (content, tool_status)，但这种格式不应该存在
-                            # 记录日志并将其当作tool_status处理
-                            api_logger.warning(f"检测到可能的数据格式错误：工具状态被放在二元组的第二位: {second}")
-                            content = first
-                            tool_status = second
+                            stream_session_id = second
+                            if stream_session_id and session_id is None:
+                                session_id = stream_session_id
                         else:
-                            # 其他情况，当作reasoning_content处理，但转换为字符串
-                            content, reasoning_content = first, str(second)
+                            reasoning_content = second or ""
                 else:
                     # 单个内容
                     content = chunk_data
                 
+                # 确保reasoning_content是字符串
+                if reasoning_content and not isinstance(reasoning_content, str):
+                    reasoning_content = str(reasoning_content)
+                
                 # 累积内容
                 if content:
                     full_content += content
-                if reasoning_content:
-                    # 可以选择是否将思考内容也累积到完整内容中
-                    # 这里单独记录但不加入到最终显示内容中
-                    pass
                 
                 # 如果有工具状态信息，发送工具状态事件
                 if tool_status:
@@ -393,7 +423,7 @@ async def stream_chat(
                                 "content": ""
                             },
                             "full_content": full_content,
-                            "conversation_id": conversation_id or 0,
+                            "session_id": session_id or 0,
                             "done": False,
                             "tool_status": tool_status,
                             "agent_info": agent_info
@@ -407,11 +437,6 @@ async def stream_chat(
                 
                 # 如果有内容，发送内容事件
                 if content or reasoning_content:
-                    # 确保reasoning_content是字符串类型
-                    if reasoning_content and not isinstance(reasoning_content, str):
-                        api_logger.warning(f"reasoning_content不是字符串类型: {type(reasoning_content)}, 内容: {reasoning_content}")
-                        reasoning_content = ""  # 重置为空字符串
-                    
                     # 构造响应数据
                     response_data = {
                         "code": 200,
@@ -422,7 +447,7 @@ async def stream_chat(
                                 "reasoning_content": reasoning_content  # 添加思考内容字段
                             },
                             "full_content": full_content,
-                            "conversation_id": conversation_id or 0,
+                            "session_id": session_id or 0,
                             "done": False,
                             "agent_info": agent_info
                         },
@@ -442,7 +467,7 @@ async def stream_chat(
                         "content": ""
                     },
                     "full_content": full_content,
-                    "conversation_id": conversation_id or 0,
+                    "session_id": session_id or 0,
                     "done": True,
                     "agent_info": agent_info
                 },
@@ -453,7 +478,7 @@ async def stream_chat(
             
             yield f"data: {json.dumps(final_response_data, ensure_ascii=False)}\n\n"
             
-            api_logger.info(f"流式聊天完成: conversation_id={conversation_id}, content_length={len(full_content)}")
+            api_logger.info(f"流式聊天完成: session_id={session_id}, content_length={len(full_content)}")
             
         except Exception as e:
             api_logger.error(f"流式响应生成失败: {str(e)}", exc_info=True)
@@ -467,7 +492,7 @@ async def stream_chat(
                         "content": f"抱歉，AI助手出错了: {str(e)}"
                     },
                     "full_content": f"抱歉，AI助手出错了: {str(e)}",
-                    "conversation_id": conversation_id or 0,
+                    "session_id": session_id or 0,
                     "done": True,
                     "agent_info": agent_info
                 },
@@ -484,18 +509,18 @@ async def stream_chat(
     )
 
 
-@router.post("/clear-memory/{conversation_id}")
+@router.post("/clear-memory/{session_id}")
 async def clear_chat_memory(
     request: Request,
-    conversation_id: int = Path(..., description="聊天会话ID"),
+    session_id: int = Path(..., description="聊天会话ID"),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     清空指定会话的记忆上下文
     """
-    api_logger.info(f"清空会话记忆: conversation_id={conversation_id}, user={current_user.username}")
+    api_logger.info(f"清空会话记忆: session_id={session_id}, user={current_user.username}")
     
-    await clear_memory(conversation_id)
+    await clear_memory(session_id)
     
     return SuccessResponse(
         data={"success": True},
@@ -568,22 +593,22 @@ async def list_chat_sessions(
     )
 
 
-@router.get("/sessions/{conversation_id}", response_model=ChatResponseModel)
+@router.get("/sessions/{session_id}", response_model=ChatResponseModel)
 async def get_chat_session(
     request: Request,
-    conversation_id: int = Path(..., description="聊天会话ID"),
+    session_id: int = Path(..., description="聊天会话ID"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     获取指定聊天会话的详情和消息
     """
-    api_logger.info(f"获取聊天会话详情: conversation_id={conversation_id}, user={current_user.username}")
+    api_logger.info(f"获取聊天会话详情: session_id={session_id}, user={current_user.username}")
     
     # 验证会话是否属于当前用户
-    chat = await get_chat(db, conversation_id)
+    chat = await get_chat(db, session_id)
     if not chat or chat.user_id != current_user.id:
-        api_logger.warning(f"聊天会话不存在或无权访问: conversation_id={conversation_id}, user={current_user.username}")
+        api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
         return SuccessResponse(
             data=None,
             msg="聊天会话不存在或无权访问",
@@ -591,7 +616,7 @@ async def get_chat_session(
         )
     
     # 获取会话的消息列表
-    chat_messages = await get_chat_messages(db, conversation_id)
+    chat_messages = await get_chat_messages(db, session_id)
     
     # 构建消息列表，包含工具调用信息
     messages = []
@@ -712,6 +737,18 @@ async def create_chat_session(
                 )
                 
                 api_logger.info(f"笔记ID {chat_data.note_id} 已关联到会话ID {new_chat.id}，是否为主要会话: {is_primary}")
+                
+                # 验证关联是否真的被创建
+                verification_sessions = await note_session.get_sessions_by_note(db, chat_data.note_id)
+                verification_session_ids = [s.id for s in verification_sessions]
+                api_logger.info(f"验证笔记 {chat_data.note_id} 关联的会话列表: {verification_session_ids}")
+                
+                if new_chat.id in verification_session_ids:
+                    api_logger.info(f"✅ 笔记 {chat_data.note_id} 与会话 {new_chat.id} 关联创建成功")
+                else:
+                    api_logger.error(f"❌ 笔记 {chat_data.note_id} 与会话 {new_chat.id} 关联创建失败！")
+            else:
+                api_logger.warning(f"笔记ID {chat_data.note_id} 不存在或不属于用户 {current_user.id}")
         
         return SuccessResponse(
             data={
@@ -728,10 +765,10 @@ async def create_chat_session(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/sessions/{conversation_id}", response_model=ChatResponseModel)
+@router.put("/sessions/{session_id}", response_model=ChatResponseModel)
 async def update_chat_session(
     request: Request,
-    conversation_id: int = Path(..., description="聊天会话ID"),
+    session_id: int = Path(..., description="聊天会话ID"),
     chat_data: ChatUpdate = Body(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -739,12 +776,12 @@ async def update_chat_session(
     """
     更新聊天会话信息
     """
-    api_logger.info(f"更新聊天会话: conversation_id={conversation_id}, user={current_user.username}")
+    api_logger.info(f"更新聊天会话: session_id={session_id}, user={current_user.username}")
     
     # 验证会话存在且属于当前用户
-    chat = await get_chat(db, conversation_id)
+    chat = await get_chat(db, session_id)
     if not chat or chat.user_id != current_user.id:
-        api_logger.warning(f"聊天会话不存在或无权访问: conversation_id={conversation_id}, user={current_user.username}")
+        api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
         return SuccessResponse(
             data=None,
             msg="聊天会话不存在或无权访问",
@@ -752,7 +789,7 @@ async def update_chat_session(
         )
     
     # 更新标题
-    updated_chat = await update_chat_title(db, conversation_id, chat_data.title)
+    updated_chat = await update_chat_title(db, session_id, chat_data.title)
     
     result = {
         "id": updated_chat.id,
@@ -770,22 +807,22 @@ async def update_chat_session(
     )
 
 
-@router.delete("/sessions/{conversation_id}")
+@router.delete("/sessions/{session_id}")
 async def delete_chat_session(
     request: Request,
-    conversation_id: int = Path(..., description="聊天会话ID"),
+    session_id: int = Path(..., description="聊天会话ID"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     删除聊天会话
     """
-    api_logger.info(f"删除聊天会话: conversation_id={conversation_id}, user={current_user.username}")
+    api_logger.info(f"删除聊天会话: session_id={session_id}, user={current_user.username}")
     
     # 验证会话存在且属于当前用户
-    chat = await get_chat(db, conversation_id)
+    chat = await get_chat(db, session_id)
     if not chat or chat.user_id != current_user.id:
-        api_logger.warning(f"聊天会话不存在或无权访问: conversation_id={conversation_id}, user={current_user.username}")
+        api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
         return SuccessResponse(
             data=None,
             msg="聊天会话不存在或无权访问",
@@ -793,7 +830,7 @@ async def delete_chat_session(
         )
     
     # 软删除会话
-    success = await soft_delete_chat(db, conversation_id)
+    success = await soft_delete_chat(db, session_id)
     
     return SuccessResponse(
         data={"success": success},
@@ -842,23 +879,23 @@ async def check_memory_health(
     )
 
 
-@router.get("/memory/{conversation_id}")
+@router.get("/memory/{session_id}")
 async def get_memory_content(
     request: Request,
-    conversation_id: int = Path(..., description="聊天会话ID"),
+    session_id: int = Path(..., description="聊天会话ID"),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     获取指定会话在Redis中的记忆内容
     """
-    api_logger.info(f"获取会话记忆内容: conversation_id={conversation_id}, user={current_user.username}")
+    api_logger.info(f"获取会话记忆内容: session_id={session_id}, user={current_user.username}")
     
     try:
         # 获取会话基本信息（验证用户权限）
-        chat = await get_chat(db, conversation_id)
+        chat = await get_chat(db, session_id)
         if not chat or chat.user_id != current_user.id:
-            api_logger.warning(f"聊天会话不存在或无权访问: conversation_id={conversation_id}, user={current_user.username}")
+            api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
             return SuccessResponse(
                 data=None,
                 msg="聊天会话不存在或无权访问",
@@ -866,7 +903,7 @@ async def get_memory_content(
             )
         
         # 获取会话记忆内容
-        messages = memory_service.get_messages(conversation_id)
+        messages = memory_service.get_messages(session_id)
         
         # 计算记忆统计信息
         stats = {
@@ -877,7 +914,7 @@ async def get_memory_content(
         }
         
         result = {
-            "conversation_id": conversation_id,
+            "session_id": session_id,
             "memory_exists": len(messages) > 0,
             "messages": messages,
             "stats": stats
@@ -949,23 +986,23 @@ async def get_all_memory_stats(
         )
 
 
-@router.post("/restore-memory/{conversation_id}")
+@router.post("/restore-memory/{session_id}")
 async def restore_chat_memory(
     request: Request,
-    conversation_id: int = Path(..., description="聊天会话ID"),
+    session_id: int = Path(..., description="聊天会话ID"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
     从数据库恢复指定会话的记忆上下文到Redis
     """
-    api_logger.info(f"恢复会话记忆: conversation_id={conversation_id}, user={current_user.username}")
+    api_logger.info(f"恢复会话记忆: session_id={session_id}, user={current_user.username}")
     
     try:
         # 验证会话存在且属于当前用户
-        chat = await get_chat(db, conversation_id)
+        chat = await get_chat(db, session_id)
         if not chat or chat.user_id != current_user.id:
-            api_logger.warning(f"聊天会话不存在或无权访问: conversation_id={conversation_id}, user={current_user.username}")
+            api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
             return SuccessResponse(
                 data={"success": False, "message": "聊天会话不存在或无权访问"},
                 msg="恢复会话记忆失败",
@@ -974,10 +1011,10 @@ async def restore_chat_memory(
         
         try:
             # 查询历史消息
-            db_messages = await get_chat_messages(db, conversation_id)
+            db_messages = await get_chat_messages(db, session_id)
             
             # 清除现有记忆
-            memory_service.clear_memory(conversation_id)
+            memory_service.clear_memory(session_id)
             
             # 格式化消息并恢复到Redis
             formatted_messages = [
@@ -990,7 +1027,7 @@ async def restore_chat_memory(
             memory_count = memory_service.count_user_memories(current_user.id)
             
             # 恢复记忆，传递用户ID进行管理
-            restored = memory_service.restore_memory_from_db(conversation_id, formatted_messages, current_user.id)
+            restored = memory_service.restore_memory_from_db(session_id, formatted_messages, current_user.id)
             
             if restored:
                 return SuccessResponse(
@@ -1089,10 +1126,10 @@ async def get_user_memory_sessions(
         )
 
 
-@router.post("/ask-again/{conversation_id}")
+@router.post("/ask-again/{session_id}")
 async def ask_again(
     request: Request,
-    conversation_id: int = Path(..., description="聊天会话ID"),
+    session_id: int = Path(..., description="聊天会话ID"),
     ask_request: AskAgainRequest = Body(..., description="重新提问请求"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -1105,14 +1142,14 @@ async def ask_again(
     2. 仅编辑用户输入不重新执行(is_user_message=True, rerun=False)
     3. 编辑AI回复(is_user_message=False)
     """
-    api_logger.info(f"用户请求编辑消息: conversation_id={conversation_id}, message_index={ask_request.message_index}, " +
+    api_logger.info(f"用户请求编辑消息: session_id={session_id}, message_index={ask_request.message_index}, " +
                    f"is_user_message={ask_request.is_user_message}, rerun={ask_request.rerun}, user={current_user.username}")
     
     try:
         # 验证会话存在且属于当前用户
-        chat = await get_chat(db, conversation_id)
+        chat = await get_chat(db, session_id)
         if not chat or chat.user_id != current_user.id:
-            api_logger.warning(f"聊天会话不存在或无权访问: conversation_id={conversation_id}, user={current_user.username}")
+            api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
             return SuccessResponse(
                 data=None,
                 msg="聊天会话不存在或无权访问",
@@ -1120,7 +1157,7 @@ async def ask_again(
             )
             
         # 获取消息列表，验证消息ID是否存在
-        db_messages = await get_chat_messages(db, conversation_id)
+        db_messages = await get_chat_messages(db, session_id)
         db_message_ids = [msg.id for msg in db_messages]
         
         # 查找指定消息在数据库中的角色
@@ -1149,11 +1186,11 @@ async def ask_again(
             # 是数据库消息ID，找出它在聊天中的位置
             message_position = db_message_ids.index(ask_request.message_index)
             # 获取当前Redis中的记忆状态，查看消息数是否匹配
-            memory_messages = memory_service.get_messages(conversation_id)
+            memory_messages = memory_service.get_messages(session_id)
             
             # 检查Redis中的记忆是否存在或是否有足够的消息
             if not memory_messages or len(memory_messages) == 0:
-                api_logger.warning(f"会话 {conversation_id} 在Redis中没有记忆，尝试恢复记忆")
+                api_logger.warning(f"会话 {session_id} 在Redis中没有记忆，尝试恢复记忆")
                 
                 # 尝试将数据库消息恢复到Redis
                 formatted_messages = [
@@ -1162,7 +1199,7 @@ async def ask_again(
                     if not msg.is_deleted
                 ]
                 
-                restored = memory_service.restore_memory_from_db(conversation_id, formatted_messages, current_user.id)
+                restored = memory_service.restore_memory_from_db(session_id, formatted_messages, current_user.id)
                 if not restored:
                     return SuccessResponse(
                         data={"success": False},
@@ -1171,7 +1208,7 @@ async def ask_again(
                     )
                 
                 # 重新获取Redis中的消息
-                memory_messages = memory_service.get_messages(conversation_id)
+                memory_messages = memory_service.get_messages(session_id)
             
             # 如果Redis中的消息数量与数据库不一致，使用消息对应的比例位置
             if len(memory_messages) != len(db_messages):
@@ -1192,28 +1229,43 @@ async def ask_again(
             # 根据操作类型处理不同情况
             if ask_request.is_user_message:  # 编辑用户消息
                 if ask_request.rerun:  # 需要重新执行
-                    # 记录要删除的消息数量（编辑点之后的所有消息）
+                    # 记录要删除的消息数量
                     messages_to_remove = len(memory_messages) - memory_index if memory_index < len(memory_messages) else 0
                     
-                    # 替换消息并截断该消息之后的所有记忆
+                    # 替换消息并截断
                     if not ask_request.content:
                         # 如果没有提供新内容，使用原消息内容
                         original_content = db_messages[message_position].content
-                        result = await replace_message_and_truncate(conversation_id, memory_index, original_content, target_role)
+                        result = await replace_message_and_truncate(session_id, memory_index, original_content, target_role)
                     else:
-                        # 使用新的内容替换
-                        result = await replace_message_and_truncate(conversation_id, memory_index, ask_request.content, target_role)
+                        result = await replace_message_and_truncate(session_id, memory_index, ask_request.content, target_role)
+                    
+                    # 更新数据库中的消息内容
+                    if ask_request.content and memory_index < len(db_messages):
+                        corresponding_db_message_id = db_messages[memory_index].id
+                        db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                        if db_update_success:
+                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                        else:
+                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
                 else:  # 仅编辑不重新执行
                     # 不需要截断记忆，仅替换指定消息内容
-                    result = memory_service.update_message_content(
-                        conversation_id, 
-                        memory_index, 
-                        ask_request.content or db_messages[message_position].content
-                    )
+                    new_content = ask_request.content or db_messages[message_position].content
+                    result = memory_service.update_message_content(session_id, memory_index, new_content)
+                    messages_to_remove = 0
+                    
+                    # 更新数据库中的消息内容
+                    if ask_request.content and memory_index < len(db_messages):
+                        corresponding_db_message_id = db_messages[memory_index].id
+                        db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                        if db_update_success:
+                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                        else:
+                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
             else:  # 编辑AI回复
                 # 找到AI回复消息的位置
                 if target_role != "assistant":
-                    api_logger.warning(f"尝试编辑非AI回复消息: message_id={ask_request.message_index}, role={target_role}")
+                    api_logger.warning(f"尝试编辑非AI回复消息: message_index={ask_request.message_index}, role={target_role}")
                     return SuccessResponse(
                         data={"success": False},
                         msg="只能编辑AI回复消息",
@@ -1221,15 +1273,22 @@ async def ask_again(
                     )
                 
                 # 仅编辑内容，不重新执行
-                result = memory_service.update_message_content(
-                    conversation_id, 
-                    memory_index, 
-                    ask_request.content or db_messages[message_position].content
-                )
+                new_content = ask_request.content or db_messages[message_position].content
+                result = memory_service.update_message_content(session_id, memory_index, new_content)
+                messages_to_remove = 0
+                
+                # 更新数据库中的消息内容
+                if ask_request.content and memory_index < len(db_messages):
+                    corresponding_db_message_id = db_messages[memory_index].id
+                    db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                    if db_update_success:
+                        api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                    else:
+                        api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
         else:
             # 直接作为记忆索引使用
             api_logger.info(f"直接使用 {ask_request.message_index} 作为记忆索引")
-            memory_messages = memory_service.get_messages(conversation_id)
+            memory_messages = memory_service.get_messages(session_id)
             
             # 检查记忆索引是否有效
             if ask_request.message_index < 0 or ask_request.message_index >= len(memory_messages):
@@ -1262,14 +1321,32 @@ async def ask_again(
                     if not ask_request.content:
                         # 如果没有提供新内容，使用原消息内容
                         original_content = memory_messages[ask_request.message_index]["content"]
-                        result = await replace_message_and_truncate(conversation_id, ask_request.message_index, original_content, target_role)
+                        result = await replace_message_and_truncate(session_id, ask_request.message_index, original_content, target_role)
                     else:
-                        result = await replace_message_and_truncate(conversation_id, ask_request.message_index, ask_request.content, target_role)
+                        result = await replace_message_and_truncate(session_id, ask_request.message_index, ask_request.content, target_role)
+                    
+                    # 更新数据库中的消息内容
+                    if ask_request.content and ask_request.message_index < len(db_messages):
+                        corresponding_db_message_id = db_messages[ask_request.message_index].id
+                        db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                        if db_update_success:
+                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                        else:
+                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
                 else:  # 仅编辑不重新执行
                     # 不需要截断记忆，仅替换指定消息内容
                     new_content = ask_request.content or memory_messages[ask_request.message_index]["content"]
-                    result = memory_service.update_message_content(conversation_id, ask_request.message_index, new_content)
+                    result = memory_service.update_message_content(session_id, ask_request.message_index, new_content)
                     messages_to_remove = 0
+                    
+                    # 更新数据库中的消息内容
+                    if ask_request.content and ask_request.message_index < len(db_messages):
+                        corresponding_db_message_id = db_messages[ask_request.message_index].id
+                        db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                        if db_update_success:
+                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                        else:
+                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
             else:  # 编辑AI回复
                 # 检查是否为AI回复消息
                 if target_role != "assistant":
@@ -1282,8 +1359,17 @@ async def ask_again(
                 
                 # 仅编辑内容，不重新执行
                 new_content = ask_request.content or memory_messages[ask_request.message_index]["content"]
-                result = memory_service.update_message_content(conversation_id, ask_request.message_index, new_content)
+                result = memory_service.update_message_content(session_id, ask_request.message_index, new_content)
                 messages_to_remove = 0
+                
+                # 更新数据库中的消息内容
+                if ask_request.content and ask_request.message_index < len(db_messages):
+                    corresponding_db_message_id = db_messages[ask_request.message_index].id
+                    db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                    if db_update_success:
+                        api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                    else:
+                        api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
         
         if not result:
             return SuccessResponse(
@@ -1292,26 +1378,26 @@ async def ask_again(
                 request_id=getattr(request.state, "request_id", None)
             )
         
-        api_logger.info(f"会话 {conversation_id} 已编辑消息" + 
+        api_logger.info(f"会话 {session_id} 已编辑消息" + 
                         (f"并截断记忆，删除 {messages_to_remove} 条后续消息" if messages_to_remove > 0 else ""))
         
         # 如果找到了要操作的数据库消息ID，在需要重新执行时执行软删除操作
         db_deleted_count = 0
         if target_message_id and ask_request.is_user_message and ask_request.rerun:
+            # 在删除后续消息之前，先更新原始消息的内容
+            if ask_request.content:
+                update_success = await update_message_content(db, target_message_id, ask_request.content)
+                if update_success:
+                    api_logger.info(f"已更新原始消息内容: message_id={target_message_id}")
+                else:
+                    api_logger.warning(f"更新原始消息内容失败: message_id={target_message_id}")
+            
             # 软删除指定消息ID之后的所有消息
-            db_deleted_count = await soft_delete_messages_after(db, conversation_id, target_message_id)
+            db_deleted_count = await soft_delete_messages_after(db, session_id, target_message_id)
             api_logger.info(f"已在数据库中软删除 {db_deleted_count} 条消息，从ID {target_message_id} 开始")
         
         # 如果重新执行，并且提供了新内容，则立即发送新消息
         if ask_request.is_user_message and ask_request.rerun and ask_request.content:
-            # 创建聊天请求
-            chat_request = ChatRequest(
-                content=ask_request.content,
-                stream=ask_request.stream,
-                conversation_id=conversation_id,
-                agent_id=ask_request.agent_id
-            )
-            
             # 获取Agent信息
             agent_id = ask_request.agent_id
             agent_info = None
@@ -1322,23 +1408,46 @@ async def ask_again(
                 if agent:
                     agent_info = {
                         "id": agent.id,
-                        "name": agent.name,
-                        "avatar_url": agent.avatar_url,
+                        "name": "AI助手",
+                        "avatar_url": None,
                         "model": agent.model
                     }
             
-            # 如果是流式请求
-            if chat_request.stream:
-                return await stream_chat(request, chat_request, db, current_user)
+            # 如果是流式请求，使用特殊的编辑重新执行处理
+            if ask_request.stream:
+                # 创建修改后的聊天请求，标记为编辑重新执行
+                edit_chat_request = ChatRequest(
+                    content=ask_request.content,
+                    stream=True,
+                    session_id=session_id,
+                    agent_id=ask_request.agent_id
+                )
+                
+                # 添加特殊标记，告诉ChatStreamService跳过用户消息创建
+                edit_chat_request.__dict__['_skip_user_message'] = True
+                
+                api_logger.info(f"编辑重新执行：使用特殊标记跳过用户消息创建")
+                
+                # 直接调用流式聊天处理
+                return await stream_chat(request, edit_chat_request, db, current_user)
             
-            # 非流式请求
+            # 非流式请求的处理
+            # 创建聊天请求
+            chat_request = ChatRequest(
+                content=ask_request.content,
+                stream=False,
+                session_id=session_id,
+                agent_id=ask_request.agent_id
+            )
+            
+            # 调用非流式响应生成
             response = await generate_chat_response(
                 chat_request=chat_request,
                 db=db,
                 user_id=current_user.id
             )
             
-            api_logger.info(f"编辑并重新发送消息完成: {current_user.username}, 会话ID: {response.conversation_id}")
+            api_logger.info(f"编辑并重新发送消息完成: {current_user.username}, 会话ID: {response.session_id}")
             
             # 将Pydantic模型转换为dict
             response_dict = {
@@ -1346,7 +1455,7 @@ async def ask_again(
                     "content": response.message.content
                 },
                 "usage": response.usage,
-                "conversation_id": response.conversation_id,
+                "session_id": response.session_id,
                 "messages_removed": messages_to_remove,
                 "db_messages_deleted": db_deleted_count,
                 "agent_id": agent_id,
@@ -1359,7 +1468,6 @@ async def ask_again(
                 request_id=getattr(request.state, "request_id", None)
             )
         
-        # 如果没有需要重新执行，则仅返回编辑结果
         return SuccessResponse(
             data={
                 "success": True, 
@@ -1380,17 +1488,17 @@ async def ask_again(
         )
 
 
-@router.get("/{conversation_id}/history", response_model=List[ChatMessageResponse])
+@router.get("/{session_id}/history", response_model=List[ChatMessageResponse])
 async def get_chat_history_endpoint(
-    conversation_id: int,
+    session_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """获取聊天历史记录"""
-    api_logger.info(f"获取聊天历史: conversation_id={conversation_id}, user_id={current_user.id}")
+    api_logger.info(f"获取聊天历史: session_id={session_id}, user_id={current_user.id}")
     
     # 验证会话存在且属于当前用户
-    chat = await get_chat(db, conversation_id)
+    chat = await get_chat(db, session_id)
     if not chat or chat.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1398,7 +1506,7 @@ async def get_chat_history_endpoint(
         )
     
     # 获取聊天消息
-    messages = await get_chat_messages(db, conversation_id)
+    messages = await get_chat_messages(db, session_id)
     
     # 为每个消息加载工具调用信息
     from backend.crud.tool_call import get_tool_calls_by_message
@@ -1453,19 +1561,19 @@ async def stop_and_save_response(
     api_logger.info(f"收到停止并保存响应请求: {stop_request}, request_id={request_id}")
     
     try:
-        conversation_id = stop_request.get("conversation_id")
+        session_id = stop_request.get("session_id")
         current_content = stop_request.get("current_content", "")
         user_content = stop_request.get("user_content", "")
         agent_id = stop_request.get("agent_id")
         
-        if not conversation_id:
+        if not session_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="缺少会话ID"
             )
         
         # 验证会话是否属于当前用户
-        chat = await get_chat(db, conversation_id)
+        chat = await get_chat(db, session_id)
         if not chat or chat.user_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1484,12 +1592,12 @@ async def stop_and_save_response(
             # 如果提供了用户内容，且会话中还没有用户消息，先保存用户消息
             if user_content.strip():
                 # 检查会话中最新的消息是否是用户消息
-                existing_messages = await get_chat_messages(db, conversation_id)
+                existing_messages = await get_chat_messages(db, session_id)
                 if not existing_messages or existing_messages[-1].role != "user":
                     # 保存用户消息
                     user_message = await add_message(
                         db=db,
-                        conversation_id=conversation_id,
+                        session_id=session_id,
                         role="user",
                         content=user_content,
                         tokens=prompt_tokens,
@@ -1500,14 +1608,14 @@ async def stop_and_save_response(
                     
                     # 添加到记忆服务
                     from backend.services.memory import memory_service
-                    memory_service.add_user_message(conversation_id, user_content, current_user.id)
+                    memory_service.add_user_message(session_id, user_content, current_user.id)
                     
-                    api_logger.info(f"已保存停止时的用户消息: conversation_id={conversation_id}, message_id={user_message.id}")
+                    api_logger.info(f"已保存停止时的用户消息: session_id={session_id}, message_id={user_message.id}")
             
             # 保存Agent的部分响应
             ai_message = await add_message(
                 db=db,
-                conversation_id=conversation_id,
+                session_id=session_id,
                 role="assistant",
                 content=current_content,
                 tokens=tokens,
@@ -1518,9 +1626,9 @@ async def stop_and_save_response(
             
             # 添加到记忆服务
             from backend.services.memory import memory_service
-            memory_service.add_assistant_message(conversation_id, current_content, current_user.id)
+            memory_service.add_assistant_message(session_id, current_content, current_user.id)
             
-            api_logger.info(f"已保存停止时的Agent响应: conversation_id={conversation_id}, message_id={ai_message.id}, content_length={len(current_content)}")
+            api_logger.info(f"已保存停止时的Agent响应: session_id={session_id}, message_id={ai_message.id}, content_length={len(current_content)}")
         elif user_content.strip():
             # 如果只有用户内容没有Agent响应，也要保存用户消息
             from backend.crud.chat import add_message
@@ -1528,12 +1636,12 @@ async def stop_and_save_response(
             prompt_tokens = len(user_content) // 4
             
             # 检查会话中最新的消息是否是用户消息
-            existing_messages = await get_chat_messages(db, conversation_id)
+            existing_messages = await get_chat_messages(db, session_id)
             if not existing_messages or existing_messages[-1].role != "user":
                 # 保存用户消息
                 user_message = await add_message(
                     db=db,
-                    conversation_id=conversation_id,
+                    session_id=session_id,
                     role="user",
                     content=user_content,
                     tokens=prompt_tokens,
@@ -1544,15 +1652,15 @@ async def stop_and_save_response(
                 
                 # 添加到记忆服务
                 from backend.services.memory import memory_service
-                memory_service.add_user_message(conversation_id, user_content, current_user.id)
+                memory_service.add_user_message(session_id, user_content, current_user.id)
                 
-                api_logger.info(f"已保存停止时的用户消息: conversation_id={conversation_id}, message_id={user_message.id}")
+                api_logger.info(f"已保存停止时的用户消息: session_id={session_id}, message_id={user_message.id}")
         
         return {
             "code": 200,
             "msg": "成功保存停止时的响应内容",
             "data": {
-                "conversation_id": conversation_id,
+                "session_id": session_id,
                 "content_saved": len(current_content) > 0,
                 "content_length": len(current_content),
                 "user_content_saved": len(user_content.strip()) > 0

@@ -30,7 +30,7 @@ const routes = [
         component: UserProfile
       },
       {
-        path: 'agent/:id/edit',
+        path: 'agent/edit',
         name: 'EditAgent',
         component: CreateAgent
       }

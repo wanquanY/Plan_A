@@ -15,6 +15,7 @@ from backend.services.openai_client import openai_client_service
 from backend.services.chat_tool_handler import chat_tool_handler
 from backend.services.chat_tool_processor import chat_tool_processor
 from backend.services.chat_session_manager import chat_session_manager
+from backend.crud.note_session import note_session
 
 
 class ChatResponseService:
@@ -32,7 +33,7 @@ class ChatResponseService:
         top_p: float,
         tools: List[Dict[str, Any]],
         has_tools: bool,
-        conversation_id: int,
+        session_id: int,
         db: Optional[AsyncSession] = None,
         message_id: Optional[int] = None,
         interaction_flow: List[Dict[str, Any]] = None,
@@ -61,7 +62,7 @@ class ChatResponseService:
                 tool_calls, 
                 agent, 
                 db, 
-                conversation_id,
+                session_id,
                 message_id=message_id,
                 user_id=user_id
             )
@@ -128,7 +129,7 @@ class ChatResponseService:
                 top_p, 
                 tools, 
                 has_tools, 
-                conversation_id,
+                session_id,
                 db,
                 message_id=message_id
             )
@@ -149,6 +150,7 @@ class ChatResponseService:
     @staticmethod
     async def generate_chat_response(
         chat_request: ChatRequest,
+        session_id: int,
         db: Optional[AsyncSession] = None,
         user_id: Optional[int] = None
     ) -> ChatCompletionResponse:
@@ -159,7 +161,7 @@ class ChatResponseService:
             api_logger.info(f"开始调用OpenAI API, 模型: {openai_client_service.model}, API地址: {openai_client_service.async_client.base_url}")
             
             # 获取或确认聊天会话ID
-            conversation_id = chat_request.conversation_id
+            session_id = session_id
             
             # 获取Agent信息
             agent_id = chat_request.agent_id
@@ -180,12 +182,12 @@ class ChatResponseService:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Agent不存在或无权访问"
                     )
-                api_logger.info(f"使用Agent: {current_agent.name}, ID={current_agent.id}")
+                api_logger.info(f"使用Agent: AI助手, ID={current_agent.id}")
             
             # 会话创建或验证
             if db and user_id:
                 # 获取或创建聊天会话
-                if not conversation_id:
+                if not session_id:
                     # 创建新的聊天会话
                     if hasattr(chat_request, "note_id") and chat_request.note_id:
                         # 查询笔记信息，获取标题
@@ -212,18 +214,42 @@ class ChatResponseService:
                         
                         # 如果创建成功，将会话ID关联到笔记
                         if chat and chat_request.note_id and note:
-                            note.session_id = chat.id
-                            await db.commit()
-                            api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {chat.id}")
+                            # 🔍 使用新的多对多关联方式
+                            api_logger.info(f"🔍 响应服务: 开始处理笔记关联: note_id={chat_request.note_id}, session_id={chat.id}")
+                            
+                            # 检查是否已有主要会话，如果没有则设为主要会话
+                            existing_primary = await note_session.get_primary_session_by_note(db, chat_request.note_id)
+                            is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
+                            
+                            api_logger.info(f"🔍 响应服务: 现有主要会话: {existing_primary}, 新会话是否为主要: {is_primary}")
+                            
+                            await note_session.create_note_session_link(
+                                db, 
+                                note_id=chat_request.note_id, 
+                                session_id=chat.id,
+                                is_primary=is_primary
+                            )
+                            
+                            api_logger.info(f"🔍 响应服务: 笔记ID {chat_request.note_id} 已关联到会话ID {chat.id}，是否为主要会话: {is_primary}")
+                            
+                            # 验证关联是否真的被创建
+                            verification_sessions = await note_session.get_sessions_by_note(db, chat_request.note_id)
+                            verification_session_ids = [s.id for s in verification_sessions]
+                            api_logger.info(f"🔍 响应服务: 验证笔记 {chat_request.note_id} 关联的会话列表: {verification_session_ids}")
+                            
+                            if chat.id in verification_session_ids:
+                                api_logger.info(f"✅ 响应服务: 笔记 {chat_request.note_id} 与会话 {chat.id} 关联创建成功")
+                            else:
+                                api_logger.error(f"❌ 响应服务: 笔记 {chat_request.note_id} 与会话 {chat.id} 关联创建失败！")
                     else:
                         # 常规创建会话
                         chat = await create_chat(db, user_id, agent_id=agent_id)
                         
-                    conversation_id = chat.id
-                    api_logger.info(f"创建新聊天会话: conversation_id={conversation_id}, user_id={user_id}, agent_id={agent_id}")
+                    session_id = chat.id
+                    api_logger.info(f"创建新聊天会话: session_id={session_id}, user_id={user_id}, agent_id={agent_id}")
                 else:
                     # 验证会话存在且属于当前用户
-                    chat = await get_chat(db, conversation_id)
+                    chat = await get_chat(db, session_id)
                     if not chat or chat.user_id != user_id:
                         raise HTTPException(
                             status_code=status.HTTP_404_NOT_FOUND,
@@ -232,15 +258,15 @@ class ChatResponseService:
                     
                     # 如果当前会话没有关联Agent，但请求中有Agent，则更新会话
                     if agent_id and not chat.agent_id:
-                        await update_chat_agent(db, conversation_id=conversation_id, agent_id=agent_id)
-                        api_logger.info(f"更新会话的Agent: conversation_id={conversation_id}, agent_id={agent_id}")
+                        await update_chat_agent(db, session_id=session_id, agent_id=agent_id)
+                        api_logger.info(f"更新会话的Agent: session_id={session_id}, agent_id={agent_id}")
                     
                     # 如果当前会话已关联Agent，使用该Agent的信息
                     elif chat.agent_id and not agent_id:
                         agent_id = chat.agent_id
                         current_agent = await agent_crud.get_agent_by_id(db, agent_id=agent_id)
                         if current_agent:
-                            api_logger.info(f"从会话加载Agent: {current_agent.name}, ID={current_agent.id}")
+                            api_logger.info(f"从会话加载Agent: AI助手, ID={current_agent.id}")
             
             # 获取用户发送的内容
             user_content = chat_request.content
@@ -319,10 +345,10 @@ class ChatResponseService:
                 content_for_memory = user_content
             
             # 将用户消息添加到记忆中（使用纯文本格式）
-            memory_service.add_user_message(conversation_id, content_for_memory, user_id)
+            memory_service.add_user_message(session_id, content_for_memory, user_id)
             
             # 保存用户消息到数据库（保存完整的图片信息）
-            if db and user_id and conversation_id:
+            if db and user_id and session_id:
                 # 构建完整的消息内容，包含图片信息
                 if hasattr(chat_request, 'images') and chat_request.images:
                     # 构建包含图片和文本的完整消息结构
@@ -340,7 +366,7 @@ class ChatResponseService:
                     # 保存JSON格式的完整消息
                     await add_message(
                         db=db,
-                        conversation_id=conversation_id,
+                        session_id=session_id,
                         role="user",
                         content=json.dumps(full_message_content, ensure_ascii=False)
                     )
@@ -349,13 +375,13 @@ class ChatResponseService:
                     # 纯文本消息，直接保存
                     await add_message(
                         db=db,
-                        conversation_id=conversation_id,
+                        session_id=session_id,
                         role="user",
                         content=content_for_memory
                     )
             
             # 从记忆服务获取完整的消息记录
-            messages = memory_service.get_messages(conversation_id)
+            messages = memory_service.get_messages(session_id)
             
             # 如果当前请求包含图片，需要替换最后一条用户消息为包含图片的格式
             if hasattr(chat_request, 'images') and chat_request.images and len(user_message_content) > 1:
@@ -485,10 +511,10 @@ class ChatResponseService:
                     
                     # 先保存AI消息（不包含工具调用数据）
                     ai_message = None
-                    if db and user_id and conversation_id:
+                    if db and user_id and session_id:
                         ai_message = await add_message(
                             db=db,
-                            conversation_id=conversation_id,
+                            session_id=session_id,
                             role="assistant",
                             content=assistant_message.content or "",
                             agent_id=agent_id
@@ -506,7 +532,7 @@ class ChatResponseService:
                         top_p,
                         tools,
                         has_tools,
-                        conversation_id,
+                        session_id,
                         db,
                         ai_message.id if ai_message else None,
                         interaction_flow,
@@ -525,7 +551,7 @@ class ChatResponseService:
                     }
                     
                     # 将最终的助手消息添加到记忆中（使用纯文本）
-                    memory_service.add_assistant_message(conversation_id, final_assistant_content, user_id)
+                    memory_service.add_assistant_message(session_id, final_assistant_content, user_id)
                     
                     # 更新AI消息的内容为JSON结构
                     if ai_message:
@@ -565,13 +591,13 @@ class ChatResponseService:
                     }
                     
                     # 将助手消息添加到记忆中（使用纯文本）
-                    memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
+                    memory_service.add_assistant_message(session_id, assistant_content, user_id)
                     
                     # 如果提供了数据库会话，保存AI回复（使用JSON结构）
-                    if db and user_id and conversation_id:
+                    if db and user_id and session_id:
                         await add_message(
                             db=db,
-                            conversation_id=conversation_id,
+                            session_id=session_id,
                             role="assistant",
                             content=json.dumps(final_json_content, ensure_ascii=False),
                             tokens=token_usage.completion_tokens,
@@ -590,15 +616,15 @@ class ChatResponseService:
                     }
                 
                 # 检查是否需要自动生成标题
-                if db and conversation_id and user_content:
-                    await chat_session_manager.auto_generate_title_if_needed(db, conversation_id, user_content)
+                if db and session_id and user_content:
+                    await chat_session_manager.auto_generate_title_if_needed(db, session_id, user_content)
                 
                 return ChatCompletionResponse(
                     message=Message(
                         content=assistant_content
                     ),
                     usage=token_usage_dict,
-                    conversation_id=conversation_id
+                    session_id=session_id
                 )
             except Exception as api_error:
                 api_logger.error(f"OpenAI API调用出错: {str(api_error)}", exc_info=True)
@@ -622,15 +648,15 @@ class ChatResponseService:
                         assistant_content = assistant_message.content
                         
                         # 将助手消息添加到记忆中
-                        memory_service.add_assistant_message(conversation_id, assistant_content, user_id)
+                        memory_service.add_assistant_message(session_id, assistant_content, user_id)
                         
                         api_logger.info(f"使用默认模型 {openai_client_service.model} 成功, 生成文本长度: {len(assistant_content)}")
                         
                         # 如果提供了数据库会话，保存AI回复
-                        if db and user_id and conversation_id:
+                        if db and user_id and session_id:
                             await add_message(
                                 db=db,
-                                conversation_id=conversation_id,
+                                session_id=session_id,
                                 role="assistant",
                                 content=assistant_content,
                                 tokens=token_usage.completion_tokens,
@@ -640,8 +666,8 @@ class ChatResponseService:
                             )
                         
                         # 检查是否需要自动生成标题
-                        if db and conversation_id and user_content:
-                            await chat_session_manager.auto_generate_title_if_needed(db, conversation_id, user_content)
+                        if db and session_id and user_content:
+                            await chat_session_manager.auto_generate_title_if_needed(db, session_id, user_content)
                         
                         return ChatCompletionResponse(
                             message=Message(
@@ -652,7 +678,7 @@ class ChatResponseService:
                                 "completion_tokens": token_usage.completion_tokens,
                                 "total_tokens": token_usage.total_tokens
                             },
-                            conversation_id=conversation_id
+                            session_id=session_id
                         )
                     except Exception as fallback_error:
                         api_logger.error(f"使用默认模型 {openai_client_service.model} 仍然失败: {str(fallback_error)}", exc_info=True)
@@ -660,17 +686,17 @@ class ChatResponseService:
                 # 创建一个简单的响应，避免进一步的错误
                 error_message = f"AI服务暂时不可用: {str(api_error)}"
                 
-                if db and user_id and conversation_id:
+                if db and user_id and session_id:
                     await add_message(
                         db=db,
-                        conversation_id=conversation_id,
+                        session_id=session_id,
                         role="assistant",
                         content=error_message
                     )
                 
                 # 检查是否需要自动生成标题
-                if db and conversation_id and user_content:
-                    await chat_session_manager.auto_generate_title_if_needed(db, conversation_id, user_content)
+                if db and session_id and user_content:
+                    await chat_session_manager.auto_generate_title_if_needed(db, session_id, user_content)
                 
                 return ChatCompletionResponse(
                     message=Message(
@@ -681,7 +707,7 @@ class ChatResponseService:
                         "completion_tokens": len(error_message),
                         "total_tokens": len(str(messages)) + len(error_message)
                     },
-                    conversation_id=conversation_id
+                    session_id=session_id
                 )
                 
         except Exception as e:
@@ -690,11 +716,11 @@ class ChatResponseService:
             # 创建一个简单的响应，避免进一步的错误
             error_message = f"AI服务发生错误: {str(e)}"
             
-            if db and user_id and conversation_id:
+            if db and user_id and session_id:
                 try:
                     await add_message(
                         db=db,
-                        conversation_id=conversation_id,
+                        session_id=session_id,
                         role="assistant",
                         content=error_message
                     )
@@ -702,8 +728,8 @@ class ChatResponseService:
                     api_logger.error(f"保存错误信息到数据库失败: {str(db_error)}")
             
             # 检查是否需要自动生成标题
-            if db and conversation_id and user_content:
-                await chat_session_manager.auto_generate_title_if_needed(db, conversation_id, user_content)
+            if db and session_id and user_content:
+                await chat_session_manager.auto_generate_title_if_needed(db, session_id, user_content)
             
             return ChatCompletionResponse(
                 message=Message(
@@ -714,7 +740,7 @@ class ChatResponseService:
                     "completion_tokens": 0,
                     "total_tokens": 0
                 },
-                conversation_id=conversation_id
+                session_id=session_id
             )
 
 

@@ -272,8 +272,8 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
           }
           
           // 从响应中提取reasoning_content并作为toolStatus处理
-          if (response && response.data && response.data.data && response.data.data.message) {
-            const messageData = response.data.data.message;
+          if (response && response.data && response.data.message) {
+            const messageData = response.data.message;
             
             // 如果有思考内容，创建reasoning_content类型的toolStatus
             if (messageData.reasoning_content) {
@@ -285,11 +285,18 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
             }
           }
           
-          // 解析响应内容
+          // 解析响应内容 - 修复：直接从response.data获取，而不是response.data.data
           let content = '';
-          if (response && response.data && response.data.data) {
-            content = response.data.data.full_content || 
-                      (response.data.data.message && response.data.data.message.content) || '';
+          if (response && response.data) {
+            // 优先使用full_content进行累积显示，这是完整的累积内容
+            content = response.data.full_content || 
+                      (response.data.message && response.data.message.content) || '';
+            console.log('编辑重新执行解析响应数据:', {
+              has_full_content: !!response.data.full_content,
+              full_content_length: response.data.full_content?.length || 0,
+              message_content: response.data.message?.content || '',
+              使用的内容长度: content.length
+            });
           } else if (typeof response === 'string') {
             content = response;
           }

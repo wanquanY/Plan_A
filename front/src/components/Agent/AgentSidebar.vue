@@ -177,18 +177,27 @@ const close = () => {
 
 // 增强的工具状态处理器，添加笔记编辑结果处理
 const enhancedHandleToolStatus = (toolStatus: any) => {
-  console.log('[AgentSidebar] 收到工具状态:', toolStatus);
+  console.log('🔧 [AgentSidebar] enhancedHandleToolStatus被调用');
+  console.log('🔧 [AgentSidebar] 收到工具状态:', toolStatus);
+  console.log('🔧 [AgentSidebar] 工具状态详细信息:', JSON.stringify(toolStatus, null, 2));
   
   // 先直接进行UI更新，像编辑重新执行一样
   const currentMsg = getCurrentTypingMessage();
   if (currentMsg) {
-    console.log('[AgentSidebar] 正常对话找到当前消息，直接更新工具状态UI:', {
+    console.log('🔧 [AgentSidebar] 正常对话找到当前消息，直接更新工具状态UI:', {
       id: currentMsg.id,
       toolName: toolStatus.tool_name,
       status: toolStatus.status,
       toolCallId: toolStatus.tool_call_id
     });
     handleToolStatusUpdate(toolStatus, currentMsg);
+  } else {
+    console.warn('🔧 [AgentSidebar] 没有找到当前消息，无法更新工具状态UI');
+    console.warn('🔧 [AgentSidebar] 当前消息列表:', messages.value.map(msg => ({
+      id: msg.id,
+      type: msg.type,
+      isTyping: msg.isTyping
+    })));
   }
   
   // 然后进行特殊逻辑处理
@@ -225,6 +234,8 @@ const enhancedHandleToolStatus = (toolStatus: any) => {
       console.warn('[AgentSidebar] 原始工具状态结果:', toolStatus.result);
     }
   }
+  
+  console.log('🔧 [AgentSidebar] enhancedHandleToolStatus处理完成');
 };
 
 // 监听AI响应变化
@@ -252,56 +263,11 @@ watch(() => props.agentResponse, (newResponse) => {
       return;
     }
     
-    // 尝试解析是否包含工具状态信息
-    let responseData = null;
-    try {
-      responseData = JSON.parse(newResponse);
-    } catch (error) {
-      // 不是JSON格式，继续处理为普通文本
-    }
+    // 🔧 修复：移除在这里处理工具状态的逻辑，工具状态应该通过enhancedHandleToolStatus回调处理
+    // 这里只处理文本内容，工具状态由独立的回调机制处理
+    console.log('🔧 AgentSidebar watch agentResponse: 只处理文本内容，工具状态由回调处理');
     
-    // 检查是否包含思考内容
-    if (responseData && responseData.data && responseData.data.message && responseData.data.message.reasoning_content) {
-      console.log('检测到思考内容:', responseData.data.message.reasoning_content.length, '字符');
-      const reasoningContent = responseData.data.message.reasoning_content;
-      
-      // 处理思考内容
-      if (reasoningContent) {
-        const reasoningToolStatus = {
-          type: 'reasoning_content',
-          reasoning_content: reasoningContent
-        };
-        enhancedHandleToolStatus(reasoningToolStatus);
-      }
-    }
-    
-    // 如果响应包含工具状态，先处理工具状态
-    if (responseData && responseData.data && responseData.data.tool_status) {
-      console.log('检测到工具状态信息:', responseData.data.tool_status);
-      enhancedHandleToolStatus(responseData.data.tool_status);
-      
-      // 如果还有文本内容，继续处理文本
-      if (responseData.data.message && responseData.data.message.content) {
-        // 处理文本内容，但不重复处理工具状态
-        const textContent = responseData.data.full_content || responseData.data.message.content;
-        if (textContent && textContent !== lastProcessedResponse.value) {
-          // 继续处理文本内容
-          processTextResponse(textContent);
-        }
-      }
-      
-      // 即使没有文本内容，也要更新lastProcessedResponse以避免重复处理
-      lastProcessedResponse.value = newResponse;
-      
-      // 滚动到底部
-      nextTick(() => {
-        scrollToBottom();
-      });
-      
-      return;
-    }
-    
-    // 处理普通的文本响应
+    // 处理普通的文本响应（不尝试解析工具状态）
     processTextResponse(newResponse);
   }
 });
