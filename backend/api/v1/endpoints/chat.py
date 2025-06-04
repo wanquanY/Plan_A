@@ -79,11 +79,13 @@ async def chat(
         from backend.crud.agent import agent as agent_crud
         agent = await agent_crud.get_agent_for_user(db, agent_id=agent_id, user_id=current_user.id)
         if agent:
+            # 🔧 修复：优先使用请求中指定的模型，如果没有则使用Agent的默认模型
+            actual_model = chat_request.model if chat_request.model else agent.model
             agent_info = {
                 "id": agent.id,
                 "name": "AI助手",  # 使用默认显示名称
                 "avatar_url": None,  # 移除avatar_url字段访问
-                "model": agent.model
+                "model": actual_model  # 使用实际使用的模型
             }
     
     # 调用服务生成回复，并保存对话记录
@@ -273,11 +275,13 @@ async def stream_chat(
         from backend.crud.agent import agent as agent_crud
         agent = await agent_crud.get_agent_for_user(db, agent_id=agent_id, user_id=current_user.id)
         if agent:
+            # 🔧 修复：优先使用请求中指定的模型，如果没有则使用Agent的默认模型
+            actual_model = chat_request.model if chat_request.model else agent.model
             agent_info = {
                 "id": agent.id,
                 "name": "AI助手",  # 使用默认显示名称
                 "avatar_url": None,  # 移除avatar_url字段访问
-                "model": agent.model
+                "model": actual_model  # 使用实际使用的模型
             }
     
     # 创建流式响应

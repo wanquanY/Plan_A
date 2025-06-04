@@ -785,6 +785,16 @@ class ChatStreamService:
                             elif content_chunk or reasoning_chunk:
                                 # 后续chunk使用三元组格式：(content, reasoning_content, tool_status)
                                 yield (content_chunk, reasoning_chunk or "", None)
+                        
+                        # 如果只有推理内容没有正式内容，也要yield推理内容
+                        elif reasoning_chunk:
+                            if is_first_chunk:
+                                is_first_chunk = False
+                                # 第一个chunk需要传递session_id，使用四元组格式
+                                yield ("", session_id, reasoning_chunk, None)
+                            else:
+                                # 后续chunk使用三元组格式：(content, reasoning_content, tool_status)
+                                yield ("", reasoning_chunk, None)
                 
                 # 如果最后还有未保存的文本内容，保存到交互流程中
                 if current_text_segment.strip():
@@ -1038,6 +1048,16 @@ class ChatStreamService:
                                 elif content_chunk or reasoning_chunk:
                                     # 后续chunk使用三元组格式：(content, reasoning_content, tool_status)
                                     yield (content_chunk, reasoning_chunk or "", None)
+                        
+                                # 如果只有推理内容没有正式内容，也要yield推理内容
+                                elif reasoning_chunk:
+                                    if is_first_chunk:
+                                        is_first_chunk = False
+                                        # 第一个chunk需要传递session_id，使用四元组格式
+                                        yield ("", session_id, reasoning_chunk, None)
+                                    else:
+                                        # 后续chunk使用三元组格式：(content, reasoning_content, tool_status)
+                                        yield ("", reasoning_chunk, None)
                         
                         # 如果最后还有文本内容，保存到交互流程中
                         if current_text_segment.strip():
