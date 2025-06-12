@@ -682,22 +682,160 @@ const focusTitle = () => {
   }
 };
 
+// 恢复编辑器状态
+const restoreEditorState = (stateData) => {
+  if (!editorRef.value || !stateData) {
+    console.log('无法恢复编辑器状态：缺少编辑器引用或状态数据');
+    return false;
+  }
+  
+  console.log('开始恢复编辑器状态:', stateData);
+  
+  try {
+    // 首先尝试通过临时标记恢复
+    if (stateData.markerId) {
+      const marker = editorRef.value.querySelector(`[data-temp-marker="${stateData.markerId}"]`);
+      if (marker) {
+        console.log('找到临时标记，恢复光标位置');
+        
+        // 创建range并设置到标记位置
+        const range = document.createRange();
+        range.setStartBefore(marker);
+        range.collapse(true);
+        
+        // 移除标记
+        marker.remove();
+        
+        // 设置选择
+        const selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        
+        // 聚焦编辑器
+        editorRef.value.focus();
+        console.log('通过临时标记成功恢复编辑器状态');
+        return true;
+      }
+    }
+    
+    // 如果没有标记，尝试通过段落索引和偏移量恢复
+    if (typeof stateData.paragraphIndex === 'number' && typeof stateData.offset === 'number') {
+      const paragraphs = editorRef.value.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div');
+      if (paragraphs[stateData.paragraphIndex]) {
+        console.log('通过段落索引恢复光标位置');
+        
+        const targetParagraph = paragraphs[stateData.paragraphIndex];
+        const range = document.createRange();
+        
+        // 尝试设置到指定偏移量
+        try {
+          const textNode = targetParagraph.firstChild;
+          if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+            const offset = Math.min(stateData.offset, textNode.textContent.length);
+            range.setStart(textNode, offset);
+          } else {
+            range.setStart(targetParagraph, 0);
+          }
+          range.collapse(true);
+          
+          const selection = window.getSelection();
+          if (selection) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+          
+          editorRef.value.focus();
+          console.log('通过段落索引成功恢复编辑器状态');
+          return true;
+        } catch (e) {
+          console.log('段落索引恢复失败，尝试简单恢复:', e);
+        }
+      }
+    }
+    
+    // 最后尝试通过文本内容匹配恢复
+    if (stateData.textContext) {
+      console.log('尝试通过文本内容匹配恢复');
+      const editorText = editorRef.value.textContent || '';
+      const contextIndex = editorText.indexOf(stateData.textContext);
+      
+      if (contextIndex !== -1) {
+        // 找到文本位置，尝试创建范围
+        const walker = document.createTreeWalker(
+          editorRef.value,
+          NodeFilter.SHOW_TEXT,
+          null,
+          false
+        );
+        
+        let currentOffset = 0;
+        let targetNode = null;
+        let targetOffset = 0;
+        
+        while (walker.nextNode()) {
+          const textNode = walker.currentNode;
+          const nodeLength = textNode.textContent.length;
+          
+          if (currentOffset + nodeLength >= contextIndex) {
+            targetNode = textNode;
+            targetOffset = contextIndex - currentOffset;
+            break;
+          }
+          
+          currentOffset += nodeLength;
+        }
+        
+        if (targetNode) {
+          const range = document.createRange();
+          range.setStart(targetNode, Math.max(0, Math.min(targetOffset, targetNode.textContent.length)));
+          range.collapse(true);
+          
+          const selection = window.getSelection();
+          if (selection) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+          
+          editorRef.value.focus();
+          console.log('通过文本内容匹配成功恢复编辑器状态');
+          return true;
+        }
+      }
+    }
+    
+    console.log('所有恢复方法都失败了');
+    return false;
+    
+  } catch (error) {
+    console.error('恢复编辑器状态时出错:', error);
+    return false;
+  }
+};
+
 // 暴露方法和引用
 defineExpose({
   editorRef,
   focus: () => editorRef.value?.focus(),
   setReadOnlyContent,
-  focusTitle
+  focusTitle,
+  restoreEditorState
 });
 
 // 直接DOM事件监听器，确保不会错过input事件
 onMounted(() => {
+  console.log('[EditorContent] onMounted 开始')
+  console.log('[EditorContent] 当前全局状态:', window.__CANVAS_RETURN_STATE__)
+  
   if (editorRef.value) {
     updateEditorContent(props.modelValue);
     countWords();
     
     // 确保标题占位符是空的，让CSS伪元素显示
     nextTick(() => {
+      console.log('[EditorContent] nextTick 开始')
+      
       const titlePlaceholder = editorRef.value?.querySelector('.title-placeholder');
       if (titlePlaceholder) {
         console.log('检查标题占位符元素:', titlePlaceholder);
@@ -715,10 +853,38 @@ onMounted(() => {
           titlePlaceholder.setAttribute('data-placeholder', '请输入标题');
         }
         
-        // 自动聚焦到标题占位符，让真实光标在标题位置闪烁
-        setTimeout(() => {
-          focusTitle();
-        }, 100); // 稍微延迟确保DOM完全渲染
+        // 检查是否有编辑器状态需要恢复
+        const hasStateToRestore = window.__CANVAS_RETURN_STATE__ && 
+                                window.__CANVAS_RETURN_STATE__.editorState;
+        
+        console.log('[EditorContent] 检查状态恢复:', {
+          hasGlobalState: !!window.__CANVAS_RETURN_STATE__,
+          hasEditorState: !!(window.__CANVAS_RETURN_STATE__?.editorState),
+          editorState: window.__CANVAS_RETURN_STATE__?.editorState
+        })
+        
+        if (hasStateToRestore) {
+          console.log('[EditorContent] 检测到编辑器状态需要恢复，跳过自动聚焦标题');
+          // 在下一个事件循环中尝试恢复状态
+          setTimeout(() => {
+            console.log('[EditorContent] 开始恢复编辑器状态')
+            if (window.__CANVAS_RETURN_STATE__?.editorState) {
+              const restored = restoreEditorState(window.__CANVAS_RETURN_STATE__.editorState);
+              if (restored) {
+                console.log('[EditorContent] 编辑器状态恢复成功');
+              } else {
+                console.log('[EditorContent] 编辑器状态恢复失败，使用默认聚焦');
+                focusTitle();
+              }
+            }
+          }, 150);
+        } else {
+          // 没有状态需要恢复，正常聚焦到标题占位符
+          console.log('[EditorContent] 没有状态需要恢复，执行默认聚焦')
+          setTimeout(() => {
+            focusTitle();
+          }, 100);
+        }
       }
     });
     

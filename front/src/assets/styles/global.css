@@ -90,4 +90,864 @@
 
 .hidden-scrollbar::-webkit-scrollbar {
   display: none;  /* Chrome, Safari, Opera */
+}
+
+/* 嵌入画板样式 */
+.embedded-canvas-wrapper {
+  display: block;
+  margin: 24px 0; /* 增加上下边距 */
+  clear: both;
+  user-select: none;
+  max-width: 100%;
+  width: 100%; /* 确保占满宽度 */
+}
+
+.embedded-canvas-wrapper .embedded-canvas {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* 确保画板在编辑器中可见 */
+.editor-content .embedded-canvas-wrapper {
+  position: relative;
+  z-index: 1;
+}
+
+/* 避免编辑器内容选择器选中画板 */
+.embedded-canvas-wrapper * {
+  pointer-events: auto;
+}
+
+/* 画板内的工具按钮样式 */
+.embedded-canvas .ant-btn-sm {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 飞书风格的嵌入画板样式 */
+.canvas-board {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  height: 480px; /* 从240px增加到480px，翻倍 */
+  background: #ffffff; /* 改为纯白色背景，移除渐变 */
+  border: 2px solid #e2e8f0; /* 增加边框宽度 */
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  overflow: visible; /* 改为visible，让拖拽控制点可见 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); /* 添加subtle阴影 */
+}
+
+.canvas-board:hover {
+  border-color: #1890ff;
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.15);
+  transform: translateY(-2px);
+}
+
+/* 选中状态样式 */
+.canvas-board.canvas-selected {
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+/* 拖拽控制点容器 */
+.canvas-resize-handles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 100; /* 提高z-index */
+}
+
+/* 拖拽控制点基础样式 */
+.canvas-resize-handle {
+  position: absolute;
+  width: 10px; /* 稍微增大一点 */
+  height: 10px;
+  background: #1890ff;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  pointer-events: auto;
+  z-index: 101; /* 提高z-index */
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* 添加阴影增强可见性 */
+}
+
+.canvas-resize-handle:hover {
+  width: 14px;
+  height: 14px;
+  background: #40a9ff;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
+}
+
+/* 四个角的控制点 */
+.canvas-resize-nw {
+  top: -7px;
+  left: -7px;
+  cursor: nw-resize;
+}
+
+.canvas-resize-ne {
+  top: -7px;
+  right: -7px;
+  cursor: ne-resize;
+}
+
+.canvas-resize-sw {
+  bottom: -7px;
+  left: -7px;
+  cursor: sw-resize;
+}
+
+.canvas-resize-se {
+  bottom: -7px;
+  right: -7px;
+  cursor: se-resize;
+}
+
+/* 四条边的控制点 */
+.canvas-resize-n {
+  top: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: n-resize;
+}
+
+.canvas-resize-s {
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: s-resize;
+}
+
+.canvas-resize-w {
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: w-resize;
+}
+
+.canvas-resize-e {
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: e-resize;
+}
+
+/* 当拖拽时禁用文本选择和画板动画 */
+.canvas-resizing {
+  user-select: none;
+  pointer-events: none;
+}
+
+.canvas-resizing .canvas-board {
+  transition: none !important;
+}
+
+/* 画板内容区域在拖拽时不可点击 */
+.canvas-board.canvas-selected .canvas-content {
+  pointer-events: none;
+}
+
+.canvas-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s ease;
+  color: #666;
+  z-index: 10;
+}
+
+.canvas-board:hover .canvas-delete-btn {
+  opacity: 1;
+}
+
+.canvas-delete-btn:hover {
+  background: #ff4757;
+  color: white;
+  transform: scale(1.1);
+}
+
+.canvas-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.canvas-icon-area {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-main-icon {
+  position: relative;
+  z-index: 3;
+  color: #64748b;
+}
+
+.canvas-decorative-element {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.6;
+}
+
+.canvas-element-1 {
+  width: 20px;
+  height: 20px;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  top: 10px;
+  left: 15px;
+  animation: float1 3s ease-in-out infinite;
+}
+
+.canvas-element-2 {
+  width: 16px;
+  height: 16px;
+  background: linear-gradient(135deg, #10b981, #047857);
+  bottom: 15px;
+  right: 10px;
+  animation: float2 3s ease-in-out infinite 1s;
+}
+
+.canvas-element-3 {
+  width: 12px;
+  height: 12px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  top: 20px;
+  right: 20px;
+  animation: float3 3s ease-in-out infinite 2s;
+}
+
+@keyframes float1 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-8px) rotate(180deg); }
+}
+
+@keyframes float2 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-6px) rotate(-180deg); }
+}
+
+@keyframes float3 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-4px) rotate(360deg); }
+}
+
+.canvas-text {
+  font-size: 16px;
+  font-weight: 500;
+  color: #475569;
+  text-align: center;
+}
+
+/* 全屏画板模态框样式 */
+.canvas-fullscreen-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-fullscreen-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.canvas-fullscreen-container {
+  width: 95vw;
+  max-width: 1400px;
+  height: 90vh;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  z-index: 10001;
+  animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.canvas-fullscreen-header {
+  height: 64px;
+  background: #ffffff;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+
+.canvas-fullscreen-title {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.title-icon {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, #1890ff 0%, #40a9ff 100%);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.2);
+}
+
+.title-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title-text span {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.title-text small {
+  font-size: 12px;
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.canvas-fullscreen-toolbar {
+  min-height: 72px; /* 增加高度 */
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: flex-start; /* 改为顶部对齐 */
+  padding: 12px 24px;
+  gap: 20px; /* 增加间距 */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  overflow-x: auto;
+}
+
+.canvas-tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: fit-content;
+}
+
+.tool-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 4px;
+}
+
+.tool-group-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.canvas-tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.canvas-tool-btn:hover {
+  background: #e5e7eb;
+  color: #374151;
+  transform: translateY(-1px);
+}
+
+.canvas-tool-btn.active {
+  background: #1890ff;
+  color: #ffffff;
+  box-shadow: 0 2px 4px rgba(24, 144, 255, 0.3);
+}
+
+.canvas-tool-btn.active:hover {
+  background: #40a9ff;
+  transform: translateY(-1px);
+}
+
+.canvas-tool-btn.canvas-danger-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.canvas-tool-divider {
+  width: 2px; /* 增加分隔符宽度 */
+  height: 48px; /* 增加高度 */
+  background: linear-gradient(to bottom, transparent 0%, #e5e7eb 20%, #e5e7eb 80%, transparent 100%);
+  margin: 0;
+}
+
+/* 颜色选择器样式优化 */
+.canvas-color-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.canvas-color-picker:hover {
+  border-color: #1890ff;
+  transform: scale(1.02);
+}
+
+.canvas-current-color {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.color-label {
+  font-size: 12px;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+/* 描边控制样式 */
+.canvas-stroke-width {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.stroke-label {
+  font-size: 12px;
+  color: #4b5563;
+  font-weight: 500;
+  min-width: 30px;
+}
+
+.canvas-stroke-slider {
+  width: 80px;
+  height: 4px;
+  border-radius: 2px;
+  background: #e5e7eb;
+  outline: none;
+  cursor: pointer;
+}
+
+.canvas-stroke-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1890ff;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.canvas-stroke-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1890ff;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.stroke-value {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 500;
+  min-width: 30px;
+  text-align: center;
+}
+
+/* 网格控制样式 */
+.grid-size-control {
+  display: flex;
+  align-items: center;
+  margin-left: 8px;
+}
+
+.grid-size-select {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  min-width: 70px;
+  font-weight: 500;
+}
+
+.grid-size-select:focus {
+  outline: none;
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+.grid-size-select:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: not-allowed;
+  border-color: #e5e7eb;
+}
+
+.canvas-welcome-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #9ca3af;
+  pointer-events: none;
+  user-select: none;
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  padding: 40px;
+  border-radius: 16px;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  max-width: 360px;
+  transition: all 0.3s ease;
+}
+
+.welcome-icon-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-radius: 20px;
+  margin: 0 auto 16px auto;
+  color: #0ea5e9;
+  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.15);
+}
+
+.canvas-welcome-hint svg {
+  color: inherit;
+}
+
+.canvas-fullscreen-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.canvas-action-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.canvas-save-btn {
+  background: #1890ff;
+  color: white;
+}
+
+.canvas-save-btn:hover {
+  background: #40a9ff;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
+}
+
+.canvas-close-btn {
+  background: #f5f5f5;
+  color: #666;
+  border: 1px solid #e1e4e8;
+}
+
+.canvas-close-btn:hover {
+  background: #e5e5e5;
+  transform: translateY(-1px);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .canvas-board {
+    max-width: 100%;
+    height: 400px; /* 从200px增加到400px，翻倍 */
+  }
+  
+  .canvas-fullscreen-container {
+    width: 95vw;
+    max-width: 95vw;
+    height: 95vh;
+  }
+  
+  .canvas-fullscreen-header {
+    padding: 12px 16px;
+  }
+  
+  .canvas-fullscreen-title {
+    font-size: 16px;
+  }
+  
+  .canvas-fullscreen-workspace {
+    margin: 12px 16px 16px 16px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .canvas-board {
+    height: 560px; /* 从280px增加到560px，翻倍 */
+  }
+  
+  .canvas-fullscreen-container {
+    max-width: 900px; /* 大屏幕时稍微宽一些，但仍然保持与编辑器宽度相近 */
+  }
+}
+
+/* 颜色面板样式 */
+.canvas-color-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  background: #ffffff;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  padding: 16px;
+  z-index: 1000;
+  min-width: 200px;
+}
+
+.color-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.color-preset-item {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.color-preset-item:hover {
+  transform: scale(1.1);
+  border-color: #1890ff;
+}
+
+.color-preset-item.active {
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+.color-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.color-input {
+  width: 40px;
+  height: 32px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.color-text-input {
+  flex: 1;
+  height: 32px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-family: monospace;
+}
+
+.color-text-input:focus {
+  outline: none;
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+.canvas-fullscreen-content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.canvas-fullscreen-workspace {
+  flex: 1;
+  background: #ffffff; /* 确保背景是纯白色 */
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  margin: 16px 24px 24px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.canvas-drawing-area {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  cursor: crosshair;
+  background: #ffffff; /* 确保画布背景是纯白色 */
+  border-radius: 6px;
+  z-index: 1;
+}
+
+.canvas-drawing-area:hover {
+  box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.2);
+}
+
+/* 改进的网格背景 - 飞书风格 */
+.canvas-grid-bg-improved {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  background-color: #ffffff; /* 确保网格也有白色背景 */
+  background-image: radial-gradient(circle at center, #d1d5db 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
+  opacity: 0.4; /* 稍微增加透明度让网格更明显一些 */
+}
+
+/* 视图控制面板样式 */
+.view-controls {
+  padding: 16px 0;
+}
+
+.control-group {
+  margin-bottom: 24px;
+}
+
+.control-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.control-btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  color: #374151;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.control-btn:hover {
+  background: #f9fafb;
+  border-color: #1890ff;
+  color: #1890ff;
+}
+
+.control-btn:active {
+  transform: translateY(1px);
+}
+
+.control-icon {
+  font-size: 16px;
+  margin-right: 12px;
+  width: 20px;
+  text-align: center;
+}
+
+.control-text {
+  flex: 1;
+  font-weight: 500;
 } 

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import CodeBlock from '../components/rendering/CodeBlock.vue';
 import MermaidDiagram from '../components/rendering/MermaidDiagram.vue';
 import MarkMap from '../components/rendering/MarkMap.vue';
+import CanvasCore from '../components/Canvas/CanvasCore.vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import Sidebar from '../components/Sidebar.vue';
@@ -386,6 +387,27 @@ const handleNavigation = (path) => {
           </div>
           
           <div class="section">
+            <h2>画板组件测试</h2>
+            <p>这是画板组件测试，您可以绘制各种图形元素，选中元素时会显示浮动工具栏。</p>
+            <div class="canvas-test-container">
+              <CanvasCore 
+                canvas-id="test-canvas"
+                :width="800"
+                :height="400"
+              />
+            </div>
+            <div class="canvas-instructions">
+              <h4>使用说明：</h4>
+              <ul>
+                <li>点击画布创建矩形</li>
+                <li>选中元素后会显示浮动工具栏</li>
+                <li>可以更改元素类型、填充色、边框等</li>
+                <li>点击三个点图标打开详细属性面板</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="section">
             <h2>Markdown渲染测试</h2>
             <div class="markdown-content" v-html="renderedContent"></div>
           </div>
@@ -466,10 +488,51 @@ h3 {
   border: 1px solid #eee;
 }
 
+/* 画板测试容器样式 */
+.canvas-test-container {
+  background-color: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.canvas-instructions {
+  background-color: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.canvas-instructions h4 {
+  margin: 0 0 12px 0;
+  color: #24292e;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.canvas-instructions ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.canvas-instructions li {
+  margin-bottom: 6px;
+  color: #586069;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 /* 响应式布局 */
 @media (max-width: 768px) {
   .test-container {
     padding: 15px;
+  }
+  
+  .canvas-test-container {
+    padding: 12px;
   }
 }
 </style> 

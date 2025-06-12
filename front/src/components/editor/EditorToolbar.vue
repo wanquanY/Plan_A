@@ -204,6 +204,10 @@
       accept="image/*"
       @change="handleImageUpload"
     />
+
+    <button class="toolbar-button" @click="insertCanvas" title="插入画板">
+      <BorderOutlined />
+    </button>
     
     <div class="toolbar-divider"></div>
     
@@ -262,6 +266,7 @@ import {
   PictureOutlined,
   MessageOutlined,
   WindowsOutlined,
+  BorderOutlined,
 } from '@ant-design/icons-vue';
 import { ref } from 'vue';
 import uploadService from '../../services/uploadService';
@@ -288,7 +293,8 @@ const emit = defineEmits([
   'undo',
   'redo',
   'toggle-outline',
-  'toggle-sidebar-mode'
+  'toggle-sidebar-mode',
+  'insert-canvas'
 ]);
 
 // 字体颜色列表
@@ -579,6 +585,12 @@ const handleToggleModeClick = () => {
   setTimeout(() => {
     showModeTip.value = false;
   }, 1500);
+};
+
+const insertCanvas = () => {
+  console.log('[EditorToolbar] insertCanvas 方法被调用');
+  emit('insert-canvas');
+  console.log('[EditorToolbar] insert-canvas 事件已发射');
 };
 </script>
 

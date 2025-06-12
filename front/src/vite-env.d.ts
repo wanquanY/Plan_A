@@ -21,3 +21,8 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// 扩展Window接口
+interface Window {
+  __VUE_APP_ROUTER__: any;
+}

@@ -14,6 +14,7 @@
       @redo="handleRedo"
       @toggle-outline="toggleOutline"
       @toggle-sidebar-mode="toggleSidebarMode"
+      @insert-canvas="handleInsertCanvas"
     />
     
     <div class="editor-content-wrapper">
@@ -78,13 +79,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted } from 'vue';
+import { ref, nextTick, watch, onMounted, createApp, onUnmounted } from 'vue';
 import EditorToolbar from './EditorToolbar.vue';
 import EditorContent from './EditorContent.vue';
 import MentionHandler from '../rendering/MentionHandler.vue';
 import AgentResponseHandler from '../Agent/AgentResponseHandler.vue';
 import DocumentOutline from './DocumentOutline.vue';
 import AgentInputModal from '../Agent/AgentInputModal.vue';
+import EmbeddedCanvas from '../Canvas/EmbeddedCanvas.vue';
 
 // Composables
 import { useEditorState } from '../../composables/useEditorState';
@@ -139,6 +141,9 @@ const documentOutlineRef = ref(null);
 const mentionHandlerRef = ref(null);
 const agentInputModalRef = ref(null);
 
+// 画板实例管理
+const canvasInstances = new Map();
+
 // 格式化事件处理
 const handleApplyFormatting = (params: any) => {
   const editorRef = editorContentRef.value?.editorRef;
@@ -174,6 +179,265 @@ const handleUndo = () => {
 const handleRedo = () => {
   const editorRef = editorContentRef.value?.editorRef;
   formatting.redoAction(editorRef);
+};
+
+// 插入画板处理
+const handleInsertCanvas = () => {
+  console.log('[EditorContainer] 插入画板');
+  const editorRef = editorContentRef.value?.editorRef;
+  if (!editorRef) {
+    console.error('[EditorContainer] editorRef 不存在');
+    return;
+  }
+
+  // 生成唯一的画板ID
+  const canvasId = `canvas-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  console.log('[EditorContainer] 生成的画板ID:', canvasId);
+  
+  // 创建占位元素
+  const placeholderHTML = `<div class="canvas-placeholder" data-canvas-id="${canvasId}" contenteditable="false"></div>`;
+  
+  // 获取当前光标位置并插入占位元素
+  const selection = window.getSelection();
+  if (selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    
+    // 在当前段落后插入画板
+    const currentParagraph = range.startContainer.nodeType === Node.TEXT_NODE 
+      ? range.startContainer.parentElement?.closest('p')
+      : range.startContainer.closest?.('p');
+    
+    if (currentParagraph) {
+      const placeholderElement = document.createElement('div');
+      placeholderElement.innerHTML = placeholderHTML;
+      currentParagraph.parentNode?.insertBefore(placeholderElement.firstElementChild!, currentParagraph.nextSibling);
+    } else {
+      const placeholderElement = document.createElement('div');
+      placeholderElement.innerHTML = placeholderHTML;
+      range.insertNode(placeholderElement.firstElementChild!);
+    }
+    
+    // 将光标移动到画板后面
+    const newParagraph = document.createElement('p');
+    newParagraph.innerHTML = '<br>';
+    const insertedPlaceholder = document.querySelector(`[data-canvas-id="${canvasId}"]`);
+    if (insertedPlaceholder) {
+      insertedPlaceholder.parentNode?.insertBefore(newParagraph, insertedPlaceholder.nextSibling);
+      
+      // 设置光标到新段落
+      const newRange = document.createRange();
+      newRange.setStart(newParagraph, 0);
+      newRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+      
+      // 在下一个tick中用Vue组件替换占位元素
+      nextTick(() => {
+        mountCanvasComponent(canvasId);
+      });
+    }
+    
+    // 不要在这里立即更新内容，等组件挂载完成后再更新
+    // 避免覆盖刚挂载的Vue组件
+  }
+};
+
+// 动态挂载画板组件
+const mountCanvasComponent = (canvasId: string) => {
+  console.log('[EditorContainer] 动态挂载画板组件:', canvasId);
+  
+  const placeholder = document.querySelector(`[data-canvas-id="${canvasId}"]`);
+  if (!placeholder) {
+    console.error('[EditorContainer] 找不到占位元素:', canvasId);
+    return;
+  }
+  
+  // 创建一个新的Vue应用实例
+  const canvasApp = createApp(EmbeddedCanvas, {
+    canvasId: canvasId,
+    onDelete: (id: string) => handleCanvasDelete(id),
+    onResize: (data: { canvasId: string; width: number; height: number }) => handleCanvasResize(data),
+    onSelect: (id: string) => handleCanvasSelect(id),
+    onDeselect: (id: string) => handleCanvasDeselect(id)
+  });
+  
+  // 挂载到占位元素
+  const canvasInstance = canvasApp.mount(placeholder);
+  
+  // 移除占位符样式，添加已挂载标识
+  placeholder.classList.remove('canvas-placeholder');
+  placeholder.classList.add('canvas-mounted');
+  
+  // 保存实例引用以便后续管理
+  canvasInstances.set(canvasId, {
+    app: canvasApp,
+    instance: canvasInstance
+  });
+  
+  console.log('[EditorContainer] 画板组件挂载完成:', canvasId);
+  
+  // 在组件挂载完成后，延迟更新编辑器内容
+  nextTick(() => {
+    const editorRef = editorContentRef.value?.editorRef;
+    if (editorRef) {
+      const newContent = formatting.getFullContent(editorRef);
+      emit('update:modelValue', newContent);
+      console.log('[EditorContainer] 画板挂载后更新内容完成');
+    }
+  });
+};
+
+// 处理画板删除
+const handleCanvasDelete = (canvasId: string) => {
+  console.log('[EditorContainer] 删除画板:', canvasId);
+  
+  // 卸载Vue实例
+  const canvasData = canvasInstances.get(canvasId);
+  if (canvasData) {
+    canvasData.app.unmount();
+    canvasInstances.delete(canvasId);
+  }
+  
+  // 移除DOM元素
+  const canvasElement = document.querySelector(`[data-canvas-id="${canvasId}"]`);
+  if (canvasElement) {
+    canvasElement.remove();
+  }
+  
+  // 更新编辑器内容
+  const editorRef = editorContentRef.value?.editorRef;
+  if (editorRef) {
+    const newContent = formatting.getFullContent(editorRef);
+    emit('update:modelValue', newContent);
+  }
+};
+
+// 处理画板大小调整
+const handleCanvasResize = (data: { canvasId: string; width: number; height: number }) => {
+  console.log('[EditorContainer] 画板大小调整:', data);
+    
+    // 更新编辑器内容
+    const editorRef = editorContentRef.value?.editorRef;
+    if (editorRef) {
+      const newContent = formatting.getFullContent(editorRef);
+      emit('update:modelValue', newContent);
+    }
+};
+
+// 处理画板选中
+const handleCanvasSelect = (canvasId: string) => {
+  console.log('[EditorContainer] 画板选中:', canvasId);
+  
+  // 取消选中其他画板
+  canvasInstances.forEach((canvasData, id) => {
+    if (id !== canvasId && canvasData.instance && typeof canvasData.instance.deselectCanvas === 'function') {
+      canvasData.instance.deselectCanvas();
+    }
+  });
+};
+
+// 处理画板取消选中
+const handleCanvasDeselect = (canvasId: string) => {
+  console.log('[EditorContainer] 画板取消选中:', canvasId);
+  };
+  
+// 初始化已存在的画板组件
+const initializeExistingCanvases = () => {
+  console.log('[EditorContainer] 开始初始化已存在的画板组件');
+  
+  // 1. 查找占位符元素
+  const existingPlaceholders = document.querySelectorAll('.canvas-placeholder[data-canvas-id]');
+  console.log('[EditorContainer] 找到已存在的画板占位元素数量:', existingPlaceholders.length);
+  
+  existingPlaceholders.forEach((placeholder) => {
+    const canvasId = placeholder.getAttribute('data-canvas-id');
+    if (canvasId && !canvasInstances.has(canvasId)) {
+      console.log('[EditorContainer] 初始化已存在的画板:', canvasId);
+      mountCanvasComponent(canvasId);
+    } else if (canvasId && canvasInstances.has(canvasId)) {
+      console.log('[EditorContainer] 画板已存在实例，跳过:', canvasId);
+    }
+  });
+
+  // 2. 查找完整的画板wrapper元素
+  const existingCanvases = document.querySelectorAll('.embedded-canvas-wrapper[data-canvas-id]');
+  console.log('[EditorContainer] 找到已存在的完整画板数量:', existingCanvases.length);
+  
+  existingCanvases.forEach((canvas) => {
+    const canvasId = canvas.getAttribute('data-canvas-id');
+    if (canvasId && !canvasInstances.has(canvasId)) {
+      console.log('[EditorContainer] 重新挂载已存在的画板:', canvasId);
+      // 检查是否有子元素，如果没有则需要重新挂载
+      const hasChildren = canvas.children.length > 0;
+      console.log('[EditorContainer] 画板元素子元素数量:', canvas.children.length);
+      
+      if (!hasChildren || !canvas.querySelector('.canvas-board')) {
+        console.log('[EditorContainer] 画板元素内容缺失，需要重新挂载');
+        // 创建占位元素
+        const placeholder = document.createElement('div');
+        placeholder.className = 'canvas-placeholder';
+        placeholder.setAttribute('data-canvas-id', canvasId);
+        placeholder.setAttribute('contenteditable', 'false');
+        
+        // 替换现有元素
+        canvas.parentNode?.replaceChild(placeholder, canvas);
+        
+        // 挂载新的Vue组件
+        mountCanvasComponent(canvasId);
+      } else {
+        console.log('[EditorContainer] 画板元素内容完整，但需要重新绑定事件');
+        // 画板内容完整，但可能需要重新绑定Vue组件实例
+        try {
+          const canvasApp = createApp(EmbeddedCanvas, {
+            canvasId: canvasId,
+            onDelete: (id: string) => handleCanvasDelete(id),
+            onResize: (data: { canvasId: string; width: number; height: number }) => handleCanvasResize(data),
+            onSelect: (id: string) => handleCanvasSelect(id),
+            onDeselect: (id: string) => handleCanvasDeselect(id)
+          });
+          
+          const canvasInstance = canvasApp.mount(canvas);
+          
+          canvasInstances.set(canvasId, {
+            app: canvasApp,
+            instance: canvasInstance
+          });
+          
+          console.log('[EditorContainer] 画板组件重新绑定完成:', canvasId);
+        } catch (error) {
+          console.error('[EditorContainer] 重新绑定画板组件失败:', error);
+        }
+      }
+    } else if (canvasId && canvasInstances.has(canvasId)) {
+      console.log('[EditorContainer] 画板已存在实例，跳过:', canvasId);
+    }
+  });
+  
+  // 3. 检查所有包含canvas-id的div元素（可能的画板HTML结构）
+  const allCanvasElements = document.querySelectorAll('div[data-canvas-id]');
+  console.log('[EditorContainer] 找到所有包含data-canvas-id的元素数量:', allCanvasElements.length);
+  
+  allCanvasElements.forEach((element) => {
+    const canvasId = element.getAttribute('data-canvas-id');
+    const className = element.className;
+    console.log('[EditorContainer] 发现画板元素:', canvasId, 'class:', className);
+    
+    if (canvasId && !canvasInstances.has(canvasId) && 
+        !element.classList.contains('canvas-placeholder') && 
+        !element.classList.contains('embedded-canvas-wrapper')) {
+      console.log('[EditorContainer] 发现未知类型的画板元素，尝试转换为占位符:', canvasId);
+      
+      // 转换为占位符元素
+      element.className = 'canvas-placeholder';
+      element.setAttribute('contenteditable', 'false');
+      element.innerHTML = ''; // 清空内容
+      
+      // 挂载Vue组件
+      mountCanvasComponent(canvasId);
+      }
+  });
+  
+  console.log('[EditorContainer] 画板初始化完成，当前管理的画板实例数量:', canvasInstances.size);
 };
 
 // 其他事件处理
@@ -615,6 +879,13 @@ watch(() => props.modelValue, (newValue, oldValue) => {
         return;
       }
       
+      // 检查是否有已挂载的画板组件，如果有则跳过DOM重写
+      const mountedCanvases = document.querySelectorAll('.canvas-mounted[data-canvas-id]');
+      if (mountedCanvases.length > 0) {
+        console.log(`[EditorContainer] 发现${mountedCanvases.length}个已挂载的画板组件，跳过DOM重写以保护组件`);
+        return;
+      }
+      
       console.log('更新编辑器DOM内容');
       editorContentRef.value.editorRef.innerHTML = newValue;
       
@@ -623,6 +894,10 @@ watch(() => props.modelValue, (newValue, oldValue) => {
           console.log('内容更新后触发markdown渲染');
           const { renderContentComponents } = await import('../../services/renderService');
           renderContentComponents(true);
+          
+          // 内容更新后，尝试重新初始化画板组件
+          console.log('[EditorContainer] 内容更新后重新初始化画板组件');
+          initializeExistingCanvases();
         } catch (error) {
           console.error('渲染markdown内容失败:', error);
         }
@@ -662,6 +937,9 @@ onMounted(() => {
   nextTick(() => {
     editorContentRef.value?.focus();
     
+    // 初始化已存在的画板组件
+    initializeExistingCanvases();
+    
     // 初始化AgentResponseHandler
     if (agentResponseHandlerRef.value) {
       if (typeof agentResponseHandlerRef.value.setConversationId === 'function') {
@@ -673,6 +951,17 @@ onMounted(() => {
       }
     }
   });
+});
+
+// 清理事件监听器
+onUnmounted(() => {
+  // 清理所有画板实例
+  canvasInstances.forEach((canvasData) => {
+    if (canvasData.app) {
+      canvasData.app.unmount();
+    }
+  });
+  canvasInstances.clear();
 });
 
 // 设置交互模式
@@ -743,7 +1032,14 @@ defineExpose({
   getCurrentAgentData,
   closeModal,
   showModalWithContent,
-  handleInsertResponse
+  handleInsertResponse,
+  editorContentRef: () => editorContentRef.value,
+  restoreEditorState: (stateData: any) => {
+    if (editorContentRef.value && editorContentRef.value.restoreEditorState) {
+      return editorContentRef.value.restoreEditorState(stateData)
+    }
+    return false
+  }
 });
 </script>
 
@@ -977,5 +1273,69 @@ defineExpose({
     background: #21262d;
     border-color: #30363d;
   }
+}
+
+/* 画板占位元素样式 */
+.canvas-placeholder {
+  width: 100%;
+  height: 200px;
+  border: 2px dashed #d0d7de;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f6f8fa;
+  color: #656d76;
+  font-size: 14px;
+  margin: 16px 0;
+  transition: all 0.2s ease;
+}
+
+/* 只有在真正为空时才显示占位文字 */
+.canvas-placeholder:empty::before {
+  content: '正在加载画板组件...';
+}
+
+/* 当有子元素时不显示占位文字 */
+.canvas-placeholder:not(:empty) {
+  border: none;
+  background: transparent;
+  height: auto;
+  padding: 0;
+}
+
+.canvas-placeholder:hover {
+  border-color: #8b949e;
+  background-color: #f3f4f6;
+}
+
+/* 当画板已挂载时，不显示悬停效果 */
+.canvas-placeholder:not(:empty):hover {
+  border-color: transparent;
+  background-color: transparent;
+}
+
+/* 确保嵌入式画板组件正常显示 */
+.canvas-placeholder .embedded-canvas-wrapper,
+.canvas-placeholder .canvas-board {
+  border: none !important;
+  margin: 0 !important;
+  background: transparent !important;
+}
+
+/* 已挂载的画板容器样式 */
+.canvas-mounted {
+  width: 100%;
+  margin: 16px 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: block;
+}
+
+/* 确保已挂载的画板完全覆盖容器 */
+.canvas-mounted .embedded-canvas-wrapper {
+  width: 100%;
+  margin: 0;
 }
 </style> 

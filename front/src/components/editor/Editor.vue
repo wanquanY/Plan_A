@@ -137,7 +137,8 @@ defineExpose({
   getCurrentAgentData: () => editorContainerRef.value?.getCurrentAgentData(),
   closeModal: () => editorContainerRef.value?.closeModal(),
   showModalWithContent: (data: any) => editorContainerRef.value?.showModalWithContent(data),
-  handleInsertResponse: (text: string) => editorContainerRef.value?.handleInsertResponse(text, true)
+  handleInsertResponse: (text: string) => editorContainerRef.value?.handleInsertResponse(text, true),
+  restoreEditorState: (stateData: any) => editorContainerRef.value?.restoreEditorState(stateData)
 });
 </script>
 

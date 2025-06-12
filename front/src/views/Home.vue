@@ -484,6 +484,53 @@ onMounted(() => {
   // 恢复侧边栏宽度
   restoreSidebarWidth();
   
+  // 检查是否需要恢复画布返回状态
+  const checkCanvasReturnState = () => {
+    if (window.__CANVAS_RETURN_STATE__) {
+      console.log('[Home] 检测到画布返回状态，开始恢复')
+      
+      // 恢复滚动位置
+      if (window.__CANVAS_RETURN_STATE__.scrollPosition) {
+        console.log('[Home] 恢复滚动位置:', window.__CANVAS_RETURN_STATE__.scrollPosition)
+        window.scrollTo({
+          top: window.__CANVAS_RETURN_STATE__.scrollPosition.y,
+          left: window.__CANVAS_RETURN_STATE__.scrollPosition.x,
+          behavior: 'instant'
+        })
+      }
+      
+      // 恢复编辑器状态
+      if (window.__CANVAS_RETURN_STATE__.editorState && editorRef.value) {
+        console.log('[Home] 开始恢复编辑器状态')
+        
+                 // 延迟恢复编辑器状态，确保组件完全加载
+         setTimeout(() => {
+           // 尝试通过Editor -> EditorContainer访问EditorContent
+           const editor = editorRef.value;
+           if (editor && editor.restoreEditorState) {
+             console.log('[Home] 通过Editor组件恢复状态')
+             const restored = editor.restoreEditorState(window.__CANVAS_RETURN_STATE__.editorState);
+             if (restored) {
+               console.log('[Home] 编辑器状态恢复成功')
+             } else {
+               console.log('[Home] 编辑器状态恢复失败')
+             }
+           } else {
+             console.log('[Home] 无法访问Editor的restoreEditorState方法')
+           }
+           
+           // 清理状态
+           setTimeout(() => {
+             if (window.__CANVAS_RETURN_STATE__) {
+               console.log('[Home] 清理画布返回状态')
+               delete window.__CANVAS_RETURN_STATE__
+             }
+           }, 500)
+         }, 200)
+      }
+    }
+  }
+  
   // 确保笔记ID正确初始化
   nextTick(() => {
     sidebarManager.initializeEditorMode(editorRef);
@@ -497,6 +544,9 @@ onMounted(() => {
         localStorage.setItem('lastNoteId', noteIdFromUrl.toString());
       }
     }
+    
+    // 检查画布返回状态
+    checkCanvasReturnState();
   });
 });
 </script>

@@ -36,6 +36,16 @@ const routes = [
       }
     ]
   },
+  // 画板全屏编辑器路由 (独立页面，不使用GlobalLayout)
+  {
+    path: '/canvas/:canvasId/edit',
+    name: 'CanvasFullscreenEditor',
+    component: () => import('../components/Canvas/FullscreenEditor/index.vue'),
+    meta: { 
+      requiresAuth: true,
+      fullscreen: true 
+    }
+  },
   {
     path: '/login',
     name: 'Login',
@@ -58,6 +68,26 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+  scrollBehavior(to, from, savedPosition) {
+    // 如果是全屏画板编辑页面，不处理滚动
+    if (to.meta?.fullscreen) {
+      return false
+    }
+    
+    // 如果有保存的位置，使用保存的位置
+    if (savedPosition) {
+      return savedPosition
+    }
+    
+    // 如果是返回到原来的页面，尝试恢复滚动位置
+    if (from.meta?.fullscreen && to.query.returnTo) {
+      // 这种情况下，滚动位置会在组件中通过 sessionStorage 恢复
+      return false
+    }
+    
+    // 其他情况滚动到顶部
+    return { top: 0, left: 0 }
+  }
 });
 
 // 全局路由守卫
