@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "freewrite"
+name = "Plan_A"
 version = "0.1.0"
-description = "FreeWrite Backend API"
+description = "Plan_A Backend API"
 requires-python = ">=3.9"
 dependencies = [
     "fastapi>=0.103.0",
@@ -15,7 +15,7 @@ dependencies = [
     "pydantic-settings>=2.0.3",
     "alembic>=1.12.0",
     "asyncpg>=0.28.0",
-    "python-jose>=3.3.0",
+    "python-jose[cryptography]>=3.3.0",
     "passlib>=1.7.4",
     "bcrypt>=4.0.1",
     "email-validator>=2.0.0",
@@ -29,6 +29,7 @@ dependencies = [
     "requests>=2.32.3",
     "tavily-python>=0.7.2",
     "aiohttp>=3.12.4",
+    "jose>=1.0.0",
 ]
 
 [project.optional-dependencies]
