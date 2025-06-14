@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # 数据库配置
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "")
-    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "192.168.124.19")
+    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
     POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "5432")
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "freewrite")
     
@@ -74,16 +74,16 @@ class Settings(BaseSettings):
     DEFAULT_AGENT_MAX_TOKENS: int = int(os.getenv("DEFAULT_AGENT_MAX_TOKENS", "30000"))
     
     # Redis配置
-    REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     
     # Redis 记忆服务配置
-    REDIS_TTL: int = Field(default=86400, env="REDIS_TTL")  # 24小时，单位秒
-    REDIS_MAX_MEMORY_MESSAGES: int = Field(default=50, env="REDIS_MAX_MEMORY_MESSAGES")  # 每个会话的最大消息数
-    REDIS_MAX_USER_MEMORIES: int = Field(default=100, env="REDIS_MAX_USER_MEMORIES")  # 每个用户的最大记忆会话数
+    REDIS_TTL: int = int(os.getenv("REDIS_TTL", "86400"))  # 24小时，单位秒
+    REDIS_MAX_MEMORY_MESSAGES: int = int(os.getenv("REDIS_MAX_MEMORY_MESSAGES", "50"))  # 每个会话的最大消息数
+    REDIS_MAX_USER_MEMORIES: int = int(os.getenv("REDIS_MAX_USER_MEMORIES", "100"))  # 每个用户的最大记忆会话数
     
     # ID转换缓存配置  
-    ID_CACHE_TTL: int = Field(default=3600, env="ID_CACHE_TTL")  # 1小时
-    ID_CACHE_ENABLED: bool = Field(default=True, env="ID_CACHE_ENABLED")
+    ID_CACHE_TTL: int = int(os.getenv("ID_CACHE_TTL", "3600"))  # 1小时
+    ID_CACHE_ENABLED: bool = os.getenv("ID_CACHE_ENABLED", "true").lower() == "true"
     
     # Tavily API配置
     TAVILY_API_KEY: Optional[str] = None
