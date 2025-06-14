@@ -1688,11 +1688,43 @@ async def ask_again(
                         "model": agent.model
                     }
             
+            # 准备图片数据：优先使用请求中的图片，如果没有则从原始消息中提取
+            images_to_use = ask_request.images if ask_request.images else []
+            
+            # 如果请求中没有图片数据，尝试从原始消息中提取
+            if not images_to_use and target_message:
+                try:
+                    # 尝试解析原始消息内容中的图片数据
+                    import json
+                    original_content = target_message.content
+                    if original_content:
+                        # 检查是否是JSON格式的复合消息
+                        try:
+                            parsed_content = json.loads(original_content)
+                            if isinstance(parsed_content, dict) and parsed_content.get("type") == "user_message":
+                                if "images" in parsed_content and parsed_content["images"]:
+                                    # 将数据库中的图片格式转换为ImageData格式
+                                    from backend.schemas.chat import ImageData
+                                    images_to_use = [
+                                        ImageData(
+                                            url=img.get("url", ""),
+                                            name=img.get("name"),
+                                            size=img.get("size")
+                                        ) for img in parsed_content["images"]
+                                    ]
+                                    api_logger.info(f"从原始消息中提取到 {len(images_to_use)} 张图片")
+                        except (json.JSONDecodeError, ValueError):
+                            # 如果不是JSON格式，说明是纯文本消息，没有图片
+                            pass
+                except Exception as e:
+                    api_logger.warning(f"提取原始消息图片数据失败: {e}")
+            
             # 如果是流式请求，使用特殊的编辑重新执行处理
             if ask_request.stream:
                 # 创建修改后的聊天请求，标记为编辑重新执行
                 edit_chat_request = ChatRequest(
                     content=ask_request.content,
+                    images=images_to_use,  # 添加图片数据
                     stream=True,
                     session_id=session_id,
                     agent_id=ask_request.agent_id
@@ -1701,7 +1733,7 @@ async def ask_again(
                 # 添加特殊标记，告诉ChatStreamService跳过用户消息创建
                 edit_chat_request.__dict__['_skip_user_message'] = True
                 
-                api_logger.info(f"编辑重新执行：使用特殊标记跳过用户消息创建")
+                api_logger.info(f"编辑重新执行：使用特殊标记跳过用户消息创建，携带 {len(images_to_use)} 张图片")
                 
                 # 直接调用流式聊天处理
                 return await stream_chat(request, edit_chat_request, db, current_user)
@@ -1710,6 +1742,7 @@ async def ask_again(
             # 创建聊天请求
             chat_request = ChatRequest(
                 content=ask_request.content,
+                images=images_to_use,  # 添加图片数据
                 stream=False,
                 session_id=session_id,
                 agent_id=ask_request.agent_id

@@ -558,12 +558,77 @@ class ChatStreamService:
                         )
             else:
                 api_logger.info(f"编辑重新执行模式：跳过用户消息创建，直接使用现有记忆")
+                
+                # 即使在编辑重新执行模式下，也需要处理图片数据，构建相关变量
+                user_message_content = []
+                
+                # 添加文本内容
+                if user_content and user_content.strip():
+                    user_message_content.append({
+                        "type": "text",
+                        "text": user_content
+                    })
+                
+                # 添加图片内容
+                if hasattr(chat_request, 'images') and chat_request.images:
+                    api_logger.info(f"编辑重新执行：用户消息包含 {len(chat_request.images)} 张图片，处理图片格式")
+                    for image in chat_request.images:
+                        try:
+                            # 尝试下载图片并转换为base64
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(image.url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                                    if response.status == 200:
+                                        image_data = await response.read()
+                                        # 检测图片格式
+                                        content_type = response.headers.get('content-type', 'image/png')
+                                        if 'image/' in content_type:
+                                            image_format = content_type.split('/')[-1]
+                                        else:
+                                            image_format = 'png'  # 默认格式
+                                        
+                                        # 转换为base64
+                                        base64_image = base64.b64encode(image_data).decode('utf-8')
+                                        data_url = f"data:{content_type};base64,{base64_image}"
+                                        
+                                        user_message_content.append({
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": data_url,
+                                                "detail": "high"  # 使用高细节模式
+                                            }
+                                        })
+                                    else:
+                                        # 如果下载失败，仍然尝试使用原URL
+                                        user_message_content.append({
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": image.url,
+                                                "detail": "high"
+                                            }
+                                        })
+                        except Exception as download_error:
+                            api_logger.warning(f"编辑重新执行：图片处理失败 {image.url}: {download_error}")
+                            # 如果转换失败，回退到原URL
+                            user_message_content.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image.url,
+                                    "detail": "high"
+                                }
+                            })
+                
+                # 构建最终的用户消息
+                if len(user_message_content) > 1:  # 有图片或多个内容元素
+                    final_user_message = user_message_content
+                else:  # 只有文本
+                    final_user_message = user_content
             
             # 从记忆服务获取完整的消息记录
             messages = memory_service.get_messages(session_id)
             
             # 如果当前请求包含图片，需要替换最后一条用户消息为包含图片的格式
-            if not skip_user_message and hasattr(chat_request, 'images') and chat_request.images and len(user_message_content) > 1:
+            # 注意：编辑重新执行模式下也需要处理图片数据
+            if hasattr(chat_request, 'images') and chat_request.images and len(user_message_content) > 1:
                 api_logger.info(f"检测到图片消息，准备替换最后一条用户消息格式")
                 
                 # 找到最后一条用户消息并替换为包含图片的格式

@@ -157,6 +157,11 @@ interface SessionDetailResponse {
 export interface EditMessageRequest {
   message_index: number;
   content: string;
+  images?: Array<{
+    url: string;
+    name?: string;
+    size?: number;
+  }>;
   stream?: boolean;
   agent_id?: string;
   is_user_message: boolean;

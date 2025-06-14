@@ -31,6 +31,7 @@ class AskAgainRequest(BaseModel):
     """重新提问请求"""
     message_index: Union[int, str] = Field(..., description="消息索引或消息ID")
     content: Optional[str] = Field(None, description="新的消息内容，如果为空则仅截断记忆")
+    images: Optional[List[ImageData]] = Field(default=[], description="用户上传的图片列表")
     stream: Optional[bool] = Field(False, description="是否启用流式响应")
     agent_id: Optional[str] = Field(None, description="Agent ID，指定使用的AI助手")
     is_user_message: bool = Field(True, description="是否是用户消息，True表示编辑用户输入，False表示编辑AI回复")

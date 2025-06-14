@@ -220,6 +220,7 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
       const editRequest = {
         message_index: messageIndex,
         content: updatedContent,  // 使用更新后的完整内容
+        images: editImages || [],  // 添加图片数据
         stream: true,
         agent_id: currentAgent.value?.id,
         is_user_message: true,
@@ -412,7 +413,8 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
       // 调用编辑接口（非流式，仅编辑）
       const editRequest = {
         message_index: messageIndex,
-        content: messageObj.editContent.trim(),  // 这里先发送纯文本内容，因为图片处理在成功后
+        content: messageObj.editContent.trim(),
+        images: editImages || [],  // 添加图片数据
         stream: false,
         agent_id: currentAgent.value?.id,
         is_user_message: true,
