@@ -71,22 +71,19 @@ class Settings(BaseSettings):
     )
     DEFAULT_AGENT_TEMPERATURE: float = float(os.getenv("DEFAULT_AGENT_TEMPERATURE", "0.7"))
     DEFAULT_AGENT_TOP_P: float = float(os.getenv("DEFAULT_AGENT_TOP_P", "1.0"))
-    DEFAULT_AGENT_MAX_TOKENS: int = int(os.getenv("DEFAULT_AGENT_MAX_TOKENS", "2048"))
+    DEFAULT_AGENT_MAX_TOKENS: int = int(os.getenv("DEFAULT_AGENT_MAX_TOKENS", "30000"))
     
     # Redis配置
-    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
-    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
-    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
-    REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
-    REDIS_TTL: int = int(os.getenv("REDIS_TTL", "86400"))  # 默认记忆保存1天
-    REDIS_MAX_MEMORY_MESSAGES: int = int(os.getenv("REDIS_MAX_MEMORY_MESSAGES", "100"))  # 默认每个会话最多保存100条消息
-    REDIS_MAX_USER_MEMORIES: int = int(os.getenv("REDIS_MAX_USER_MEMORIES", "5"))  # 默认每个用户最多保留5个会话的记忆
+    REDIS_URL: str = Field(default="redis://localhost:6379", env="REDIS_URL")
     
-    @property
-    def REDIS_URL(self) -> str:
-        if self.REDIS_PASSWORD:
-            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+    # Redis 记忆服务配置
+    REDIS_TTL: int = Field(default=86400, env="REDIS_TTL")  # 24小时，单位秒
+    REDIS_MAX_MEMORY_MESSAGES: int = Field(default=50, env="REDIS_MAX_MEMORY_MESSAGES")  # 每个会话的最大消息数
+    REDIS_MAX_USER_MEMORIES: int = Field(default=100, env="REDIS_MAX_USER_MEMORIES")  # 每个用户的最大记忆会话数
+    
+    # ID转换缓存配置  
+    ID_CACHE_TTL: int = Field(default=3600, env="ID_CACHE_TTL")  # 1小时
+    ID_CACHE_ENABLED: bool = Field(default=True, env="ID_CACHE_ENABLED")
     
     # Tavily API配置
     TAVILY_API_KEY: Optional[str] = None

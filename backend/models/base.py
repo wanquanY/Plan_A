@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Boolean, DateTime, text, func
+from sqlalchemy import Column, Boolean, DateTime, text, func, String
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.dialects.postgresql import TIMESTAMP
@@ -48,6 +48,7 @@ class BaseModel(Base):
     __abstract__ = True
     
     id = Column(Integer, primary_key=True, index=True)
+    public_id = Column(String(50), unique=True, index=True, nullable=False)  # 对外暴露的随机ID
     created_at = Column(TIMESTAMP(timezone=True), default=BeijingTimestampText(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), default=BeijingTimestampText(), onupdate=BeijingTimestampText(), nullable=False)
     

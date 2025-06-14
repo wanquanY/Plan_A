@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 
 
@@ -21,19 +21,18 @@ class ChatRequest(BaseModel):
     content: str = Field(..., description="用户消息内容")
     images: Optional[List[ImageData]] = Field(default=[], description="用户上传的图片列表")
     stream: Optional[bool] = Field(False, description="是否启用流式响应")
-    session_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
-    agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
-    note_id: Optional[int] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
+    session_id: Optional[str] = Field(None, description="聊天会话ID，如果为空则创建新会话")
+    agent_id: Optional[str] = Field(None, description="Agent ID，指定使用的AI助手")
+    note_id: Optional[str] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
     model: Optional[str] = Field(None, description="指定使用的模型，如果提供则覆盖Agent默认模型")
 
 
 class AskAgainRequest(BaseModel):
     """重新提问请求"""
-    message_index: int = Field(..., description="重新提问的消息索引")
+    message_index: Union[int, str] = Field(..., description="消息索引或消息ID")
     content: Optional[str] = Field(None, description="新的消息内容，如果为空则仅截断记忆")
-    images: Optional[List[ImageData]] = Field(default=[], description="用户上传的图片列表")
     stream: Optional[bool] = Field(False, description="是否启用流式响应")
-    agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
+    agent_id: Optional[str] = Field(None, description="Agent ID，指定使用的AI助手")
     is_user_message: bool = Field(True, description="是否是用户消息，True表示编辑用户输入，False表示编辑AI回复")
     rerun: bool = Field(True, description="编辑用户消息时是否重新执行，True表示编辑后重新执行，False表示仅编辑不重新执行")
 
@@ -42,7 +41,7 @@ class ChatCompletionResponse(BaseModel):
     """聊天完成响应"""
     message: Message = Field(..., description="AI生成的消息")
     usage: Dict[str, Any] = Field(None, description="token使用统计")
-    session_id: Optional[int] = Field(None, description="聊天会话ID")
+    session_id: Optional[str] = Field(None, description="聊天会话ID")
 
 
 class ChatMemory(BaseModel):
@@ -70,9 +69,9 @@ class ChatStreamRequest(BaseModel):
     """流式聊天请求"""
     content: str = Field(..., description="用户消息内容")
     images: Optional[List[ImageData]] = Field(default=[], description="用户上传的图片列表")
-    session_id: Optional[int] = Field(None, description="聊天会话ID，如果为空则创建新会话")
-    agent_id: Optional[int] = Field(None, description="Agent ID，指定使用的AI助手")
-    note_id: Optional[int] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
+    session_id: Optional[str] = Field(None, description="聊天会话ID，如果为空则创建新会话")
+    agent_id: Optional[str] = Field(None, description="Agent ID，指定使用的AI助手")
+    note_id: Optional[str] = Field(None, description="笔记ID，当创建新会话时关联到指定笔记")
 
 
 class ChatMessageBase(BaseModel):
@@ -83,18 +82,18 @@ class ChatMessageBase(BaseModel):
 
 class ChatMessageCreate(ChatMessageBase):
     """创建聊天消息的请求模型"""
-    session_id: int
+    session_id: str
 
 
 class ChatMessageResponse(ChatMessageBase):
     """聊天消息响应模型"""
-    id: int
-    session_id: int
+    id: str
+    session_id: str
     created_at: Optional[datetime] = None
     tokens: Optional[int] = None
     prompt_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
-    agent_id: Optional[int] = None
+    agent_id: Optional[str] = None
     agent_info: Optional[Dict[str, Any]] = None  # 包含agent名称、头像等信息
     tool_calls: List[Dict[str, Any]] = []
 
@@ -110,7 +109,7 @@ class ChatBase(BaseModel):
 class ChatCreate(ChatBase):
     """创建聊天会话的请求模型"""
     title: Optional[str] = "新对话"
-    note_id: Optional[int] = Field(None, description="要关联的笔记ID")
+    note_id: Optional[str] = Field(None, description="要关联的笔记ID")
 
 
 class ChatUpdate(ChatBase):
@@ -120,9 +119,9 @@ class ChatUpdate(ChatBase):
 
 class ChatResponse(ChatBase):
     """聊天会话响应模型"""
-    id: int
-    user_id: int
-    agent_id: Optional[int] = None
+    id: str
+    user_id: str
+    agent_id: Optional[str] = None
     title: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -135,9 +134,9 @@ class ChatResponse(ChatBase):
 
 class ChatListResponse(BaseModel):
     """聊天会话列表响应模型"""
-    id: int
+    id: str
     title: str
-    agent_id: Optional[int] = None
+    agent_id: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     message_count: int = 0
@@ -149,7 +148,7 @@ class ChatListResponse(BaseModel):
 
 class ToolCallInfo(BaseModel):
     """工具调用信息"""
-    id: int
+    id: str
     tool_call_id: str
     tool_name: str
     function_name: str

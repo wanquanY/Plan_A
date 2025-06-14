@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, JSON, DateTime
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, JSON, DateTime, event
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from backend.models.base import BaseModel
+from backend.utils.random_util import RandomUtil
 
 
 class Chat(BaseModel):
@@ -68,3 +69,18 @@ class ChatMessage(BaseModel):
     #     "completed_at": "2025-01-01T00:00:05"
     #   }
     # ] 
+    tool_calls_data = Column(JSON, nullable=True)  # 工具调用数据
+
+
+# 为Chat模型添加事件监听器，在创建前自动生成public_id
+@event.listens_for(Chat, 'before_insert')
+def generate_chat_public_id(mapper, connection, target):
+    if not target.public_id:
+        target.public_id = RandomUtil.generate_chat_id()
+
+
+# 为ChatMessage模型添加事件监听器，在创建前自动生成public_id
+@event.listens_for(ChatMessage, 'before_insert')
+def generate_message_public_id(mapper, connection, target):
+    if not target.public_id:
+        target.public_id = RandomUtil.generate_message_id() 

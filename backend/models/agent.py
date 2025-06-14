@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, JSON, ARRAY, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, JSON, ARRAY, UniqueConstraint, event
 from sqlalchemy.orm import relationship
 
 from backend.models.base import BaseModel
+from backend.utils.random_util import RandomUtil
 
 
 class Agent(BaseModel):
@@ -24,4 +25,11 @@ class Agent(BaseModel):
     # 关联关系
     user = relationship("User", back_populates="agents")
     chats = relationship("Chat", back_populates="agent", cascade="all, delete-orphan")
-    messages = relationship("ChatMessage", back_populates="agent")  # Agent发送的消息 
+    messages = relationship("ChatMessage", back_populates="agent")  # Agent发送的消息
+
+
+# 为Agent模型添加事件监听器，在创建前自动生成public_id
+@event.listens_for(Agent, 'before_insert')
+def generate_agent_public_id(mapper, connection, target):
+    if not target.public_id:
+        target.public_id = RandomUtil.generate_agent_id() 

@@ -114,8 +114,15 @@ async def get_tool_call_by_id(
     db: AsyncSession,
     tool_call_id: str
 ) -> Optional[ToolCallHistory]:
-    """根据工具调用ID获取记录"""
-    stmt = select(ToolCallHistory).where(ToolCallHistory.tool_call_id == tool_call_id)
+    """根据工具调用ID获取记录 - 支持public_id和tool_call_id"""
+    # 判断是否为public_id（格式：tool-xxxxx）
+    if tool_call_id.startswith('tool-'):
+        # 使用public_id查询
+        stmt = select(ToolCallHistory).where(ToolCallHistory.public_id == tool_call_id)
+    else:
+        # 使用tool_call_id查询（兼容旧格式）
+        stmt = select(ToolCallHistory).where(ToolCallHistory.tool_call_id == tool_call_id)
+    
     query_result = await db.execute(stmt)
     return query_result.scalar_one_or_none()
 

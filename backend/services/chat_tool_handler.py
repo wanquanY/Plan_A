@@ -32,7 +32,8 @@ class ChatToolHandler:
         db: Optional[AsyncSession] = None, 
         session_id: Optional[int] = None, 
         message_id: Optional[int] = None,
-        user_id: Optional[int] = None
+        user_id: Optional[int] = None,
+        agent_id: Optional[int] = None
     ):
         """处理工具调用请求并返回结果"""
         results = []
@@ -195,9 +196,41 @@ class ChatToolHandler:
                 tool_call_data["result"] = tool_result
                 tool_call_data["completed_at"] = datetime.now().isoformat()
                 
-                # 在流式响应中暂时跳过数据库记录，避免greenlet_spawn错误
-                # 工具调用记录可以在后续的非流式操作中补充
-                api_logger.debug(f"流式响应中跳过工具调用数据库记录: {tool_call_id}")
+                # 保存工具调用记录到数据库
+                if db and session_id and message_id:
+                    try:
+                        # 将public_id转换为数据库内部ID
+                        from backend.utils.id_converter import IDConverter
+                        
+                        # 转换message_id和session_id为数据库ID
+                        db_message_id = await IDConverter.get_message_db_id(db, message_id) if isinstance(message_id, str) else message_id
+                        db_session_id = await IDConverter.get_chat_db_id(db, session_id) if isinstance(session_id, str) else session_id
+                        
+                        if not db_message_id or not db_session_id:
+                            api_logger.warning(f"无法转换ID: message_id={message_id} -> {db_message_id}, session_id={session_id} -> {db_session_id}")
+                            raise ValueError("无法转换public_id为数据库ID")
+                        
+                        # 使用传入的agent_id，避免懒加载
+                        agent_db_id = agent_id
+                        
+                        # 创建工具调用记录
+                        await create_tool_call(
+                            db=db,
+                            message_id=db_message_id,  # 使用数据库ID
+                            session_id=db_session_id,  # 使用数据库ID
+                            tool_call_id=tool_call_id,
+                            tool_name=function_name,  # 使用function_name作为tool_name
+                            function_name=function_name,
+                            arguments=function_args,
+                            agent_id=agent_db_id,
+                            status="completed",
+                            result=tool_result
+                        )
+                        api_logger.info(f"工具调用记录已保存到数据库: {tool_call_id}")
+                    except Exception as e:
+                        api_logger.error(f"保存工具调用记录失败: {str(e)}", exc_info=True)
+                else:
+                    api_logger.debug(f"跳过工具调用数据库记录（缺少必要参数）: db={bool(db)}, session_id={session_id}, message_id={message_id}")
                 
                 results.append({
                     "tool_call_id": tool_call_id,
@@ -210,8 +243,41 @@ class ChatToolHandler:
             except Exception as e:
                 api_logger.error(f"工具 {function_name} 执行失败: {str(e)}", exc_info=True)
                 
-                # 在流式响应中暂时跳过数据库记录，避免greenlet_spawn错误
-                api_logger.debug(f"流式响应中跳过工具调用错误记录: {tool_call_id}")
+                # 保存工具调用错误记录到数据库
+                if db and session_id and message_id:
+                    try:
+                        # 将public_id转换为数据库内部ID
+                        from backend.utils.id_converter import IDConverter
+                        
+                        # 转换message_id和session_id为数据库ID
+                        db_message_id = await IDConverter.get_message_db_id(db, message_id) if isinstance(message_id, str) else message_id
+                        db_session_id = await IDConverter.get_chat_db_id(db, session_id) if isinstance(session_id, str) else session_id
+                        
+                        if not db_message_id or not db_session_id:
+                            api_logger.warning(f"无法转换ID: message_id={message_id} -> {db_message_id}, session_id={session_id} -> {db_session_id}")
+                            raise ValueError("无法转换public_id为数据库ID")
+                        
+                        # 使用传入的agent_id，避免懒加载
+                        agent_db_id = agent_id
+                        
+                        # 创建工具调用错误记录
+                        await create_tool_call(
+                            db=db,
+                            message_id=db_message_id,  # 使用数据库ID
+                            session_id=db_session_id,  # 使用数据库ID
+                            tool_call_id=tool_call_id,
+                            tool_name=function_name,  # 使用function_name作为tool_name
+                            function_name=function_name,
+                            arguments=function_args,
+                            agent_id=agent_db_id,
+                            status="error",
+                            error_message=str(e)
+                        )
+                        api_logger.info(f"工具调用错误记录已保存到数据库: {tool_call_id}")
+                    except Exception as db_error:
+                        api_logger.error(f"保存工具调用错误记录失败: {str(db_error)}", exc_info=True)
+                else:
+                    api_logger.debug(f"跳过工具调用错误记录（缺少必要参数）: db={bool(db)}, session_id={session_id}, message_id={message_id}")
                 
                 results.append({
                     "tool_call_id": tool_call_id,

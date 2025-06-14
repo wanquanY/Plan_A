@@ -33,11 +33,11 @@ const props = defineProps({
     default: '<p>开始写作...</p>'
   },
   conversationId: {
-    type: [Number, String, null],
+    type: [String, null],
     default: null
   },
   noteId: {
-    type: [Number, String, null],
+    type: [String, null],
     default: null
   }
 });
@@ -76,7 +76,7 @@ const onNoteContentUpdated = (updateData: any) => {
   console.log('[EditorNew] 收到笔记内容更新事件:', updateData);
   
   // 检查是否是当前笔记的更新
-  if (props.noteId && updateData.noteId && parseInt(props.noteId) === updateData.noteId) {
+  if (props.noteId && updateData.noteId && props.noteId === updateData.noteId) {
     console.log('[EditorNew] 更新当前笔记内容');
     
     // 更新编辑器内容
@@ -91,7 +91,7 @@ const onNoteContentUpdated = (updateData: any) => {
   }
 };
 
-const onAgentResponseComplete = (data: { responseText: string, conversationId?: string | number }) => {
+const onAgentResponseComplete = (data: { responseText: string, conversationId?: string }) => {
   console.log('[EditorNew] Response complete:', data);
   
   // 更新对话ID

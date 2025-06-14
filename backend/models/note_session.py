@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, Integer, ForeignKey, DateTime, Boolean, event
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from backend.models.base import BaseModel
+from backend.utils.random_util import RandomUtil
 
 
 class NoteSession(BaseModel):
@@ -19,4 +20,11 @@ class NoteSession(BaseModel):
     session = relationship("Chat", back_populates="note_sessions")
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
+
+
+# 为NoteSession模型添加事件监听器，在创建前自动生成public_id
+@event.listens_for(NoteSession, 'before_insert')
+def generate_note_session_public_id(mapper, connection, target):
+    if not target.public_id:
+        target.public_id = RandomUtil.generate_session_relation_id() 

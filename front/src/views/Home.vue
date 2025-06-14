@@ -52,7 +52,7 @@ const restoreSidebarWidth = () => {
 
 // 初始化路由逻辑
 routeManager.initializeRoute(
-  async (noteId: number) => {
+  async (noteId: string) => {
     // 先清理侧边栏历史记录
     sessionManager.clearSidebarHistory();
     
@@ -104,7 +104,7 @@ routeManager.initializeRoute(
       }
     }
   },
-  async (sessionId: number) => {
+  async (sessionId: string) => {
     const result = await sessionManager.fetchSessionDetail(sessionId);
     if (result) {
       noteManager.editorContent.value = result.content;
@@ -151,7 +151,7 @@ routeManager.initializeRoute(
     }
     }
   },
-  async (sessionId: number) => {
+  async (sessionId: string) => {
     const noteData = await noteManager.fetchNoteBySessionId(sessionId);
     if (noteData) {
       // 更新URL，添加note参数但不改变编辑器内容
@@ -167,7 +167,7 @@ routeManager.initializeRoute(
 
 // 监听路由变化
 routeManager.watchRouteChanges(
-  async (noteId: number) => {
+  async (noteId: string) => {
     // 先清理侧边栏历史记录
     sessionManager.clearSidebarHistory();
     
@@ -228,7 +228,7 @@ routeManager.watchRouteChanges(
       }
     }
   },
-  async (sessionId: number) => {
+  async (sessionId: string) => {
     const result = await sessionManager.fetchSessionDetail(sessionId);
     if (result) {
       noteManager.editorContent.value = result.content;
@@ -275,7 +275,7 @@ routeManager.watchRouteChanges(
     }
     }
   },
-  async (sessionId: number) => {
+  async (sessionId: string) => {
     const noteData = await noteManager.fetchNoteBySessionId(sessionId);
     if (noteData) {
       // 更新URL，添加note参数但不改变编辑器内容
@@ -335,12 +335,12 @@ const handleSidebarSend = async (data: any) => {
     
     // 如果还是没有笔记ID，尝试从URL获取
     if (!currentNoteId && routeManager.route.query.note) {
-      const noteIdFromUrl = parseInt(routeManager.route.query.note as string);
-      if (!isNaN(noteIdFromUrl)) {
+      const noteIdFromUrl = routeManager.route.query.note as string;
+      if (noteIdFromUrl) {
         console.log('从URL获取笔记ID:', noteIdFromUrl);
         currentNoteId = noteIdFromUrl;
         noteManager.currentNoteId.value = noteIdFromUrl;
-        localStorage.setItem('lastNoteId', noteIdFromUrl.toString());
+        localStorage.setItem('lastNoteId', noteIdFromUrl);
       }
     }
     
@@ -411,7 +411,7 @@ const handleStopResponse = () => {
 };
 
 // 处理会话切换
-const handleSessionSwitched = async (sessionId: number) => {
+const handleSessionSwitched = async (sessionId: string) => {
   console.log('[Home.vue] 处理会话切换:', sessionId);
   
   try {
@@ -490,11 +490,11 @@ onMounted(() => {
     
     // 如果URL中有笔记ID但noteManager中没有，尝试同步
     if (routeManager.route.query.note && !noteManager.currentNoteId.value) {
-      const noteIdFromUrl = parseInt(routeManager.route.query.note as string);
-      if (!isNaN(noteIdFromUrl)) {
+      const noteIdFromUrl = routeManager.route.query.note as string;
+      if (noteIdFromUrl) {
         console.log('组件挂载时从URL同步笔记ID:', noteIdFromUrl);
         noteManager.currentNoteId.value = noteIdFromUrl;
-        localStorage.setItem('lastNoteId', noteIdFromUrl.toString());
+        localStorage.setItem('lastNoteId', noteIdFromUrl);
       }
     }
   });

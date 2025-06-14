@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, JSON, DateTime
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, JSON, DateTime, event
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from backend.models.base import BaseModel
+from backend.utils.random_util import RandomUtil
 
 
 class ToolCallHistory(BaseModel):
@@ -32,4 +33,11 @@ class ToolCallHistory(BaseModel):
     # 关联关系
     message = relationship("ChatMessage", back_populates="tool_calls")
     conversation = relationship("Chat")
-    agent = relationship("Agent") 
+    agent = relationship("Agent")
+
+
+# 为ToolCallHistory模型添加事件监听器，在创建前自动生成public_id
+@event.listens_for(ToolCallHistory, 'before_insert')
+def generate_tool_call_public_id(mapper, connection, target):
+    if not target.public_id:
+        target.public_id = RandomUtil.generate_tool_call_id() 

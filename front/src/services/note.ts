@@ -1,10 +1,10 @@
 import api from './api';
 
 export interface Note {
-  id: number;
+  id: string;
   title: string;
   content: string;
-  session_id: number | null;
+  session_id: string | null;
   is_public: boolean;
   last_edited_position?: number;
   created_at: string;
@@ -28,7 +28,7 @@ class NoteService {
   /**
    * 创建新笔记
    */
-  async createNote(noteData: NoteCreate): Promise<{ note_id: number; title: string }> {
+  async createNote(noteData: NoteCreate): Promise<{ note_id: string; title: string }> {
     try {
       const response = await api.post('/note', noteData);
       return response.data.data;
@@ -66,7 +66,7 @@ class NoteService {
   /**
    * 获取笔记详情
    */
-  async getNoteDetail(noteId: number): Promise<Note> {
+  async getNoteDetail(noteId: string): Promise<Note> {
     try {
       console.log(`NoteService.getNoteDetail 正在请求笔记详情，ID: ${noteId}`);
       const response = await api.get(`/note/${noteId}`);
@@ -108,7 +108,7 @@ class NoteService {
   /**
    * 更新笔记内容
    */
-  async updateNote(noteId: number, noteData: NoteUpdate): Promise<{ id: number; title: string; updated_at: string }> {
+  async updateNote(noteId: string, noteData: NoteUpdate): Promise<{ id: string; title: string; updated_at: string }> {
     try {
       const response = await api.put(`/note/${noteId}`, noteData);
       return response.data.data;
@@ -121,7 +121,7 @@ class NoteService {
   /**
    * 删除笔记
    */
-  async deleteNote(noteId: number): Promise<boolean> {
+  async deleteNote(noteId: string): Promise<boolean> {
     try {
       await api.delete(`/note/${noteId}`);
       return true;
@@ -135,7 +135,7 @@ class NoteService {
    * 自动保存笔记
    * 使用节流或防抖动技术优化，避免频繁请求
    */
-  async autoSaveNote(noteId: number, content: string, title?: string): Promise<boolean> {
+  async autoSaveNote(noteId: string, content: string, title?: string): Promise<boolean> {
     try {
       const updateData: NoteUpdate = { content };
       if (title) {
@@ -154,7 +154,7 @@ class NoteService {
    * Agent编辑笔记
    * 专门用于处理agent的笔记编辑请求
    */
-  async editNoteByAgent(noteId: number, editData: any): Promise<any> {
+  async editNoteByAgent(noteId: string, editData: any): Promise<any> {
     try {
       const response = await api.post(`/note/${noteId}/edit`, editData);
       return response.data;
@@ -168,7 +168,7 @@ class NoteService {
    * 应用预览编辑到笔记
    * 用户确认后真正保存编辑内容
    */
-  async applyEditPreview(noteId: number, editData: any): Promise<any> {
+  async applyEditPreview(noteId: string, editData: any): Promise<any> {
     try {
       const response = await api.post(`/note/${noteId}/apply-edit`, editData);
       return response.data;
@@ -181,7 +181,7 @@ class NoteService {
   /**
    * 从会话ID获取关联的笔记
    */
-  async getNoteBySessionId(sessionId: number): Promise<Note | null> {
+  async getNoteBySessionId(sessionId: string): Promise<Note | null> {
     try {
       const response = await api.get('/note', {
         params: {

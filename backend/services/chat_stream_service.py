@@ -138,12 +138,16 @@ class ChatStreamService:
                 
                 # 执行单个工具调用（传递message_id关联到特定消息）
                 try:
+                    # 获取agent的数据库ID，避免在handle_tool_calls中懒加载
+                    agent_db_id = agent.id if agent else None
+                    
                     single_result, single_tool_data = await chat_tool_handler.handle_tool_calls(
                         [tool_call_obj], 
                         agent, 
                         db,  # 传递数据库连接，保存工具调用记录
                         session_id,
-                        message_id=message_id  # 关联到特定消息
+                        message_id=message_id,  # 关联到特定消息
+                        agent_id=agent_db_id  # 传递agent_id，避免懒加载
                     )
                     
                     # 收集工具结果
@@ -336,7 +340,7 @@ class ChatStreamService:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Agent不存在或无权访问"
                     )
-                api_logger.info(f"流式响应使用Agent: AI助手, ID={current_agent.id}")
+                api_logger.info(f"流式响应使用Agent: AI助手, ID={current_agent.public_id}")
             
             if db and user_id:
                 # 获取或创建聊天会话
@@ -346,15 +350,24 @@ class ChatStreamService:
                         # 查询笔记信息，获取标题
                         from backend.models.note import Note
                         from sqlalchemy import select
+                        from backend.utils.id_converter import IDConverter
                         
-                        # 查询笔记是否存在
-                        note_stmt = select(Note).where(
-                            Note.id == note_id,
-                            Note.user_id == user_id,
-                            Note.is_deleted == False
-                        )
-                        note_result = await db.execute(note_stmt)
-                        note = note_result.scalar_one_or_none()
+                        # 初始化note变量
+                        note = None
+                        
+                        # 将 public_id 转换为数据库 ID
+                        db_note_id = await IDConverter.get_note_db_id(db, note_id)
+                        if not db_note_id:
+                            api_logger.warning(f"笔记 {note_id} 不存在，跳过笔记关联")
+                        else:
+                            # 查询笔记是否存在
+                            note_stmt = select(Note).where(
+                                Note.id == db_note_id,
+                                Note.user_id == user_id,
+                                Note.is_deleted == False
+                            )
+                            note_result = await db.execute(note_stmt)
+                            note = note_result.scalar_one_or_none()
                         
                         # 创建聊天对象并传递note_id
                         from backend.schemas.chat import ChatCreate
@@ -368,7 +381,7 @@ class ChatStreamService:
                         # 如果创建成功，将会话ID关联到笔记
                         if chat and note_id and note:
                             # 🔍 使用新的多对多关联方式
-                            api_logger.info(f"🔍 流式服务: 开始处理笔记关联: note_id={note_id}, session_id={chat.id}")
+                            api_logger.info(f"🔍 流式服务: 开始处理笔记关联: note_id={note_id}, session_id={chat.public_id}")
                             
                             # 检查是否已有主要会话，如果没有则设为主要会话
                             existing_primary = await note_session.get_primary_session_by_note(db, note_id)
@@ -379,26 +392,26 @@ class ChatStreamService:
                             await note_session.create_note_session_link(
                                 db, 
                                 note_id=note_id, 
-                                session_id=chat.id,
+                                session_id=chat.public_id,
                                 is_primary=is_primary
                             )
                             
-                            api_logger.info(f"🔍 流式服务: 笔记ID {note_id} 已关联到会话ID {chat.id}，是否为主要会话: {is_primary}")
+                            api_logger.info(f"🔍 流式服务: 笔记ID {note_id} 已关联到会话ID {chat.public_id}，是否为主要会话: {is_primary}")
                             
                             # 验证关联是否真的被创建
                             verification_sessions = await note_session.get_sessions_by_note(db, note_id)
-                            verification_session_ids = [s.id for s in verification_sessions]
+                            verification_session_ids = [s.public_id for s in verification_sessions]
                             api_logger.info(f"🔍 流式服务: 验证笔记 {note_id} 关联的会话列表: {verification_session_ids}")
                             
-                            if chat.id in verification_session_ids:
-                                api_logger.info(f"✅ 流式服务: 笔记 {note_id} 与会话 {chat.id} 关联创建成功")
+                            if chat.public_id in verification_session_ids:
+                                api_logger.info(f"✅ 流式服务: 笔记 {note_id} 与会话 {chat.public_id} 关联创建成功")
                             else:
-                                api_logger.error(f"❌ 流式服务: 笔记 {note_id} 与会话 {chat.id} 关联创建失败！")
+                                api_logger.error(f"❌ 流式服务: 笔记 {note_id} 与会话 {chat.public_id} 关联创建失败！")
                     else:
                         # 常规创建会话
                         chat = await create_chat(db, user_id, agent_id=agent_id)
                     
-                    session_id = chat.id
+                    session_id = chat.public_id
                     new_session_created = True
                     api_logger.info(f"创建新聊天会话: session_id={session_id}, user_id={user_id}, agent_id={agent_id}")
                 else:
@@ -420,7 +433,7 @@ class ChatStreamService:
                         agent_id = chat.agent_id
                         current_agent = await agent_crud.get_agent_by_id(db, agent_id=agent_id)
                         if current_agent:
-                            api_logger.info(f"从会话加载Agent: AI助手, ID={current_agent.id}")
+                            api_logger.info(f"从会话加载Agent: AI助手, ID={current_agent.public_id}")
                             
                     api_logger.info(f"使用现有会话: session_id={session_id}")
             else:
@@ -838,7 +851,7 @@ class ChatStreamService:
                         total_tokens=total_tokens,
                         agent_id=agent_id
                     )
-                    api_logger.info(f"AI消息已保存: id={ai_message.id}, 初始内容长度: {len(collected_content or '')}")
+                    api_logger.info(f"AI消息已保存: id={ai_message.public_id}, 初始内容长度: {len(collected_content or '')}")
                 
                 # 检查是否有有效的工具调用需要处理
                 valid_tool_calls = [tc for tc in collected_tool_calls if tc is not None and tc.get('function', {}).get('name')]
@@ -860,7 +873,7 @@ class ChatStreamService:
                         has_tools, 
                         session_id,
                         db,
-                        message_id=ai_message.id if ai_message else None,
+                        message_id=ai_message.public_id if ai_message else None,
                         interaction_flow=interaction_flow
                     ):
                         if isinstance(content_chunk, tuple):
@@ -1114,7 +1127,7 @@ class ChatStreamService:
                                 has_tools, 
                                 session_id,
                                 db,
-                                message_id=ai_message.id if ai_message else None,
+                                message_id=ai_message.public_id if ai_message else None,
                                 interaction_flow=interaction_flow
                             ):
                                 if isinstance(content_chunk, tuple):

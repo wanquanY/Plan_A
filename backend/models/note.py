@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, event
 from sqlalchemy.orm import relationship
 
 from backend.models.base import BaseModel
+from backend.utils.random_util import RandomUtil
 
 
 class Note(BaseModel):
@@ -33,4 +34,11 @@ class Note(BaseModel):
         """检查是否有主要会话（同步方法，仅用于已加载的数据）"""
         if hasattr(self, '_note_sessions_loaded') and self._note_sessions_loaded:
             return any(ns.is_primary for ns in self.note_sessions if not ns.is_deleted)
-        return False 
+        return False
+
+
+# 为Note模型添加事件监听器，在创建前自动生成public_id
+@event.listens_for(Note, 'before_insert')
+def generate_note_public_id(mapper, connection, target):
+    if not target.public_id:
+        target.public_id = RandomUtil.generate_note_id() 

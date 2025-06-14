@@ -8,7 +8,7 @@ export function useRouteManager() {
   const route = useRoute();
 
   // 加载最新笔记
-  const loadLatestNote = async (fetchNoteDetail: (noteId: number) => Promise<any>) => {
+  const loadLatestNote = async (fetchNoteDetail: (noteId: string) => Promise<any>) => {
     try {
       const { notes } = await noteService.getNotes(1, 1); // 获取第一页的第一条笔记（最新的）
       
@@ -20,7 +20,7 @@ export function useRouteManager() {
         router.push({
           query: {
             ...route.query,
-            note: latestNote.id.toString()
+            note: latestNote.id
           }
         });
         
@@ -36,9 +36,9 @@ export function useRouteManager() {
 
   // 处理路由初始化逻辑
   const initializeRoute = (
-    fetchNoteDetail: (noteId: number) => Promise<any>,
-    fetchSessionDetail: (sessionId: number) => Promise<any>,
-    fetchNoteBySessionId: (sessionId: number) => Promise<any>,
+    fetchNoteDetail: (noteId: string) => Promise<any>,
+    fetchSessionDetail: (sessionId: string) => Promise<any>,
+    fetchNoteBySessionId: (sessionId: string) => Promise<any>,
     createNewNote: () => void,
     clearSidebarHistory: () => void,
     fetchNotes?: (page?: number, autoLoad?: boolean) => void
@@ -53,17 +53,17 @@ export function useRouteManager() {
       // 首先检查URL中是否有笔记ID参数
       if (route.query.note) {
         // 无论是否有会话ID，只要有笔记ID就加载笔记内容
-        const noteId = parseInt(route.query.note as string);
-        if (!isNaN(noteId)) {
+        const noteId = route.query.note as string;
+        if (noteId) {
           console.log(`从URL参数设置笔记ID: ${noteId}`);
           
           // 立即保存到localStorage，确保即使异步加载失败也能获取到
-          localStorage.setItem('lastNoteId', noteId.toString());
+          localStorage.setItem('lastNoteId', noteId);
           
           // 如果同时有会话ID，也设置会话ID，但优先加载笔记内容
           if (route.query.id) {
-            const sessionId = parseInt(route.query.id as string);
-            if (!isNaN(sessionId)) {
+            const sessionId = route.query.id as string;
+            if (sessionId) {
               console.log(`URL中同时有会话ID: ${sessionId}，但优先加载笔记内容`);
             }
           }
@@ -76,8 +76,8 @@ export function useRouteManager() {
       }
       // 如果只有会话ID参数，没有笔记ID参数
       else if (route.query.id) {
-        const sessionId = parseInt(route.query.id as string);
-        if (!isNaN(sessionId)) {
+        const sessionId = route.query.id as string;
+        if (sessionId) {
           // 设置当前会话ID并获取详情
           fetchSessionDetail(sessionId);
           
@@ -114,9 +114,9 @@ export function useRouteManager() {
 
   // 监听路由变化
   const watchRouteChanges = (
-    fetchNoteDetail: (noteId: number) => Promise<any>,
-    fetchSessionDetail: (sessionId: number) => Promise<any>,
-    fetchNoteBySessionId: (sessionId: number) => Promise<any>,
+    fetchNoteDetail: (noteId: string) => Promise<any>,
+    fetchSessionDetail: (sessionId: string) => Promise<any>,
+    fetchNoteBySessionId: (sessionId: string) => Promise<any>,
     createNewNote: () => void,
     clearSidebarHistory: () => void
   ) => {
@@ -130,17 +130,17 @@ export function useRouteManager() {
       // 首先检查URL中是否有笔记ID参数
       if (newQuery.note) {
         // 无论是否有会话ID，只要有笔记ID就加载笔记内容
-        const noteId = parseInt(newQuery.note as string);
-        if (!isNaN(noteId)) {
+        const noteId = newQuery.note as string;
+        if (noteId) {
           console.log(`从URL参数变化设置笔记ID: ${noteId}`);
           
           // 立即保存到localStorage，确保即使异步加载失败也能获取到
-          localStorage.setItem('lastNoteId', noteId.toString());
+          localStorage.setItem('lastNoteId', noteId);
           
           // 如果同时有会话ID，也设置会话ID，但优先加载笔记内容
           if (newQuery.id) {
-            const sessionId = parseInt(newQuery.id as string);
-            if (!isNaN(sessionId)) {
+            const sessionId = newQuery.id as string;
+            if (sessionId) {
               console.log(`URL中同时有会话ID: ${sessionId}，但优先加载笔记内容`);
             }
           }
@@ -153,8 +153,8 @@ export function useRouteManager() {
       }
       // 如果只有会话ID参数，没有笔记ID参数
       else if (newQuery.id) {
-        const sessionId = parseInt(newQuery.id as string);
-        if (!isNaN(sessionId)) {
+        const sessionId = newQuery.id as string;
+        if (sessionId) {
           fetchSessionDetail(sessionId);
           
           // 尝试查找关联的笔记ID，但不加载笔记内容

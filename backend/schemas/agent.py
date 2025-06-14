@@ -44,8 +44,8 @@ class AgentUpdate(BaseModel):
 
 # 返回Agent详情
 class AgentInDB(AgentBase):
-    id: int
-    user_id: int
+    id: str
+    user_id: str
     created_at: datetime
     updated_at: datetime
 
@@ -55,10 +55,10 @@ class AgentInDB(AgentBase):
 
 # 返回Agent列表
 class AgentListResponse(BaseModel):
-    id: int
+    id: str
     model: str
     created_at: datetime
-    user_id: int
+    user_id: str
 
     class Config:
         from_attributes = True 

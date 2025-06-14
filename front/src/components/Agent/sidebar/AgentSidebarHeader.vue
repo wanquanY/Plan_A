@@ -126,7 +126,7 @@ import noteSessionService, { type NoteSession } from '../../../services/noteSess
 
 const props = defineProps({
   noteId: {
-    type: [Number, String, null],
+    type: [String, null],
     default: null
   }
 });
@@ -135,7 +135,7 @@ const emit = defineEmits(['close', 'session-switched']);
 
 const router = useRouter();
 const sessions = ref<NoteSession[]>([]);
-const currentSessionId = ref<number | null>(null);
+const currentSessionId = ref<string | null>(null);
 
 // 历史记录弹窗相关状态
 const showHistoryDropdown = ref(false);
@@ -143,13 +143,13 @@ const historyButtonRef = ref(null);
 const historyDropdownPosition = ref({});
 
 // 隐藏的会话ID列表
-const hiddenSessionIds = ref<Set<number>>(new Set());
+const hiddenSessionIds = ref<Set<string>>(new Set());
 
 // 从全局注入当前会话ID
 const globalCurrentSessionId = inject<any>('currentSessionId');
 
 // 加载笔记的会话列表
-const loadNoteSessions = async (noteId: number) => {
+const loadNoteSessions = async (noteId: string) => {
   try {
     console.log('[AgentSidebarHeader] 开始加载笔记会话列表, noteId:', noteId);
     const sessionList = await noteSessionService.getNoteSessions(noteId);
@@ -213,7 +213,7 @@ const getSessionDisplayTitle = (session: NoteSession): string => {
 // 监听全局会话ID变化
 watch(() => globalCurrentSessionId?.value, (newSessionId) => {
   if (newSessionId && newSessionId !== currentSessionId.value) {
-    currentSessionId.value = Number(newSessionId);
+    currentSessionId.value = newSessionId;
   }
 }, { immediate: true });
 
@@ -221,7 +221,7 @@ watch(() => globalCurrentSessionId?.value, (newSessionId) => {
 watch(() => props.noteId, async (newNoteId) => {
   console.log('[AgentSidebarHeader] 笔记ID变化:', newNoteId);
   if (newNoteId) {
-    await loadNoteSessions(Number(newNoteId));
+    await loadNoteSessions(newNoteId);
   } else {
     console.log('[AgentSidebarHeader] 没有笔记ID，清空会话列表');
     sessions.value = [];
@@ -229,7 +229,7 @@ watch(() => props.noteId, async (newNoteId) => {
 }, { immediate: true });
 
 // 切换到指定会话
-const switchToSession = (sessionId: number) => {
+const switchToSession = (sessionId: string) => {
   if (sessionId === currentSessionId.value) return;
   
   console.log('[AgentSidebarHeader] 切换到会话:', sessionId);
@@ -267,7 +267,7 @@ const createNewSession = async () => {
   try {
     console.log('[AgentSidebarHeader] 开始创建新会话，笔记ID:', props.noteId);
     
-    const newSession = await noteSessionService.createSessionForNote(Number(props.noteId));
+    const newSession = await noteSessionService.createSessionForNote(props.noteId);
     
     console.log('[AgentSidebarHeader] 新会话创建成功:', newSession);
     
@@ -281,7 +281,7 @@ const createNewSession = async () => {
     
     // 重新加载会话列表
     console.log('[AgentSidebarHeader] 步骤2: 开始重新加载会话列表');
-    await loadNoteSessions(Number(props.noteId));
+    await loadNoteSessions(props.noteId);
     console.log('[AgentSidebarHeader] 步骤2: 会话列表重新加载完成，当前sessions数量:', sessions.value.length);
     
     // 确保新会话被设置为当前会话（防止loadNoteSessions重置）
@@ -326,7 +326,7 @@ const createNewSession = async () => {
 };
 
 // 隐藏会话（从标签中移除，但不取消关联）
-const hideSession = async (sessionId: number) => {
+const hideSession = async (sessionId: string) => {
   // 检查是否是最后一个可见的会话
   const visibleSessions = sessions.value.filter(s => !hiddenSessionIds.value.has(s.id));
   if (visibleSessions.length <= 1) {
@@ -349,17 +349,17 @@ const hideSession = async (sessionId: number) => {
 };
 
 // 移除会话关联（保持原有功能，仅在历史记录弹窗中使用）
-const removeSession = async (sessionId: number) => {
+const removeSession = async (sessionId: string) => {
   if (!props.noteId || sessions.value.length <= 1) {
     message.warning('至少需要保留一个对话');
     return;
   }
   
   try {
-    await noteSessionService.unlinkSession(Number(props.noteId), sessionId);
+    await noteSessionService.unlinkSession(props.noteId, sessionId);
     
     // 重新加载会话列表
-    await loadNoteSessions(Number(props.noteId));
+    await loadNoteSessions(props.noteId);
     
     // 如果移除的是当前会话，切换到第一个会话
     if (sessionId === currentSessionId.value && sessions.value.length > 0) {
@@ -402,7 +402,7 @@ const closeHistoryDropdown = () => {
 };
 
 // 从历史记录中切换会话
-const switchToSessionFromHistory = (sessionId: number) => {
+const switchToSessionFromHistory = (sessionId: string) => {
   // 如果是隐藏的会话，先显示它
   if (hiddenSessionIds.value.has(sessionId)) {
     hiddenSessionIds.value.delete(sessionId);
@@ -414,7 +414,7 @@ const switchToSessionFromHistory = (sessionId: number) => {
 };
 
 // 从历史记录中移除会话
-const removeSessionFromHistory = async (sessionId: number) => {
+const removeSessionFromHistory = async (sessionId: string) => {
   await removeSession(sessionId);
   // 弹窗会在loadNoteSessions重新加载后自动更新
 };
@@ -450,7 +450,7 @@ const truncateText = (text: string, maxLength: number): string => {
 
 onMounted(() => {
   if (props.noteId) {
-    loadNoteSessions(Number(props.noteId));
+    loadNoteSessions(props.noteId);
   }
   
   // 添加点击外部关闭弹窗的监听
@@ -477,7 +477,7 @@ defineExpose({
   refreshSessions: () => {
     if (props.noteId) {
       console.log('[AgentSidebarHeader] 外部调用刷新会话列表');
-      loadNoteSessions(Number(props.noteId));
+      loadNoteSessions(props.noteId);
     }
   }
 });

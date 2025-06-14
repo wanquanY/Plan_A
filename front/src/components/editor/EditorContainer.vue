@@ -99,11 +99,11 @@ const props = defineProps({
     default: '<p>开始写作...</p>'
   },
   conversationId: {
-    type: [Number, String, null],
+    type: [String, null],
     default: null
   },
   noteId: {
-    type: [Number, String, null],
+    type: [String, null],
     default: null
   }
 });
@@ -444,7 +444,7 @@ const handleInsertResponse = async (responseText: string, fromSidebar = false) =
 };
 
 // 加载会话历史记录
-const loadConversationHistory = async (sessionId: number | string | null) => {
+const loadConversationHistory = async (sessionId: string | null) => {
   // 如果会话ID与上次加载的相同，跳过重复加载
   if (sessionId && sessionId === editorState.lastLoadedSessionId.value) {
     console.log(`[EditorContainer] 会话ID ${sessionId} 已经加载过，跳过重复加载`);
@@ -471,7 +471,7 @@ const loadConversationHistory = async (sessionId: number | string | null) => {
   try {
     console.log(`[EditorContainer] 开始加载会话 ${sessionId} 的历史记录`);
     const { default: chatService } = await import('../../services/chat');
-    const history = await chatService.getSessionAgentHistory(Number(sessionId));
+    const history = await chatService.getSessionAgentHistory(sessionId);
     
     if (history && history.length > 0) {
       editorState.conversationHistory.value = history;
@@ -519,7 +519,7 @@ const loadConversationHistory = async (sessionId: number | string | null) => {
 const onNoteEditPreview = async (previewData: any) => {
   console.log('[EditorContainer] 收到笔记编辑预览事件:', previewData);
   
-  if (props.noteId && previewData.noteId && parseInt(props.noteId) === previewData.noteId) {
+  if (props.noteId && previewData.noteId && props.noteId === previewData.noteId) {
     console.log('[EditorContainer] 显示当前笔记的编辑预览');
     
     previewManager.pendingEditData.value = previewData;
@@ -544,7 +544,7 @@ const handleAcceptInlinePreview = async (previewData: any) => {
     // 调用后端API应用预览编辑
     if (props.noteId) {
       const { default: noteService } = await import('../../services/note');
-      await noteService.applyEditPreview(parseInt(props.noteId), {
+      await noteService.applyEditPreview(props.noteId, {
         content: previewData.content,
         title: previewData.title
       });
@@ -636,7 +636,7 @@ watch(() => props.conversationId, (newId) => {
   if (agentResponseHandlerRef.value) {
     console.log(`编辑器接收到会话ID: ${newId || 'null'}，设置到AgentResponseHandler`);
     // 无论newId是否为null都要设置，确保新建会话时能正确清空
-    agentResponseHandlerRef.value.setConversationId(newId ? String(newId) : null);
+    agentResponseHandlerRef.value.setConversationId(newId);
   }
   
   // 加载会话的历史记录
@@ -648,7 +648,7 @@ watch(() => props.noteId, (newId) => {
   if (agentResponseHandlerRef.value) {
     console.log(`编辑器接收到笔记ID: ${newId || 'null'}，设置到AgentResponseHandler`);
     // 无论newId是否为null都要设置，确保新建笔记时能正确传递ID
-    agentResponseHandlerRef.value.setCurrentNoteId(newId ? String(newId) : null);
+    agentResponseHandlerRef.value.setCurrentNoteId(newId);
     
     // 调试输出：确认AgentResponseHandler内部的noteId已被设置
     setTimeout(() => {

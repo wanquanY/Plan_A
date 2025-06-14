@@ -300,6 +300,14 @@ async def startup_event():
         app_logger.error(f"数据库初始化失败: {e}")
         sys.exit(1)
     
+    # 初始化Redis服务
+    try:
+        from backend.services.redis_service import redis_service
+        await redis_service.init()
+        app_logger.info("Redis服务初始化完成")
+    except Exception as e:
+        app_logger.warning(f"Redis服务初始化失败，将使用无缓存模式: {e}")
+    
     app_logger.info(f"随机测试ID: {RandomUtil.generate_request_id()}")
     app_logger.info("应用程序启动完成")
 

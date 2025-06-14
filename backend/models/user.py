@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, event
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
 from backend.models.base import BaseModel
+from backend.utils.random_util import RandomUtil
 
 
 class User(BaseModel):
@@ -19,4 +20,11 @@ class User(BaseModel):
     # 关联关系
     chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
     agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
-    notes = relationship("Note", back_populates="user", cascade="all, delete-orphan") 
+    notes = relationship("Note", back_populates="user", cascade="all, delete-orphan")
+
+
+# 为User模型添加事件监听器，在创建前自动生成public_id
+@event.listens_for(User, 'before_insert')
+def generate_user_public_id(mapper, connection, target):
+    if not target.public_id:
+        target.public_id = RandomUtil.generate_user_id() 

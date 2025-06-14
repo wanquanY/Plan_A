@@ -5,10 +5,10 @@ from datetime import datetime
 
 class ToolCallHistoryResponse(BaseModel):
     """工具调用历史响应模式"""
-    id: int
-    message_id: int
-    session_id: int
-    agent_id: Optional[int]
+    id: str
+    message_id: str
+    session_id: str
+    agent_id: Optional[str]
     
     # 工具调用基本信息
     tool_call_id: str
@@ -31,4 +31,4 @@ class ToolCallHistoryResponse(BaseModel):
         from_attributes = True 
 
 class ToolCallHistoryCreate(BaseModel):
-    session_id: int 
+    session_id: str 

@@ -58,13 +58,17 @@ class ChatResponseService:
             api_logger.info(f"检测到工具调用请求: {len(tool_calls)} 个工具调用")
             
             # 处理工具调用
+            # 获取agent的数据库ID，避免在handle_tool_calls中懒加载
+            agent_db_id = agent.id if agent else None
+            
             tool_results, tool_calls_data = await chat_tool_handler.handle_tool_calls(
                 tool_calls, 
                 agent, 
                 db, 
                 session_id,
                 message_id=message_id,
-                user_id=user_id
+                user_id=user_id,
+                agent_id=agent_db_id  # 传递agent_id，避免懒加载
             )
             
             # 记录工具调用到交互流程
@@ -182,7 +186,7 @@ class ChatResponseService:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Agent不存在或无权访问"
                     )
-                api_logger.info(f"使用Agent: AI助手, ID={current_agent.id}")
+                api_logger.info(f"使用Agent: AI助手, ID={current_agent.public_id}")
             
             # 会话创建或验证
             if db and user_id:
@@ -215,7 +219,7 @@ class ChatResponseService:
                         # 如果创建成功，将会话ID关联到笔记
                         if chat and chat_request.note_id and note:
                             # 🔍 使用新的多对多关联方式
-                            api_logger.info(f"🔍 响应服务: 开始处理笔记关联: note_id={chat_request.note_id}, session_id={chat.id}")
+                            api_logger.info(f"🔍 响应服务: 开始处理笔记关联: note_id={chat_request.note_id}, session_id={chat.public_id}")
                             
                             # 检查是否已有主要会话，如果没有则设为主要会话
                             existing_primary = await note_session.get_primary_session_by_note(db, chat_request.note_id)
@@ -226,26 +230,26 @@ class ChatResponseService:
                             await note_session.create_note_session_link(
                                 db, 
                                 note_id=chat_request.note_id, 
-                                session_id=chat.id,
+                                session_id=chat.public_id,
                                 is_primary=is_primary
                             )
                             
-                            api_logger.info(f"🔍 响应服务: 笔记ID {chat_request.note_id} 已关联到会话ID {chat.id}，是否为主要会话: {is_primary}")
+                            api_logger.info(f"🔍 响应服务: 笔记ID {chat_request.note_id} 已关联到会话ID {chat.public_id}，是否为主要会话: {is_primary}")
                             
                             # 验证关联是否真的被创建
                             verification_sessions = await note_session.get_sessions_by_note(db, chat_request.note_id)
-                            verification_session_ids = [s.id for s in verification_sessions]
+                            verification_session_ids = [s.public_id for s in verification_sessions]
                             api_logger.info(f"🔍 响应服务: 验证笔记 {chat_request.note_id} 关联的会话列表: {verification_session_ids}")
                             
-                            if chat.id in verification_session_ids:
-                                api_logger.info(f"✅ 响应服务: 笔记 {chat_request.note_id} 与会话 {chat.id} 关联创建成功")
+                            if chat.public_id in verification_session_ids:
+                                api_logger.info(f"✅ 响应服务: 笔记 {chat_request.note_id} 与会话 {chat.public_id} 关联创建成功")
                             else:
-                                api_logger.error(f"❌ 响应服务: 笔记 {chat_request.note_id} 与会话 {chat.id} 关联创建失败！")
+                                api_logger.error(f"❌ 响应服务: 笔记 {chat_request.note_id} 与会话 {chat.public_id} 关联创建失败！")
                     else:
                         # 常规创建会话
                         chat = await create_chat(db, user_id, agent_id=agent_id)
                         
-                    session_id = chat.id
+                    session_id = chat.public_id
                     api_logger.info(f"创建新聊天会话: session_id={session_id}, user_id={user_id}, agent_id={agent_id}")
                 else:
                     # 验证会话存在且属于当前用户
@@ -266,7 +270,7 @@ class ChatResponseService:
                         agent_id = chat.agent_id
                         current_agent = await agent_crud.get_agent_by_id(db, agent_id=agent_id)
                         if current_agent:
-                            api_logger.info(f"从会话加载Agent: AI助手, ID={current_agent.id}")
+                            api_logger.info(f"从会话加载Agent: AI助手, ID={current_agent.public_id}")
             
             # 获取用户发送的内容
             user_content = chat_request.content
@@ -534,7 +538,7 @@ class ChatResponseService:
                         has_tools,
                         session_id,
                         db,
-                        ai_message.id if ai_message else None,
+                        ai_message.public_id if ai_message else None,
                         interaction_flow,
                         user_id
                     )

@@ -8,8 +8,8 @@ import { formatMessagesToHtml as formatMessagesToHtmlFromService } from '../serv
 interface ConversationHistoryItem {
   user: string;
   agent: string;
-  userMessageId?: number;
-  agentMessageId?: number;
+  userMessageId?: string;
+  agentMessageId?: string;
 }
 
 export function useSessionManager() {
@@ -17,7 +17,7 @@ export function useSessionManager() {
   const route = useRoute();
   
   // 从全局布局获取会话ID和会话列表，添加类型注解
-  const currentSessionId = inject<Ref<number | string | null>>('currentSessionId');
+  const currentSessionId = inject<Ref<string | null>>('currentSessionId');
   const sessions = inject<Ref<any[]>>('sessions');
   const fetchSessions = inject<() => Promise<void>>('fetchSessions');
 
@@ -32,13 +32,13 @@ export function useSessionManager() {
   const currentResponseController = ref<AbortController | null>(null);
   
   // 添加当前响应的会话ID引用，用于停止时获取正确的会话ID
-  const currentResponseConversationId = ref<number | null>(null);
+  const currentResponseConversationId = ref<string | null>(null);
   
   // 添加当前用户消息内容的引用，用于停止时保存
   const currentUserMessageContent = ref<string>('');
 
   // 获取会话详情
-  const fetchSessionDetail = async (sessionId: number) => {
+  const fetchSessionDetail = async (sessionId: string) => {
     try {
       if (!sessionId) return;
       
@@ -121,7 +121,7 @@ export function useSessionManager() {
   };
 
   // 加载会话历史记录到侧边栏
-  const loadSessionHistoryToSidebar = async (sessionId: number) => {
+  const loadSessionHistoryToSidebar = async (sessionId: string) => {
     try {
       const agentHistory = await chatService.getSessionAgentHistory(sessionId);
       console.log('获取到的会话历史记录:', agentHistory);
@@ -155,7 +155,7 @@ export function useSessionManager() {
       let finalConversationId = currentSessionId?.value;
       
       // 初始化当前响应的会话ID
-      currentResponseConversationId.value = currentSessionId?.value ? Number(currentSessionId.value) : null;
+      currentResponseConversationId.value = currentSessionId?.value || null;
       
       // 记录当前用户消息内容
       currentUserMessageContent.value = data.content || '';
@@ -168,8 +168,8 @@ export function useSessionManager() {
       const chatRequest: any = {
         agent_id: data.agentId || data.agent?.id || 1,
         content: data.content,
-        session_id: currentSessionId?.value ? Number(currentSessionId.value) : null,
-        note_id: noteIdValue ? Number(noteIdValue) : null,
+        session_id: currentSessionId?.value,
+        note_id: noteIdValue,
         model: data.model
       };
       
@@ -336,7 +336,8 @@ export function useSessionManager() {
               
               try {
                 // 重新获取会话历史记录，包含正确的消息ID
-                const agentHistory = await chatService.getSessionAgentHistory(Number(sessionIdToUse));
+                if (!sessionIdToUse) return;
+                const agentHistory = await chatService.getSessionAgentHistory(sessionIdToUse);
                 console.log('重新获取到的会话历史记录:', agentHistory);
                 
                 if (agentHistory && agentHistory.length > 0) {
@@ -432,7 +433,7 @@ export function useSessionManager() {
         try {
           console.log('[useSessionManager] 调用后端API保存停止时的内容，会话ID:', conversationId);
           const saved = await chatService.stopAndSaveResponse(
-            Number(conversationId),
+            conversationId,
             currentContent,
             lastUserMessage, // 传递用户消息内容，确保首次聊天时用户消息也被保存
             undefined // agent_id 在后端可以从消息历史中推断
@@ -476,7 +477,7 @@ export function useSessionManager() {
           if (idToUse) {
             console.log('[useSessionManager] 停止后刷新会话历史记录，使用会话ID:', idToUse);
             // 重新获取会话历史记录，确保包含最新的消息（包括被停止的消息）
-            const agentHistory = await chatService.getSessionAgentHistory(Number(idToUse));
+            const agentHistory = await chatService.getSessionAgentHistory(idToUse);
             if (agentHistory && agentHistory.length > 0) {
               sidebarConversationHistory.value = [...agentHistory];
               sidebarHistoryLength.value = agentHistory.length;
@@ -538,7 +539,7 @@ export function useSessionManager() {
     if (refreshHistory && currentSessionId?.value) {
       console.log('收到刷新历史记录请求，重新获取会话历史');
       try {
-        const agentHistory = await chatService.getSessionAgentHistory(Number(currentSessionId.value));
+        const agentHistory = await chatService.getSessionAgentHistory(currentSessionId.value);
         console.log('重新获取到的会话历史记录:', agentHistory);
         
         if (agentHistory && agentHistory.length > 0) {

@@ -18,7 +18,7 @@ export interface ChatStreamMessage {
       reasoning_content?: string;
     };
     full_content: string;
-    session_id: number;
+    session_id: string;
     done: boolean;
     tool_status?: {
       type: string;
@@ -27,7 +27,7 @@ export interface ChatStreamMessage {
       status: string;
     };
     agent_info?: {
-      id: number;
+      id: string;
       name: string;
       avatar_url?: string;
       model?: string;
@@ -42,30 +42,30 @@ export interface ChatStreamMessage {
 export type StreamCallback = (
   response: any, 
   isComplete: boolean, 
-  sessionId: number, 
+  sessionId: string,
   toolStatus?: any,
   reasoningContent?: string
 ) => void;
 
 // 与Agent聊天的请求
 export interface ChatRequest {
-  agent_id: number;
+  agent_id: string;
   content: string;
   images?: Array<{
     url: string;
     name?: string;
     size?: number;
   }>;
-  session_id?: number;
-  note_id?: number;
+  session_id?: string;
+  note_id?: string;
   model?: string;
 }
 
 // 会话列表接口
 export interface ChatSession {
-  id: number;
+  id: string;
   title: string;
-  agent_id: number;
+  agent_id: string;
   created_at: string;
   updated_at: string;
   message_count: number;
@@ -74,14 +74,14 @@ export interface ChatSession {
 
 // 聊天消息接口
 export interface ChatMessage {
-  id: number;
+  id: string;
   role: string;
   content: string;
-  session_id: number;
+  session_id: string;
   created_at: string;
-  agent_id?: number;
+  agent_id?: string;
   agent_info?: {
-    id: number;
+    id: string;
     name: string;
     avatar_url?: string;
     model?: string;
@@ -110,21 +110,21 @@ interface SessionsResponse {
 
 // 会话详情接口
 export interface ChatSessionDetail {
-  id: number;
+  id: string;
   title: string;
-  agent_id: number;
+  agent_id: string;
   created_at: string;
   updated_at: string;
   messages: {
-    id: number;
+    id: string;
     role: string;
     content: string;
     timestamp: string;
     created_at?: string;
     tokens?: number;
-    agent_id?: number;
+    agent_id?: string;
     agent_info?: {
-      id: number;
+      id: string;
       name: string;
       avatar_url?: string;
       model?: string;
@@ -156,9 +156,9 @@ interface SessionDetailResponse {
 // 编辑消息请求接口
 export interface EditMessageRequest {
   message_index: number;
-  content?: string;
+  content: string;
   stream?: boolean;
-  agent_id?: number;
+  agent_id?: string;
   is_user_message: boolean;
   rerun: boolean;
 }
@@ -173,9 +173,9 @@ export interface EditMessageResponse {
   message?: {
     content: string;
   };
-  session_id?: number;
+  session_id?: string;
   agent_info?: {
-    id: number;
+    id: string;
     name: string;
     avatar_url?: string;
     model?: string;
@@ -241,7 +241,7 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
       
       if (!response.ok) {
         const errorText = await response.text();
-        onProgress(`服务器返回错误: ${response.status} - ${errorText}`, true, request.session_id || 0);
+        onProgress(`服务器返回错误: ${response.status} - ${errorText}`, true, request.session_id || '');
         return;
       }
       
@@ -254,25 +254,50 @@ const chatWithAgent = async (request: ChatRequest, onProgress: StreamCallback): 
       
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        onProgress('用户取消了聊天请求', true, request.session_id || 0);
+        onProgress('用户取消了聊天请求', true, request.session_id || '');
         return;
       }
-      onProgress(`聊天失败: ${error.message}`, true, request.session_id || 0);
+      onProgress(`聊天失败: ${error.message}`, true, request.session_id || '');
     }
   })();
   
   return controller;
 };
 
-// 处理流式文本数据
+// 处理流式文本数据（优化版本）
 const processTextStream = async (
   reader: ReadableStreamDefaultReader<Uint8Array>,
   callback: StreamCallback,
-  sessionId: number | null = null
-): Promise<number> => {
+  sessionId: string | null = null
+): Promise<string> => {
   const decoder = new TextDecoder();
   let buffer = '';
-  let currentSessionId = sessionId || 0;
+  let currentSessionId = sessionId || '';
+  
+  // 🚀 性能优化：批量处理配置
+  const BATCH_SIZE = 8192; // 8KB批处理大小
+  const PARSE_INTERVAL = 16; // 16ms解析间隔
+  let lastParseTime = 0;
+  let pendingLines: string[] = [];
+
+  // 批量解析函数
+  const batchParseLines = () => {
+    const now = performance.now();
+    if (now - lastParseTime < PARSE_INTERVAL && pendingLines.length < 10) {
+      return; // 避免过于频繁的解析
+    }
+    
+    lastParseTime = now;
+    const linesToProcess = pendingLines.splice(0); // 取出所有待处理行
+    
+    for (const line of linesToProcess) {
+      try {
+        processSSELine(line.trim());
+      } catch (e) {
+        console.warn('批量处理SSE行失败:', e, '行内容:', line);
+      }
+    }
+  };
 
   try {
     while (true) {
@@ -281,30 +306,28 @@ const processTextStream = async (
       if (done) {
         // 处理最后的缓冲区内容
         if (buffer.trim()) {
-          try {
-            processSSELine(buffer.trim());
-          } catch (e) {
-            console.warn('处理最后缓冲区数据失败:', e);
-          }
+          pendingLines.push(buffer.trim());
         }
+        // 最终批量处理所有剩余行
+        batchParseLines();
         console.log('流式传输完成，最终session_id:', currentSessionId);
         break;
       }
       
-      // 将新数据添加到缓冲区
-      buffer += decoder.decode(value, { stream: true });
+      // 🚀 性能优化：批量解码
+      const chunk = decoder.decode(value, { stream: true });
+      buffer += chunk;
+      
+      // 只在缓冲区达到一定大小时才处理
+      if (buffer.length > BATCH_SIZE || chunk.includes('\n\n')) {
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 保留最后一行（可能不完整）
         
-      // 按行处理数据 - 修复换行符分割问题
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // 保留最后一行（可能不完整）
+        // 添加到待处理队列
+        pendingLines.push(...lines.filter(line => line.trim()));
         
-      for (const line of lines) {
-        try {
-          processSSELine(line.trim());
-        } catch (e) {
-          console.warn('处理SSE行失败:', e, '行内容:', line);
-          continue;
-        }
+        // 批量处理
+        batchParseLines();
       }
     }
   } catch (error) {
@@ -319,11 +342,15 @@ const processTextStream = async (
     if (line.startsWith('data: ')) {
       line = line.substring(6);
     } else {
-      // 如果没有 'data: ' 前缀，可能是不完整的行，直接跳过
       return;
     }
       
     try {
+      // 🚀 性能优化：快速JSON解析检查
+      if (!line.startsWith('{') || !line.endsWith('}')) {
+        return; // 跳过明显不是JSON的内容
+      }
+      
       const data = JSON.parse(line);
       
       // 处理标准的API响应格式
@@ -334,10 +361,9 @@ const processTextStream = async (
           currentSessionId = responseData.session_id;
         }
         
-        // 🔧 修复：首先处理工具状态信息
+        // 🔧 优化：先处理工具状态信息
         if (responseData.tool_status) {
           console.log('🔧 检测到工具状态信息，立即传递:', responseData.tool_status);
-          // 立即传递工具状态信息，即使没有文本内容
           callback(data, responseData.done || false, currentSessionId, responseData.tool_status);
         }
         
@@ -346,19 +372,10 @@ const processTextStream = async (
           const content = responseData.message.content || '';
           const reasoning = responseData.message.reasoning_content || null;
           
-          console.log('processSSELine 传递数据:', {
-            content_length: content.length,
-            full_content_length: responseData.full_content?.length || 0,
-            reasoning_content_length: reasoning?.length || 0,
-            done: responseData.done,
-            session_id: responseData.session_id,
-            has_tool_status: !!responseData.tool_status
-          });
-          
-          // 调用回调函数，传递完整的响应数据而不仅仅是content字符串
-          // 这样前端可以访问 full_content 字段进行正确的累积显示
-          // 🔧 修复：如果已经处理了工具状态，这里不要重复传递工具状态
-          callback(data, responseData.done || false, currentSessionId, responseData.tool_status ? null : null, reasoning);
+          // 🚀 性能优化：只在有实际内容时才调用回调
+          if (content || reasoning || responseData.done) {
+            callback(data, responseData.done || false, currentSessionId, responseData.tool_status ? null : null, reasoning);
+          }
         }
         
         // 如果是完成状态
@@ -366,40 +383,36 @@ const processTextStream = async (
           callback(data, true, currentSessionId);
         }
       }
-      
-      // 保持对旧格式的兼容性
-      else if (data.type === 'session_info') {
-        // 从session_info中获取session_id
-        if (data.session_id) {
-          currentSessionId = data.session_id;
-          console.log('获取到session_id:', currentSessionId);
+      // 保持对旧格式的兼容性（简化处理）
+      else if (data.type) {
+        switch (data.type) {
+          case 'session_info':
+            if (data.session_id) {
+              currentSessionId = data.session_id;
+            }
+            break;
+          case 'content':
+            callback(data.content || '', false, currentSessionId, null, data.reasoning);
+            break;
+          case 'tool_status':
+            callback('', false, currentSessionId, data);
+            break;
+          case 'complete':
+            if (data.session_id) {
+              currentSessionId = data.session_id;
+            }
+            callback('', true, currentSessionId);
+            break;
+          case 'error':
+            if (data.session_id) {
+              currentSessionId = data.session_id;
+            }
+            callback(data.error || '发生未知错误', true, currentSessionId);
+            break;
         }
-        return;
-      } else if (data.type === 'content') {
-        const content = data.content || '';
-        const reasoning = data.reasoning || null;
-        
-        // 调用回调函数，传递内容和推理信息
-        callback(content, false, currentSessionId, null, reasoning);
-      } else if (data.type === 'tool_status') {
-        // 处理工具状态更新
-        callback('', false, currentSessionId, data);
-      } else if (data.type === 'complete') {
-        // 流式传输完成
-        if (data.session_id) {
-          currentSessionId = data.session_id;
-        }
-        callback('', true, currentSessionId);
-      } else if (data.type === 'error') {
-        // 错误信息
-        if (data.session_id) {
-          currentSessionId = data.session_id;
-        }
-        callback(data.error || '发生未知错误', true, currentSessionId);
       }
-      
     } catch (e) {
-      console.warn('解析JSON失败:', e, '原始数据:', line);
+      console.warn('解析JSON失败:', e, '原始数据长度:', line.length);
     }
   }
   
@@ -440,7 +453,7 @@ const getSessions = async (page: number = 1, pageSize: number = 10): Promise<{se
 };
 
 // 获取聊天会话详情
-const getSessionDetail = async (sessionId: number): Promise<ChatSessionDetail | null> => {
+const getSessionDetail = async (sessionId: string): Promise<ChatSessionDetail | null> => {
   try {
     // 获取token
     const token = localStorage.getItem('access_token');
@@ -462,7 +475,7 @@ const getSessionDetail = async (sessionId: number): Promise<ChatSessionDetail | 
 };
 
 // 根据会话ID获取历史Agent记录（用于笔记关联的对话历史）
-const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: string, agent: string, userMessageId?: number, agentMessageId?: number}> | null> => {
+const getSessionAgentHistory = async (sessionId: string): Promise<Array<{user: string, agent: string, userMessageId?: string, agentMessageId?: string}> | null> => {
   try {
     if (!sessionId) {
       console.log('没有会话ID，返回空历史记录');
@@ -478,7 +491,7 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
     }
 
     // 将消息按照用户-AI的配对方式组织，同时处理工具调用
-    const agentHistory: Array<{user: string, agent: string, userMessageId?: number, agentMessageId?: number}> = [];
+    const agentHistory: Array<{user: string, agent: string, userMessageId?: string, agentMessageId?: string}> = [];
     const messages = sessionDetail.messages.sort((a, b) => 
       new Date(a.created_at || a.timestamp).getTime() - new Date(b.created_at || b.timestamp).getTime()
     );
@@ -486,9 +499,9 @@ const getSessionAgentHistory = async (sessionId: number): Promise<Array<{user: s
     console.log(`处理 ${messages.length} 条消息，包含工具调用`);
     
     let currentUserMessage = '';
-    let currentUserMessageId: number | undefined;
+    let currentUserMessageId: string | undefined;
     let currentAgentMessage = '';
-    let currentAgentMessageId: number | undefined;
+    let currentAgentMessageId: string | undefined;
     
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
@@ -580,7 +593,7 @@ const createSession = async (title: string = '新会话'): Promise<ChatSession |
 };
 
 // 更新会话信息
-const updateSession = async (sessionId: number, title: string): Promise<boolean> => {
+const updateSession = async (sessionId: string, title: string): Promise<boolean> => {
   try {
     const response = await apiClient.put(`/chat/sessions/${sessionId}`, { title });
     if (response.data.code === 200) {
@@ -597,7 +610,7 @@ const updateSession = async (sessionId: number, title: string): Promise<boolean>
 };
 
 // 删除会话
-const deleteSession = async (sessionId: number): Promise<boolean> => {
+const deleteSession = async (sessionId: string): Promise<boolean> => {
   try {
     const response = await apiClient.delete(`/chat/sessions/${sessionId}`);
     if (response.data.code === 200) {
@@ -632,7 +645,7 @@ if (typeof window !== 'undefined') {
 
 // 编辑消息并可选择重新执行
 const editMessage = async (
-  sessionId: number, 
+  sessionId: string, 
   request: EditMessageRequest, 
   onProgress?: StreamCallback
 ): Promise<EditMessageResponse | AbortController> => {
@@ -698,7 +711,7 @@ const editMessage = async (
 };
 
 // 强制停止并保存响应
-const stopAndSaveResponse = async (sessionId: number, currentContent: string, userContent: string, agentId?: number): Promise<boolean> => {
+const stopAndSaveResponse = async (sessionId: string, currentContent: string, userContent: string, agentId?: string): Promise<boolean> => {
   try {
     await apiClient.post(`/chat/${sessionId}/stop`, {
       session_id: sessionId,

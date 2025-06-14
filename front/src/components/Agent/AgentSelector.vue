@@ -76,7 +76,7 @@ const filteredAgents = ref<Agent[]>([]);
 const loading = ref(false);
 const selectedIndex = ref(0);
 const activeTab = ref('all'); // 默认显示全部标签页
-const currentUserId = ref<number | null>(null); // 当前用户ID，从用户服务获取
+const currentUserId = ref<string | null>(null); // 当前用户ID，从用户服务获取
 
 // 获取当前用户信息
 const fetchCurrentUser = async () => {

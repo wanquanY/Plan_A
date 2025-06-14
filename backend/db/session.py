@@ -13,6 +13,12 @@ engine = create_async_engine(
     settings.SQLALCHEMY_DATABASE_URI,
     echo=settings.SQLALCHEMY_ECHO,
     future=True,
+    # 添加连接池配置
+    pool_size=20,                    # 连接池大小
+    max_overflow=30,                 # 最大溢出连接
+    pool_pre_ping=True,             # 连接前ping检测
+    pool_recycle=3600,              # 连接回收时间（1小时）
+    pool_timeout=30,                # 获取连接超时时间
 )
 
 # 创建同步引擎
@@ -20,6 +26,12 @@ sync_engine = create_engine(
     settings.SQLALCHEMY_DATABASE_URI.replace("postgresql+asyncpg", "postgresql"),
     echo=settings.SQLALCHEMY_ECHO,
     future=True,
+    # 添加连接池配置
+    pool_size=10,                    # 同步连接池较小
+    max_overflow=20,                 # 最大溢出连接
+    pool_pre_ping=True,             # 连接前ping检测
+    pool_recycle=3600,              # 连接回收时间（1小时）
+    pool_timeout=30,                # 获取连接超时时间
 )
 
 # 创建异步会话工厂

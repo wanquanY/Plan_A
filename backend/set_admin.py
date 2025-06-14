@@ -47,13 +47,13 @@ def list_users():
         users = db.query(User).all()
         print("\n所有用户:")
         print("-" * 60)
-        print(f"{'ID':<5} {'用户名':<15} {'电话':<15} {'是否激活':<10} {'是否管理员':<10}")
-        print("-" * 60)
+        print(f"{'内部ID':<8} {'用户名':<15} {'电话':<15} {'是否激活':<10} {'是否管理员':<10}")
+        print("-" * 65)
         
         for user in users:
-            print(f"{user.id:<5} {user.username:<15} {user.phone:<15} {'是' if user.is_active else '否':<10} {'是' if user.is_superuser else '否':<10}")
+            print(f"{user.id:<8} {user.username:<15} {user.phone:<15} {'是' if user.is_active else '否':<10} {'是' if user.is_superuser else '否':<10}")
         
-        print("-" * 60)
+        print("-" * 65)
     except Exception as e:
         print(f"错误: 获取用户列表失败 - {str(e)}")
 

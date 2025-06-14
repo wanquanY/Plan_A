@@ -3,9 +3,9 @@ import { ref } from 'vue';
 export function useConversationManager() {
   const conversationHistory = ref<Array<{ user: string; agent: string }>>([]);
   const historyDisplayIndex = ref(-1);
-  const lastLoadedSessionId = ref<string | number | null>(null);
+  const lastLoadedSessionId = ref<string | null>(null);
 
-  const loadConversationHistory = async (sessionId: number | string | null, emit: Function) => {
+  const loadConversationHistory = async (sessionId: string | null, emit: Function) => {
     if (sessionId && sessionId === lastLoadedSessionId.value) {
       console.log(`会话ID ${sessionId} 已经加载过，跳过重复加载`);
       return;
@@ -29,7 +29,7 @@ export function useConversationManager() {
       console.log(`开始加载会话 ${sessionId} 的历史记录`);
       
       const { default: chatService } = await import('../services/chat');
-      const history = await chatService.getSessionAgentHistory(Number(sessionId));
+      const history = await chatService.getSessionAgentHistory(sessionId);
       
       if (history && history.length > 0) {
         conversationHistory.value = history;

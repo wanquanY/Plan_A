@@ -54,7 +54,7 @@ async def create_user(
         
         # 转换User对象为可序列化的字典
         user_dict = {
-            "id": user_id,
+            "id": user.public_id,
             "username": username,
             "phone": phone,
             "is_active": is_active,
@@ -69,13 +69,13 @@ async def create_user(
         
         if default_note:
             response_data["default_note"] = {
-                "id": default_note.id,
+                "id": default_note.public_id,
                 "title": default_note.title
             }
         
         if default_agent:
             response_data["default_agent"] = {
-                "id": default_agent.id,
+                "id": default_agent.public_id,
                 "model": default_agent.model
             }
         
@@ -127,7 +127,7 @@ async def login_for_access_token(
     
     # 转换用户信息为可序列化的字典
     user_dict = {
-        "id": user.id,
+        "id": user.public_id,
         "username": user.username,
         "phone": user.phone,
         "avatar_url": user.avatar_url,

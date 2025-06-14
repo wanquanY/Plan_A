@@ -5,6 +5,7 @@ from sqlalchemy import select, func, and_
 from backend.models.agent import Agent
 from backend.crud.base import CRUDBase
 from backend.schemas.agent import AgentCreate, AgentUpdate
+from backend.utils.id_converter import IDConverter
 
 
 class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
@@ -71,7 +72,7 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         if existing_agent:
             # 如果已存在，则更新
             update_data = obj_in.dict(exclude_unset=True)
-            return await self.update_agent(db, agent_id=existing_agent.id, obj_in=update_data)
+            return await self.update_agent(db, agent_id=existing_agent.public_id, obj_in=update_data)
         else:
             # 如果不存在，则创建
             return await self.create_agent(db, user_id=user_id, obj_in=obj_in)
@@ -80,11 +81,16 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
         self,
         db: AsyncSession,
         *,
-        agent_id: int,
+        agent_id: str,
         obj_in: Union[AgentUpdate, Dict[str, Any]]
     ) -> Optional[Agent]:
         """更新Agent信息"""
-        agent = await self.get(db, agent_id)
+        # 转换public_id为数据库内部ID
+        db_agent_id = await IDConverter.get_agent_db_id(db, agent_id)
+        if not db_agent_id:
+            return None
+            
+        agent = await self.get(db, db_agent_id)
         if not agent:
             return None
         
@@ -137,11 +143,16 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
     async def get_agent_by_id(
         self, 
         db: AsyncSession, 
-        agent_id: int
+        agent_id: str
     ) -> Optional[Agent]:
-        """根据ID获取Agent（包括非公开的）"""
+        """根据public_id获取Agent"""
+        # 转换public_id为数据库内部ID
+        db_agent_id = await IDConverter.get_agent_db_id(db, agent_id)
+        if not db_agent_id:
+            return None
+            
         query = select(Agent).filter(
-            Agent.id == agent_id,
+            Agent.id == db_agent_id,
             Agent.is_deleted == False
         )
         result = await db.execute(query)
@@ -150,12 +161,17 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
     async def get_agent_for_user(
         self,
         db: AsyncSession,
-        agent_id: int,
+        agent_id: str,
         user_id: int
     ) -> Optional[Agent]:
         """获取用户可以使用的Agent（只能是自己的agent）"""
+        # 转换public_id为数据库内部ID
+        db_agent_id = await IDConverter.get_agent_db_id(db, agent_id)
+        if not db_agent_id:
+            return None
+            
         query = select(Agent).filter(
-            Agent.id == agent_id,
+            Agent.id == db_agent_id,
             Agent.is_deleted == False,
             Agent.user_id == user_id
         )
@@ -165,12 +181,17 @@ class CRUDAgent(CRUDBase[Agent, AgentCreate, AgentUpdate]):
     async def check_agent_ownership(
         self,
         db: AsyncSession,
-        agent_id: int,
+        agent_id: str,
         user_id: int
     ) -> bool:
         """检查agent是否属于指定用户"""
+        # 转换public_id为数据库内部ID
+        db_agent_id = await IDConverter.get_agent_db_id(db, agent_id)
+        if not db_agent_id:
+            return False
+            
         query = select(Agent).filter(
-            Agent.id == agent_id,
+            Agent.id == db_agent_id,
             Agent.user_id == user_id,
             Agent.is_deleted == False
         )

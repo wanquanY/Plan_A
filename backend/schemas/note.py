@@ -22,9 +22,9 @@ class NoteUpdate(NoteBase):
 
 class NoteResponse(NoteBase):
     """笔记响应模型"""
-    id: int
-    user_id: int
-    session_id: Optional[int] = None
+    id: str
+    user_id: str
+    session_id: Optional[str] = None
     last_edited_position: Optional[int] = None
     created_at: datetime
     updated_at: datetime
@@ -35,9 +35,9 @@ class NoteResponse(NoteBase):
 
 class NoteList(BaseModel):
     """笔记列表项模型"""
-    id: int
+    id: str
     title: str
-    session_id: Optional[int] = None
+    session_id: Optional[str] = None
     is_public: bool
     created_at: datetime
     updated_at: datetime

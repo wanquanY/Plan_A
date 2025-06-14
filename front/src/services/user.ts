@@ -2,7 +2,7 @@ import apiClient from './api';
 
 // 用户信息接口
 export interface User {
-  id: number;
+  id: string;
   username: string;
   phone: string;
   avatar_url?: string;

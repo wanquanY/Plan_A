@@ -2,8 +2,8 @@ import { ref, reactive } from 'vue';
 
 export interface EditorStateConfig {
   initialValue?: string;
-  conversationId?: number | string | null;
-  noteId?: number | string | null;
+  conversationId?: string | null;
+  noteId?: string | null;
 }
 
 export function useEditorState(config: EditorStateConfig = {}) {

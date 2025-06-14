@@ -1,25 +1,25 @@
 import apiClient from './api';
 
 export interface NoteSession {
-  id: number;
+  id: string;
   title: string;
   is_primary: boolean;
   created_at: string;
   updated_at: string;
   // 会话的详细信息
-  agent_id?: number;
-  message_count?: number;
+  agent_id?: string;
+  message_count: number;
   last_message?: string;
 }
 
 export interface NoteSessionsResponse {
-  note_id: number;
+  note_id: string;
   sessions: NoteSession[];
 }
 
 class NoteSessionService {
   // 获取笔记的所有关联会话
-  async getNoteSessions(noteId: number): Promise<NoteSession[]> {
+  async getNoteSessions(noteId: string): Promise<NoteSession[]> {
     try {
       const response = await apiClient.get(`/note/${noteId}/sessions`);
       if (response.data && response.data.code === 200) {
@@ -47,7 +47,7 @@ class NoteSessionService {
   }
 
   // 创建新会话并关联到笔记
-  async createSessionForNote(noteId: number): Promise<any> {
+  async createSessionForNote(noteId: string): Promise<any> {
     try {
       const response = await apiClient.post('/chat/sessions', {
         title: '新对话',
@@ -64,7 +64,7 @@ class NoteSessionService {
   }
 
   // 设置主要会话
-  async setPrimarySession(noteId: number, sessionId: number): Promise<boolean> {
+  async setPrimarySession(noteId: string, sessionId: string): Promise<boolean> {
     try {
       const response = await apiClient.put(`/note/${noteId}/sessions/${sessionId}/set-primary`);
       if (response.data && response.data.code === 200) {
@@ -78,7 +78,7 @@ class NoteSessionService {
   }
 
   // 删除笔记和会话的关联
-  async unlinkSession(noteId: number, sessionId: number): Promise<boolean> {
+  async unlinkSession(noteId: string, sessionId: string): Promise<boolean> {
     try {
       const response = await apiClient.delete(`/note/${noteId}/sessions/${sessionId}/unlink`);
       if (response.data && response.data.code === 200) {

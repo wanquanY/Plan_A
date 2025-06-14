@@ -36,7 +36,7 @@ async def read_users_me(
     
     # 转换User对象为可序列化的字典
     user_dict = {
-        "id": current_user.id,
+        "id": current_user.public_id,
         "username": current_user.username,
         "phone": current_user.phone,
         "avatar_url": current_user.avatar_url,
@@ -92,7 +92,7 @@ async def update_user_info(
     
     # 转换User对象为可序列化的字典
     user_dict = {
-        "id": updated_user.id,
+        "id": updated_user.public_id,
         "username": updated_user.username,
         "phone": updated_user.phone,
         "avatar_url": updated_user.avatar_url,

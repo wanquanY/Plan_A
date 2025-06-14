@@ -25,6 +25,7 @@ from backend.crud.note_session import note_session
 from backend.core.response import SuccessResponse
 from backend.utils.logging import api_logger
 from backend.core.config import settings
+from backend.utils.id_converter import IDConverter
 
 from openai import AsyncOpenAI
 from backend.services.memory import redis_client, memory_service
@@ -50,28 +51,31 @@ async def chat(
         api_logger.info(f"用户请求创建新会话: {current_user.username}")
         chat_request.session_id = None
         
-        # 如果提供了note_id，检查是否需要关联到笔记
+        # 如果提供了note_id，检查笔记是否存在
         if chat_request.note_id:
             from backend.models.note import Note
             from sqlalchemy import select
             
-            # 查询笔记是否存在
-            stmt = select(Note).where(
-                Note.id == chat_request.note_id,
-                Note.user_id == current_user.id,
-                Note.is_deleted == False
-            )
-            note_result = await db.execute(stmt)
-            note = note_result.scalar_one_or_none()
-            
-            if note:
-                api_logger.info(f"将新会话关联到笔记ID: {chat_request.note_id}")
+            # 将note_id转换为数据库内部ID进行验证
+            db_note_id = await IDConverter.get_note_db_id(db, chat_request.note_id)
+            if db_note_id:
+                # 查询笔记是否存在
+                stmt = select(Note).where(
+                    Note.id == db_note_id,
+                    Note.user_id == current_user.id,
+                    Note.is_deleted == False
+                )
+                note_result = await db.execute(stmt)
+                note = note_result.scalar_one_or_none()
+                
+                if note:
+                    api_logger.info(f"将新会话关联到笔记ID: {chat_request.note_id}")
     
     # 如果请求开启流式响应，转发到流式API
     if chat_request.stream:
         return await stream_chat(request, chat_request, db, current_user)
     
-    # 获取Agent信息
+    # 获取Agent信息（现在CRUD已支持public_id）
     agent_id = chat_request.agent_id
     agent_info = None
     
@@ -82,7 +86,7 @@ async def chat(
             # 🔧 修复：优先使用请求中指定的模型，如果没有则使用Agent的默认模型
             actual_model = chat_request.model if chat_request.model else agent.model
             agent_info = {
-                "id": agent.id,
+                "id": agent.public_id,  # 使用public_id
                 "name": "AI助手",  # 使用默认显示名称
                 "avatar_url": None,  # 移除avatar_url字段访问
                 "model": actual_model  # 使用实际使用的模型
@@ -99,41 +103,47 @@ async def chat(
     if chat_request.note_id and response.session_id:
         from backend.models.note import Note
         
-        # 验证笔记存在且属于当前用户
-        note_stmt = select(Note).where(
-            Note.id == chat_request.note_id,
-            Note.user_id == current_user.id,
-            Note.is_deleted == False
-        )
-        note_result = await db.execute(note_stmt)
-        note = note_result.scalar_one_or_none()
+        # 将note_id转换为数据库内部ID
+        db_note_id = await IDConverter.get_note_db_id(db, chat_request.note_id)
         
-        if note:
-            # 使用新的多对多关联方式
-            # 检查是否已有主要会话，如果没有则设为主要会话
-            existing_primary = await note_session.get_primary_session_by_note(db, chat_request.note_id)
-            is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
-            
-            await note_session.create_note_session_link(
-                db, 
-                note_id=chat_request.note_id, 
-                session_id=response.session_id,
-                is_primary=is_primary
+        if db_note_id:
+            # 验证笔记存在且属于当前用户
+            note_stmt = select(Note).where(
+                Note.id == db_note_id,
+                Note.user_id == current_user.id,
+                Note.is_deleted == False
             )
+            note_result = await db.execute(note_stmt)
+            note = note_result.scalar_one_or_none()
             
-            api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {response.session_id}，是否为主要会话: {is_primary}")
-            
-            # 验证关联是否真的被创建
-            verification_sessions = await note_session.get_sessions_by_note(db, chat_request.note_id)
-            verification_session_ids = [s.id for s in verification_sessions]
-            api_logger.info(f"验证笔记 {chat_request.note_id} 关联的会话列表: {verification_session_ids}")
-            
-            if response.session_id in verification_session_ids:
-                api_logger.info(f"✅ 笔记 {chat_request.note_id} 与会话 {response.session_id} 关联创建成功")
+            if note:
+                # 使用新的多对多关联方式（note_session已支持public_id）
+                # 检查是否已有主要会话，如果没有则设为主要会话
+                existing_primary = await note_session.get_primary_session_by_note(db, chat_request.note_id)
+                is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
+                
+                await note_session.create_note_session_link(
+                    db, 
+                    note_id=chat_request.note_id,  # 现在直接使用public_id
+                    session_id=response.session_id,  # 现在直接使用public_id
+                    is_primary=is_primary
+                )
+                
+                api_logger.info(f"笔记ID {chat_request.note_id} 已关联到会话ID {response.session_id}，是否为主要会话: {is_primary}")
+                
+                # 验证关联是否真的被创建
+                verification_sessions = await note_session.get_sessions_by_note(db, chat_request.note_id)
+                verification_session_ids = [s.public_id for s in verification_sessions]  # 使用public_id
+                api_logger.info(f"验证笔记 {chat_request.note_id} 关联的会话列表: {verification_session_ids}")
+                
+                if response.session_id in verification_session_ids:
+                    api_logger.info(f"✅ 笔记 {chat_request.note_id} 与会话 {response.session_id} 关联创建成功")
+                else:
+                    api_logger.error(f"❌ 笔记 {chat_request.note_id} 与会话 {response.session_id} 关联创建失败！")
             else:
-                api_logger.error(f"❌ 笔记 {chat_request.note_id} 与会话 {response.session_id} 关联创建失败！")
+                api_logger.warning(f"笔记ID {chat_request.note_id} 不存在或不属于用户 {current_user.public_id}")
         else:
-            api_logger.warning(f"笔记ID {chat_request.note_id} 不存在或不属于用户 {current_user.id}")
+            api_logger.error(f"无法转换笔记ID: {chat_request.note_id}")
     
     api_logger.info(f"聊天请求完成: {current_user.username}, 会话ID: {response.session_id}")
     
@@ -153,6 +163,387 @@ async def chat(
         msg="聊天成功",
         request_id=getattr(request.state, "request_id", None)
     )
+
+
+@router.post("/clear-memory/{session_id}")
+async def clear_chat_memory(
+    request: Request,
+    session_id: str = Path(..., description="聊天会话ID"),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    清空聊天会话的记忆
+    """
+    api_logger.info(f"清空聊天记忆: {current_user.username}, 会话ID: {session_id}")
+    
+    try:
+        # 验证会话是否属于当前用户（get_chat现在支持public_id）
+        chat = await get_chat(db, session_id)
+        if not chat or chat.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="聊天会话不存在或无权访问"
+            )
+        
+        # 清空记忆（memory_service现在支持public_id）
+        await clear_memory(session_id)
+        
+        return SuccessResponse(
+            data={"session_id": session_id},
+            msg="记忆已清空",
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        api_logger.error(f"清空记忆失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="清空记忆失败"
+        )
+
+
+@router.get("/sessions")
+async def list_chat_sessions(
+    request: Request,
+    page: int = Query(1, ge=1, description="页码，从1开始"),
+    page_size: int = Query(10, ge=1, le=100, description="每页条数"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    获取用户的聊天会话列表
+    """
+    api_logger.info(f"获取聊天会话列表: {current_user.username}, 页码: {page}")
+    
+    try:
+        skip = (page - 1) * page_size
+        chats, total = await get_user_chats(db, current_user.id, skip=skip, limit=page_size)
+        
+        # 转换为响应格式（直接使用public_id）
+        chat_list = []
+        for chat in chats:
+            # 获取消息数量
+            messages = await get_chat_messages(db, chat.public_id)  # 直接使用public_id
+            message_count = len(messages)
+            
+            # 获取最后一条消息
+            last_message = None
+            if messages:
+                last_message = messages[-1].content[:50] + "..." if len(messages[-1].content) > 50 else messages[-1].content
+            
+            # 转换Agent ID为public_id（仍需要转换，因为数据库存储的是内部ID）
+            agent_public_id = None
+            if chat.agent_id:
+                agent_public_id = await IDConverter.get_agent_public_id(db, chat.agent_id)
+            
+            chat_public_id = chat.public_id
+            
+            chat_list.append({
+                "id": chat_public_id,
+                "title": chat.title,
+                "agent_id": agent_public_id,
+                "created_at": chat.created_at.isoformat() if chat.created_at else None,
+                "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
+                "message_count": message_count,
+                "last_message": last_message
+            })
+        
+        # 转换总页数
+        total_pages = (total + page_size - 1) // page_size
+        
+        return SuccessResponse(
+            data={
+                "chats": chat_list,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "total_pages": total_pages
+                }
+            },
+            msg="获取聊天会话列表成功",
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except Exception as e:
+        api_logger.error(f"获取聊天会话列表失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取聊天会话列表失败"
+        )
+
+
+@router.get("/sessions/{session_id}", response_model=ChatResponseModel)
+async def get_chat_session(
+    request: Request,
+    session_id: str = Path(..., description="聊天会话ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    获取指定的聊天会话详情
+    """
+    api_logger.info(f"获取聊天会话详情: {current_user.username}, 会话ID: {session_id}")
+    
+    try:
+        # 获取会话（get_chat现在支持public_id）
+        chat = await get_chat(db, session_id)
+        if not chat or chat.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="聊天会话不存在或无权访问"
+            )
+        
+        # 获取会话消息（get_chat_messages现在支持public_id）
+        messages = await get_chat_messages(db, session_id)
+        
+        # 转换消息为响应格式
+        message_list = []
+        for msg in messages:
+            # 转换消息和Agent ID为public_id
+            msg_public_id = await IDConverter.get_message_public_id(db, msg.id)
+            agent_public_id = None
+            if msg.agent_id:
+                agent_public_id = await IDConverter.get_agent_public_id(db, msg.agent_id)
+            
+            message_list.append({
+                "id": msg_public_id,
+                "role": msg.role,
+                "content": msg.content,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                "updated_at": msg.updated_at.isoformat() if msg.updated_at else None,
+                "tokens": msg.tokens,
+                "prompt_tokens": msg.prompt_tokens,
+                "total_tokens": msg.total_tokens,
+                "agent_id": agent_public_id
+            })
+        
+        # 转换会话信息为响应格式
+        chat_public_id = chat.public_id
+        user_public_id = await IDConverter.get_user_public_id(db, chat.user_id)
+        agent_public_id = None
+        if chat.agent_id:
+            agent_public_id = await IDConverter.get_agent_public_id(db, chat.agent_id)
+        
+        return SuccessResponse(
+            data={
+                "id": chat_public_id,
+                "user_id": user_public_id,
+                "agent_id": agent_public_id,
+                "title": chat.title,
+                "created_at": chat.created_at.isoformat() if chat.created_at else None,
+                "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
+                "messages": message_list,
+                "is_active": chat.is_active
+            },
+            msg="获取聊天会话成功",
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        api_logger.error(f"获取聊天会话失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取聊天会话失败"
+        )
+
+
+@router.get("/{session_id}/history", response_model=List[ChatMessageResponse])
+async def get_chat_history_endpoint(
+    session_id: str,  # 已修复为str类型
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取聊天历史记录"""
+    api_logger.info(f"获取聊天历史: session_id={session_id}, user_id={current_user.public_id}")
+    
+    # 验证会话存在且属于当前用户（get_chat现在支持public_id）
+    chat = await get_chat(db, session_id)
+    if not chat or chat.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="聊天会话不存在或无权访问"
+        )
+    
+    # 获取聊天消息（get_chat_messages现在支持public_id）
+    messages = await get_chat_messages(db, session_id)
+    
+    # 为每个消息加载工具调用信息
+    from backend.crud.tool_call import get_tool_calls_by_message
+    
+    result = []
+    for msg in messages:
+        # 获取消息的工具调用记录
+        tool_calls = await get_tool_calls_by_message(db, msg.id)
+        
+        # 转换消息ID为public_id
+        msg_public_id = await IDConverter.get_message_public_id(db, msg.id)
+        agent_public_id = await IDConverter.get_agent_public_id(db, msg.agent_id) if msg.agent_id else None
+        
+        # 转换为响应格式
+        message_data = {
+            "id": msg_public_id,  # 使用public_id
+            "role": msg.role,
+            "content": msg.content,
+            "tokens": msg.tokens,
+            "prompt_tokens": msg.prompt_tokens,
+            "total_tokens": msg.total_tokens,
+            "agent_id": agent_public_id,  # 使用public_id
+            "created_at": msg.created_at,
+            "updated_at": msg.updated_at,
+            "tool_calls": [
+                {
+                    "id": tc.public_id,  # 工具调用也使用public_id
+                    "tool_call_id": tc.tool_call_id,
+                    "tool_name": tc.tool_name,
+                    "function_name": tc.function_name,
+                    "arguments": tc.arguments,
+                    "status": tc.status,
+                    "result": tc.result,
+                    "error_message": tc.error_message,
+                    "started_at": tc.started_at,
+                    "completed_at": tc.completed_at
+                } for tc in tool_calls
+            ]
+        }
+        result.append(message_data)
+    
+    return result
+
+
+@router.post("/stop-and-save")
+async def stop_and_save_response(
+    request: Request,
+    stop_request: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    停止Agent响应并保存当前已生成的内容
+    """
+    request_id = str(uuid.uuid4())
+    api_logger.info(f"收到停止并保存响应请求: {stop_request}, request_id={request_id}")
+    
+    try:
+        session_id = stop_request.get("session_id")
+        current_content = stop_request.get("current_content", "")
+        user_content = stop_request.get("user_content", "")
+        agent_id = stop_request.get("agent_id")
+        
+        if not session_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="缺少会话ID"
+            )
+        
+        # 验证会话是否属于当前用户
+        chat = await get_chat(db, session_id)
+        if not chat or chat.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="会话不存在或无权访问"
+            )
+        
+        # 如果有内容需要保存，保存Agent消息
+        if current_content.strip():
+            from backend.crud.chat import add_message
+            
+            # 计算token数量（简单估算）
+            tokens = len(current_content) // 4
+            prompt_tokens = len(user_content) // 4 if user_content else 0
+            total_tokens = tokens + prompt_tokens
+            
+            # 如果提供了用户内容，且会话中还没有用户消息，先保存用户消息
+            if user_content.strip():
+                # 检查会话中最新的消息是否是用户消息
+                existing_messages = await get_chat_messages(db, session_id)
+                if not existing_messages or existing_messages[-1].role != "user":
+                    # 保存用户消息
+                    user_message = await add_message(
+                        db=db,
+                        session_id=session_id,
+                        role="user",
+                        content=user_content,
+                        tokens=prompt_tokens,
+                        prompt_tokens=0,
+                        total_tokens=prompt_tokens,
+                        agent_id=agent_id
+                    )
+                    
+                    # 添加到记忆服务
+                    from backend.services.memory import memory_service
+                    memory_service.add_user_message(session_id, user_content, current_user.id)
+                    
+                    api_logger.info(f"已保存停止时的用户消息: session_id={session_id}, message_id={user_message.public_id}")
+            
+            # 保存Agent的部分响应
+            ai_message = await add_message(
+                db=db,
+                session_id=session_id,
+                role="assistant",
+                content=current_content,
+                tokens=tokens,
+                prompt_tokens=prompt_tokens,
+                total_tokens=total_tokens,
+                agent_id=agent_id
+            )
+            
+            # 添加到记忆服务
+            from backend.services.memory import memory_service
+            memory_service.add_assistant_message(session_id, current_content, current_user.id)
+            
+            api_logger.info(f"已保存停止时的Agent响应: session_id={session_id}, message_id={ai_message.public_id}, content_length={len(current_content)}")
+        elif user_content.strip():
+            # 如果只有用户内容没有Agent响应，也要保存用户消息
+            from backend.crud.chat import add_message
+            
+            prompt_tokens = len(user_content) // 4
+            
+            # 检查会话中最新的消息是否是用户消息
+            existing_messages = await get_chat_messages(db, session_id)
+            if not existing_messages or existing_messages[-1].role != "user":
+                # 保存用户消息
+                user_message = await add_message(
+                    db=db,
+                    session_id=session_id,
+                    role="user",
+                    content=user_content,
+                    tokens=prompt_tokens,
+                    prompt_tokens=0,
+                    total_tokens=prompt_tokens,
+                    agent_id=agent_id
+                )
+                
+                # 添加到记忆服务
+                from backend.services.memory import memory_service
+                memory_service.add_user_message(session_id, user_content, current_user.id)
+                
+                api_logger.info(f"已保存停止时的用户消息: session_id={session_id}, message_id={user_message.public_id}")
+        
+        return {
+            "code": 200,
+            "msg": "成功保存停止时的响应内容",
+            "data": {
+                "session_id": session_id,
+                "content_saved": len(current_content) > 0,
+                "content_length": len(current_content),
+                "user_content_saved": len(user_content.strip()) > 0
+            },
+            "errors": None,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "request_id": request_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        api_logger.error(f"停止并保存响应失败: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"停止并保存响应失败: {str(e)}"
+        )
 
 
 @router.get("/test_api")
@@ -251,18 +642,21 @@ async def stream_chat(
             from backend.models.note import Note
             from sqlalchemy import select
             
-            # 查询笔记是否存在
-            stmt = select(Note).where(
-                Note.id == chat_request.note_id,
-                Note.user_id == current_user.id,
-                Note.is_deleted == False
-            )
-            note_result = await db.execute(stmt)
-            note = note_result.scalar_one_or_none()
-            
-            if note:
-                note_id = chat_request.note_id
-                api_logger.info(f"流式会话将关联到笔记ID: {note_id}")
+            # 将note_id转换为数据库内部ID进行验证
+            db_note_id = await IDConverter.get_note_db_id(db, chat_request.note_id)
+            if db_note_id:
+                # 查询笔记是否存在
+                stmt = select(Note).where(
+                    Note.id == db_note_id,
+                    Note.user_id == current_user.id,
+                    Note.is_deleted == False
+                )
+                note_result = await db.execute(stmt)
+                note = note_result.scalar_one_or_none()
+                
+                if note:
+                    note_id = chat_request.note_id
+                    api_logger.info(f"流式会话将关联到笔记ID: {note_id}")
     
     # 强制设置为流式
     chat_request.stream = True
@@ -278,7 +672,7 @@ async def stream_chat(
             # 🔧 修复：优先使用请求中指定的模型，如果没有则使用Agent的默认模型
             actual_model = chat_request.model if chat_request.model else agent.model
             agent_info = {
-                "id": agent.id,
+                "id": agent.public_id,
                 "name": "AI助手",  # 使用默认显示名称
                 "avatar_url": None,  # 移除avatar_url字段访问
                 "model": actual_model  # 使用实际使用的模型
@@ -301,7 +695,7 @@ async def stream_chat(
                 # 预创建会话
                 chat_data = ChatCreate(title="新对话")
                 new_chat = await create_chat(db, current_user.id, chat_data=chat_data, agent_id=agent_id)
-                session_id = new_chat.id
+                session_id = new_chat.public_id  # 使用public_id
                 
                 # 更新请求中的会话ID
                 chat_request.session_id = session_id
@@ -315,46 +709,51 @@ async def stream_chat(
                     from backend.models.note import Note
                     from sqlalchemy import select
                     
-                    note_stmt = select(Note).where(
-                        Note.id == note_id,
-                        Note.user_id == current_user.id,
-                        Note.is_deleted == False
-                    )
-                    note_result = await db.execute(note_stmt)
-                    note = note_result.scalar_one_or_none()
-                    
-                    api_logger.info(f"🔍 笔记查询结果: {'找到笔记' if note else '笔记不存在'}")
-                    
-                    if note:
-                        api_logger.info(f"🔍 笔记详情: id={note.id}, title={note.title}, user_id={note.user_id}")
-                        
-                        # 使用新的多对多关联方式
-                        # 检查是否已有主要会话，如果没有则设为主要会话
-                        existing_primary = await note_session.get_primary_session_by_note(db, note_id)
-                        is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
-                        
-                        api_logger.info(f"🔍 现有主要会话: {existing_primary}, 新会话是否为主要: {is_primary}")
-                        
-                        await note_session.create_note_session_link(
-                            db, 
-                            note_id=note_id, 
-                            session_id=session_id,
-                            is_primary=is_primary
+                    # 将note_id转换为数据库内部ID
+                    db_note_id = await IDConverter.get_note_db_id(db, note_id)
+                    if db_note_id:
+                        note_stmt = select(Note).where(
+                            Note.id == db_note_id,
+                            Note.user_id == current_user.id,
+                            Note.is_deleted == False
                         )
+                        note_result = await db.execute(note_stmt)
+                        note = note_result.scalar_one_or_none()
                         
-                        api_logger.info(f"🔍 笔记ID {note_id} 已关联到预创建会话ID {session_id}，是否为主要会话: {is_primary}")
+                        api_logger.info(f"🔍 笔记查询结果: {'找到笔记' if note else '笔记不存在'}")
                         
-                        # 验证关联是否真的被创建
-                        verification_sessions = await note_session.get_sessions_by_note(db, note_id)
-                        verification_session_ids = [s.id for s in verification_sessions]
-                        api_logger.info(f"🔍 验证笔记 {note_id} 关联的会话列表: {verification_session_ids}")
-                        
-                        if session_id in verification_session_ids:
-                            api_logger.info(f"✅ 笔记 {note_id} 与会话 {session_id} 关联创建成功")
+                        if note:
+                            api_logger.info(f"🔍 笔记详情: id={note.id}, title={note.title}, user_id={note.user_id}")
+                            
+                            # 使用新的多对多关联方式
+                            # 检查是否已有主要会话，如果没有则设为主要会话
+                            existing_primary = await note_session.get_primary_session_by_note(db, note_id)
+                            is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
+                            
+                            api_logger.info(f"🔍 现有主要会话: {existing_primary}, 新会话是否为主要: {is_primary}")
+                            
+                            await note_session.create_note_session_link(
+                                db, 
+                                note_id=note_id, 
+                                session_id=session_id,
+                                is_primary=is_primary
+                            )
+                            
+                            api_logger.info(f"🔍 笔记ID {note_id} 已关联到预创建会话ID {session_id}，是否为主要会话: {is_primary}")
+                            
+                            # 验证关联是否真的被创建
+                            verification_sessions = await note_session.get_sessions_by_note(db, note_id)
+                            verification_session_ids = [s.public_id for s in verification_sessions]
+                            api_logger.info(f"🔍 验证笔记 {note_id} 关联的会话列表: {verification_session_ids}")
+                            
+                            if session_id in verification_session_ids:
+                                api_logger.info(f"✅ 笔记 {note_id} 与会话 {session_id} 关联创建成功")
+                            else:
+                                api_logger.error(f"❌ 笔记 {note_id} 与会话 {session_id} 关联创建失败！")
                         else:
-                            api_logger.error(f"❌ 笔记 {note_id} 与会话 {session_id} 关联创建失败！")
+                            api_logger.warning(f"🔍 笔记ID {note_id} 不存在或不属于用户 {current_user.id}")
                     else:
-                        api_logger.warning(f"🔍 笔记ID {note_id} 不存在或不属于用户 {current_user.id}")
+                        api_logger.error(f"无法转换笔记ID: {note_id}")
                 else:
                     api_logger.info("没有提供笔记ID，跳过笔记关联")
             
@@ -513,193 +912,6 @@ async def stream_chat(
     )
 
 
-@router.post("/clear-memory/{session_id}")
-async def clear_chat_memory(
-    request: Request,
-    session_id: int = Path(..., description="聊天会话ID"),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    清空指定会话的记忆上下文
-    """
-    api_logger.info(f"清空会话记忆: session_id={session_id}, user={current_user.username}")
-    
-    await clear_memory(session_id)
-    
-    return SuccessResponse(
-        data={"success": True},
-        msg="清空会话记忆成功",
-        request_id=getattr(request.state, "request_id", None)
-    )
-
-
-@router.get("/sessions")
-async def list_chat_sessions(
-    request: Request,
-    page: int = Query(1, ge=1, description="页码，从1开始"),
-    page_size: int = Query(10, ge=1, le=100, description="每页条数"),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    获取当前用户的所有聊天会话，支持分页
-    """
-    api_logger.info(f"获取用户聊天会话列表: {current_user.username}, page={page}, page_size={page_size}")
-    
-    # 计算跳过的记录数
-    skip = (page - 1) * page_size
-    
-    # 从数据库获取会话列表和总数，不自动加载消息
-    chats, total = await get_user_chats(db, current_user.id, skip, page_size)
-    
-    # 计算总页数
-    total_pages = (total + page_size - 1) // page_size
-    
-    # 转换为响应格式
-    result = []
-    for chat in chats:
-        # 单独查询每个会话的消息数量和最后一条消息
-        chat_messages = await get_chat_messages(db, chat.id)
-        message_count = len(chat_messages) if chat_messages else 0
-        
-        # 获取最后一条消息内容
-        last_message = None
-        if message_count > 0:
-            content = chat_messages[-1].content
-            if len(content) > 30:
-                last_message = content[:30] + "..."
-            else:
-                last_message = content
-        
-        result.append({
-            "id": chat.id,
-            "title": chat.title,
-            "agent_id": chat.agent_id,
-            "created_at": chat.created_at.isoformat() if chat.created_at else None,
-            "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
-            "message_count": message_count,
-            "last_message": last_message
-        })
-    
-    # 构建分页响应
-    pagination_response = {
-        "items": result,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "pages": total_pages
-    }
-    
-    return SuccessResponse(
-        data=pagination_response,
-        msg="获取聊天会话列表成功",
-        request_id=getattr(request.state, "request_id", None)
-    )
-
-
-@router.get("/sessions/{session_id}", response_model=ChatResponseModel)
-async def get_chat_session(
-    request: Request,
-    session_id: int = Path(..., description="聊天会话ID"),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    获取指定聊天会话的详情和消息
-    """
-    api_logger.info(f"获取聊天会话详情: session_id={session_id}, user={current_user.username}")
-    
-    # 验证会话是否属于当前用户
-    chat = await get_chat(db, session_id)
-    if not chat or chat.user_id != current_user.id:
-        api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
-        return SuccessResponse(
-            data=None,
-            msg="聊天会话不存在或无权访问",
-            request_id=getattr(request.state, "request_id", None)
-        )
-    
-    # 获取会话的消息列表
-    chat_messages = await get_chat_messages(db, session_id)
-    
-    # 构建消息列表，包含工具调用信息
-    messages = []
-    for msg in chat_messages:
-        # 获取Agent信息
-        agent_info = None
-        if msg.agent_id:
-            agent_info = {
-                "id": msg.agent_id,
-                "name": "默认助手",  # 这里可以根据需要从数据库获取真实的agent信息
-                "avatar": None
-            }
-        
-        # 检查消息内容是否是JSON结构（包含interaction_flow）
-        tool_calls_data = []
-        is_json_structure = False
-        
-        if msg.role == "assistant" and msg.content:
-            try:
-                import json
-                parsed_content = json.loads(msg.content)
-                if (isinstance(parsed_content, dict) and 
-                    parsed_content.get("type") == "agent_response" and 
-                    "interaction_flow" in parsed_content):
-                    is_json_structure = True
-                    api_logger.debug(f"消息 {msg.id} 包含JSON结构，跳过tool_calls_data查询")
-            except (json.JSONDecodeError, TypeError):
-                # 不是JSON结构，继续正常处理
-                pass
-        
-        # 只有在消息内容不是JSON结构时，才查询并添加tool_calls_data
-        if not is_json_structure:
-            from backend.crud.tool_call import get_tool_calls_by_message
-            tool_calls = await get_tool_calls_by_message(db, msg.id)
-            
-            # 转换工具调用数据格式
-            for tool_call in tool_calls:
-                tool_calls_data.append({
-                    "id": tool_call.id,
-                    "tool_call_id": tool_call.tool_call_id,
-                    "tool_name": tool_call.tool_name,
-                    "function_name": tool_call.function_name,
-                    "arguments": tool_call.arguments,
-                    "status": tool_call.status,
-                    "result": tool_call.result,
-                    "error_message": tool_call.error_message,
-                    "started_at": tool_call.started_at.isoformat() if tool_call.started_at else None,
-                    "completed_at": tool_call.completed_at.isoformat() if tool_call.completed_at else None
-                })
-        
-        messages.append({
-            "id": msg.id,
-            "role": msg.role,
-            "content": msg.content,
-            "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            "tokens": msg.tokens,
-            "agent_id": msg.agent_id,
-            "agent_info": agent_info,
-            # 工具调用相关字段 - 从新的数据结构获取
-            "tool_calls_data": tool_calls_data
-        })
-    
-    result = {
-        "id": chat.id,
-        "user_id": chat.user_id,
-        "agent_id": chat.agent_id,
-        "title": chat.title,
-        "created_at": chat.created_at.isoformat() if chat.created_at else None,
-        "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
-        "messages": messages
-    }
-    
-    return SuccessResponse(
-        data=result,
-        msg="获取聊天会话详情成功",
-        request_id=getattr(request.state, "request_id", None)
-    )
-
-
 @router.post("/sessions", response_model=ChatResponseModel)
 async def create_chat_session(
     request: Request,
@@ -718,50 +930,54 @@ async def create_chat_session(
             from backend.models.note import Note
             from sqlalchemy import select
             
-            # 查询笔记是否存在
-            stmt = select(Note).where(
-                Note.id == chat_data.note_id,
-                Note.user_id == current_user.id,
-                Note.is_deleted == False
-            )
-            note_result = await db.execute(stmt)
-            note = note_result.scalar_one_or_none()
-            
-            if note:
-                # 使用新的多对多关联方式
-                # 检查是否已有主要会话，如果没有则设为主要会话
-                existing_primary = await note_session.get_primary_session_by_note(db, chat_data.note_id)
-                is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
-                
-                await note_session.create_note_session_link(
-                    db, 
-                    note_id=chat_data.note_id, 
-                    session_id=new_chat.id,
-                    is_primary=is_primary
+            # 将note_id转换为数据库内部ID进行验证
+            db_note_id = await IDConverter.get_note_db_id(db, chat_data.note_id)
+            if db_note_id:
+                # 查询笔记是否存在
+                stmt = select(Note).where(
+                    Note.id == db_note_id,
+                    Note.user_id == current_user.id,
+                    Note.is_deleted == False
                 )
+                note_result = await db.execute(stmt)
+                note = note_result.scalar_one_or_none()
                 
-                api_logger.info(f"笔记ID {chat_data.note_id} 已关联到会话ID {new_chat.id}，是否为主要会话: {is_primary}")
-                
-                # 验证关联是否真的被创建
-                verification_sessions = await note_session.get_sessions_by_note(db, chat_data.note_id)
-                verification_session_ids = [s.id for s in verification_sessions]
-                api_logger.info(f"验证笔记 {chat_data.note_id} 关联的会话列表: {verification_session_ids}")
-                
-                if new_chat.id in verification_session_ids:
-                    api_logger.info(f"✅ 笔记 {chat_data.note_id} 与会话 {new_chat.id} 关联创建成功")
+                if note:
+                    # 使用新的多对多关联方式
+                    # 检查是否已有主要会话，如果没有则设为主要会话
+                    existing_primary = await note_session.get_primary_session_by_note(db, chat_data.note_id)
+                    is_primary = existing_primary is None  # 如果没有主要会话，这个就是主要会话
+                    
+                    await note_session.create_note_session_link(
+                        db, 
+                        note_id=chat_data.note_id, 
+                        session_id=new_chat.public_id,  # 使用public_id
+                        is_primary=is_primary
+                    )
+                    
+                    api_logger.info(f"笔记ID {chat_data.note_id} 已关联到会话ID {new_chat.public_id}，是否为主要会话: {is_primary}")
+                    
+                    # 验证关联是否真的被创建
+                    verification_sessions = await note_session.get_sessions_by_note(db, chat_data.note_id)
+                    verification_session_ids = [s.public_id for s in verification_sessions]
+                    api_logger.info(f"验证笔记 {chat_data.note_id} 关联的会话列表: {verification_session_ids}")
+                    
+                    if new_chat.public_id in verification_session_ids:
+                        api_logger.info(f"✅ 笔记 {chat_data.note_id} 与会话 {new_chat.public_id} 关联创建成功")
+                    else:
+                        api_logger.error(f"❌ 笔记 {chat_data.note_id} 与会话 {new_chat.public_id} 关联创建失败！")
                 else:
-                    api_logger.error(f"❌ 笔记 {chat_data.note_id} 与会话 {new_chat.id} 关联创建失败！")
-            else:
-                api_logger.warning(f"笔记ID {chat_data.note_id} 不存在或不属于用户 {current_user.id}")
+                    api_logger.warning(f"笔记ID {chat_data.note_id} 不存在或不属于用户 {current_user.id}")
         
         return SuccessResponse(
             data={
-                "id": new_chat.id,
+                "id": new_chat.public_id,  # 使用public_id
                 "title": new_chat.title,
-                "user_id": new_chat.user_id,
+                "user_id": current_user.public_id,  # 使用public_id
                 "created_at": new_chat.created_at.isoformat() if new_chat.created_at else None,
                 "updated_at": new_chat.updated_at.isoformat() if new_chat.updated_at else None
             },
+            msg="创建会话成功",
             request_id=getattr(request.state, "request_id", None)
         )
     except Exception as e:
@@ -772,7 +988,7 @@ async def create_chat_session(
 @router.put("/sessions/{session_id}", response_model=ChatResponseModel)
 async def update_chat_session(
     request: Request,
-    session_id: int = Path(..., description="聊天会话ID"),
+    session_id: str = Path(..., description="聊天会话ID"),
     chat_data: ChatUpdate = Body(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -782,7 +998,7 @@ async def update_chat_session(
     """
     api_logger.info(f"更新聊天会话: session_id={session_id}, user={current_user.username}")
     
-    # 验证会话存在且属于当前用户
+    # 验证会话存在且属于当前用户（get_chat已支持public_id）
     chat = await get_chat(db, session_id)
     if not chat or chat.user_id != current_user.id:
         api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
@@ -792,12 +1008,12 @@ async def update_chat_session(
             request_id=getattr(request.state, "request_id", None)
         )
     
-    # 更新标题
+    # 更新标题（update_chat_title已支持public_id）
     updated_chat = await update_chat_title(db, session_id, chat_data.title)
     
     result = {
-        "id": updated_chat.id,
-        "user_id": updated_chat.user_id,
+        "id": updated_chat.public_id,  # 使用public_id
+        "user_id": current_user.public_id,  # 使用public_id
         "title": updated_chat.title,
         "created_at": updated_chat.created_at.isoformat() if updated_chat.created_at else None,
         "updated_at": updated_chat.updated_at.isoformat() if updated_chat.updated_at else None,
@@ -814,7 +1030,7 @@ async def update_chat_session(
 @router.delete("/sessions/{session_id}")
 async def delete_chat_session(
     request: Request,
-    session_id: int = Path(..., description="聊天会话ID"),
+    session_id: str = Path(..., description="聊天会话ID"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -823,7 +1039,7 @@ async def delete_chat_session(
     """
     api_logger.info(f"删除聊天会话: session_id={session_id}, user={current_user.username}")
     
-    # 验证会话存在且属于当前用户
+    # 验证会话存在且属于当前用户（get_chat已支持public_id）
     chat = await get_chat(db, session_id)
     if not chat or chat.user_id != current_user.id:
         api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
@@ -833,7 +1049,7 @@ async def delete_chat_session(
             request_id=getattr(request.state, "request_id", None)
         )
     
-    # 软删除会话
+    # 软删除会话（soft_delete_chat已支持public_id）
     success = await soft_delete_chat(db, session_id)
     
     return SuccessResponse(
@@ -886,7 +1102,7 @@ async def check_memory_health(
 @router.get("/memory/{session_id}")
 async def get_memory_content(
     request: Request,
-    session_id: int = Path(..., description="聊天会话ID"),
+    session_id: str = Path(..., description="聊天会话ID"),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -896,7 +1112,7 @@ async def get_memory_content(
     api_logger.info(f"获取会话记忆内容: session_id={session_id}, user={current_user.username}")
     
     try:
-        # 获取会话基本信息（验证用户权限）
+        # 获取会话基本信息（验证用户权限）（get_chat已支持public_id）
         chat = await get_chat(db, session_id)
         if not chat or chat.user_id != current_user.id:
             api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
@@ -906,7 +1122,7 @@ async def get_memory_content(
                 request_id=getattr(request.state, "request_id", None)
             )
         
-        # 获取会话记忆内容
+        # 获取会话记忆内容（memory_service已支持public_id）
         messages = memory_service.get_messages(session_id)
         
         # 计算记忆统计信息
@@ -993,7 +1209,7 @@ async def get_all_memory_stats(
 @router.post("/restore-memory/{session_id}")
 async def restore_chat_memory(
     request: Request,
-    session_id: int = Path(..., description="聊天会话ID"),
+    session_id: str = Path(..., description="聊天会话ID"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1003,7 +1219,7 @@ async def restore_chat_memory(
     api_logger.info(f"恢复会话记忆: session_id={session_id}, user={current_user.username}")
     
     try:
-        # 验证会话存在且属于当前用户
+        # 验证会话存在且属于当前用户（get_chat已支持public_id）
         chat = await get_chat(db, session_id)
         if not chat or chat.user_id != current_user.id:
             api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
@@ -1014,10 +1230,10 @@ async def restore_chat_memory(
             )
         
         try:
-            # 查询历史消息
+            # 查询历史消息（get_chat_messages已支持public_id）
             db_messages = await get_chat_messages(db, session_id)
             
-            # 清除现有记忆
+            # 清除现有记忆（memory_service已支持public_id）
             memory_service.clear_memory(session_id)
             
             # 格式化消息并恢复到Redis
@@ -1030,7 +1246,7 @@ async def restore_chat_memory(
             # 获取用户当前的记忆会话数量
             memory_count = memory_service.count_user_memories(current_user.id)
             
-            # 恢复记忆，传递用户ID进行管理
+            # 恢复记忆，传递用户ID进行管理（memory_service已支持public_id）
             restored = memory_service.restore_memory_from_db(session_id, formatted_messages, current_user.id)
             
             if restored:
@@ -1085,18 +1301,19 @@ async def get_user_memory_sessions(
     api_logger.info(f"获取用户记忆会话列表: user={current_user.username}")
     
     try:
-        # 获取用户的记忆会话ID列表
+        # 获取用户的记忆会话ID列表（memory_service已支持用户ID）
         memory_ids = memory_service.get_user_memory_sessions(current_user.id)
         
         # 从数据库获取会话详情
         sessions = []
         for mem_id in memory_ids:
             try:
+                # get_chat已支持public_id
                 chat = await get_chat(db, mem_id)
                 if chat and chat.user_id == current_user.id:
                     messages_count = len(memory_service.get_messages(mem_id))
                     sessions.append({
-                        "id": chat.id,
+                        "id": chat.public_id,  # 使用public_id
                         "title": chat.title,
                         "created_at": chat.created_at.isoformat() if chat.created_at else None,
                         "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
@@ -1133,7 +1350,7 @@ async def get_user_memory_sessions(
 @router.post("/ask-again/{session_id}")
 async def ask_again(
     request: Request,
-    session_id: int = Path(..., description="聊天会话ID"),
+    session_id: str = Path(..., description="聊天会话ID"),
     ask_request: AskAgainRequest = Body(..., description="重新提问请求"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -1150,7 +1367,7 @@ async def ask_again(
                    f"is_user_message={ask_request.is_user_message}, rerun={ask_request.rerun}, user={current_user.username}")
     
     try:
-        # 验证会话存在且属于当前用户
+        # 验证会话存在且属于当前用户（get_chat已支持public_id）
         chat = await get_chat(db, session_id)
         if not chat or chat.user_id != current_user.id:
             api_logger.warning(f"聊天会话不存在或无权访问: session_id={session_id}, user={current_user.username}")
@@ -1160,36 +1377,56 @@ async def ask_again(
                 request_id=getattr(request.state, "request_id", None)
             )
             
-        # 获取消息列表，验证消息ID是否存在
+        # 获取消息列表，验证消息ID是否存在（get_chat_messages已支持public_id）
         db_messages = await get_chat_messages(db, session_id)
         db_message_ids = [msg.id for msg in db_messages]
+        db_message_public_ids = [msg.public_id for msg in db_messages]
+        
+        # 判断message_index是整数索引还是字符串ID
+        is_message_index_numeric = isinstance(ask_request.message_index, int)
+        is_message_index_in_db_ids = ask_request.message_index in db_message_ids
+        is_message_index_in_public_ids = ask_request.message_index in db_message_public_ids
         
         # 查找指定消息在数据库中的角色
         target_message_id = None  # 要软删除的起始消息ID
+        target_message_public_id = None  # 目标消息的public_id
+        target_message = None
+        message_position = None
         
-        if ask_request.message_index in db_message_ids:
-            # 获取消息的ID
-            message_index_in_db = db_message_ids.index(ask_request.message_index)
-            if message_index_in_db < len(db_messages):
-                # 获取目标消息对象
-                target_message = db_messages[message_index_in_db]
-                target_message_id = ask_request.message_index
-                
-                # 检查消息角色与请求中的is_user_message是否一致
-                is_user_role = target_message.role == "user"
-                if is_user_role != ask_request.is_user_message:
-                    api_logger.warning(f"消息角色与请求不一致: 数据库角色={target_message.role}, 请求is_user_message={ask_request.is_user_message}")
-                    return SuccessResponse(
-                        data={"success": False},
-                        msg="消息角色与请求不匹配",
-                        request_id=getattr(request.state, "request_id", None)
-                    )
-        
-        # 检查message_index是否是数据库中的消息ID
-        if ask_request.message_index in db_message_ids:
-            # 是数据库消息ID，找出它在聊天中的位置
+        if is_message_index_in_db_ids:
+            # 是数据库内部ID
             message_position = db_message_ids.index(ask_request.message_index)
-            # 获取当前Redis中的记忆状态，查看消息数是否匹配
+            target_message = db_messages[message_position]
+            target_message_id = ask_request.message_index
+            target_message_public_id = target_message.public_id
+        elif is_message_index_in_public_ids:
+            # 是public_id，需要转换为数据库ID
+            message_position = db_message_public_ids.index(ask_request.message_index)
+            target_message = db_messages[message_position]
+            target_message_id = target_message.id
+            target_message_public_id = ask_request.message_index
+            api_logger.info(f"将public_id {ask_request.message_index} 转换为数据库ID {target_message_id}")
+        elif is_message_index_numeric and 0 <= ask_request.message_index < len(db_messages):
+            # 是有效的数字索引
+            message_position = ask_request.message_index
+            target_message = db_messages[message_position]
+            target_message_id = target_message.id
+            target_message_public_id = target_message.public_id
+        
+        # 如果找到了目标消息，检查角色一致性
+        if target_message:
+            is_user_role = target_message.role == "user"
+            if is_user_role != ask_request.is_user_message:
+                api_logger.warning(f"消息角色与请求不一致: 数据库角色={target_message.role}, 请求is_user_message={ask_request.is_user_message}")
+                return SuccessResponse(
+                    data={"success": False},
+                    msg="消息角色与请求不匹配",
+                    request_id=getattr(request.state, "request_id", None)
+                )
+        
+        # 检查是否找到了有效的消息
+        if target_message and message_position is not None:
+            # 获取当前Redis中的记忆状态，查看消息数是否匹配（memory_service已支持public_id）
             memory_messages = memory_service.get_messages(session_id)
             
             # 检查Redis中的记忆是否存在或是否有足够的消息
@@ -1236,7 +1473,7 @@ async def ask_again(
                     # 记录要删除的消息数量
                     messages_to_remove = len(memory_messages) - memory_index if memory_index < len(memory_messages) else 0
                     
-                    # 替换消息并截断
+                    # 替换消息并截断（replace_message_and_truncate已支持public_id）
                     if not ask_request.content:
                         # 如果没有提供新内容，使用原消息内容
                         original_content = db_messages[message_position].content
@@ -1244,14 +1481,14 @@ async def ask_again(
                     else:
                         result = await replace_message_and_truncate(session_id, memory_index, ask_request.content, target_role)
                     
-                    # 更新数据库中的消息内容
+                    # 更新数据库中的消息内容（update_message_content已支持message_id）
                     if ask_request.content and memory_index < len(db_messages):
-                        corresponding_db_message_id = db_messages[memory_index].id
-                        db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                        corresponding_message = db_messages[memory_index]
+                        db_update_success = await update_message_content(db, corresponding_message.public_id, ask_request.content)
                         if db_update_success:
-                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_message.public_id}")
                         else:
-                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
+                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_message.public_id}")
                 else:  # 仅编辑不重新执行
                     # 不需要截断记忆，仅替换指定消息内容
                     new_content = ask_request.content or db_messages[message_position].content
@@ -1260,12 +1497,12 @@ async def ask_again(
                     
                     # 更新数据库中的消息内容
                     if ask_request.content and memory_index < len(db_messages):
-                        corresponding_db_message_id = db_messages[memory_index].id
-                        db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                        corresponding_message = db_messages[memory_index]
+                        db_update_success = await update_message_content(db, corresponding_message.public_id, ask_request.content)
                         if db_update_success:
-                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_message.public_id}")
                         else:
-                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
+                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_message.public_id}")
             else:  # 编辑AI回复
                 # 找到AI回复消息的位置
                 if target_role != "assistant":
@@ -1283,16 +1520,42 @@ async def ask_again(
                 
                 # 更新数据库中的消息内容
                 if ask_request.content and memory_index < len(db_messages):
-                    corresponding_db_message_id = db_messages[memory_index].id
-                    db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                    corresponding_message = db_messages[memory_index]
+                    db_update_success = await update_message_content(db, corresponding_message.public_id, ask_request.content)
                     if db_update_success:
-                        api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                        api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_message.public_id}")
                     else:
-                        api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
+                        api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_message.public_id}")
         else:
-            # 直接作为记忆索引使用
+            # 消息未找到，检查是否为有效的数字索引
+            if not is_message_index_numeric:
+                # 字符串ID但未找到对应消息
+                api_logger.warning(f"无法找到消息: message_index={ask_request.message_index}")
+                return SuccessResponse(
+                    data={"success": False},
+                    msg="指定的消息不存在",
+                    request_id=getattr(request.state, "request_id", None)
+                )
+            # 如果是数字索引，继续到下面的统一处理逻辑
+        
+        # 此时我们有两种情况：
+        # 1. target_message 不为空：找到了数据库中的消息，使用 message_position 和 memory_index
+        # 2. target_message 为空但 is_message_index_numeric 为 True：使用数字索引直接操作记忆
+        
+        # 设置工作变量
+        memory_messages = memory_service.get_messages(session_id)
+        working_memory_index = None
+        target_role = None
+        messages_to_remove = 0
+        result = False
+        
+        if target_message and message_position is not None:
+            # 找到了数据库消息，使用之前计算的memory_index
+            working_memory_index = memory_index
+            target_role = target_message.role
+        elif is_message_index_numeric:
+            # 使用数字索引直接操作记忆
             api_logger.info(f"直接使用 {ask_request.message_index} 作为记忆索引")
-            memory_messages = memory_service.get_messages(session_id)
             
             # 检查记忆索引是否有效
             if ask_request.message_index < 0 or ask_request.message_index >= len(memory_messages):
@@ -1302,7 +1565,7 @@ async def ask_again(
                     request_id=getattr(request.state, "request_id", None)
                 )
             
-            # 获取目标消息角色
+            working_memory_index = ask_request.message_index
             target_role = memory_messages[ask_request.message_index]["role"]
             
             # 检查角色与请求中的is_user_message是否一致
@@ -1314,66 +1577,74 @@ async def ask_again(
                     msg="消息角色与请求不匹配",
                     request_id=getattr(request.state, "request_id", None)
                 )
-            
-            # 根据操作类型处理不同情况
-            if ask_request.is_user_message:  # 编辑用户消息
-                if ask_request.rerun:  # 需要重新执行
-                    # 记录要删除的消息数量
-                    messages_to_remove = len(memory_messages) - ask_request.message_index if ask_request.message_index < len(memory_messages) else 0
-                    
-                    # 替换消息并截断
-                    if not ask_request.content:
-                        # 如果没有提供新内容，使用原消息内容
-                        original_content = memory_messages[ask_request.message_index]["content"]
-                        result = await replace_message_and_truncate(session_id, ask_request.message_index, original_content, target_role)
-                    else:
-                        result = await replace_message_and_truncate(session_id, ask_request.message_index, ask_request.content, target_role)
-                    
-                    # 更新数据库中的消息内容
-                    if ask_request.content and ask_request.message_index < len(db_messages):
-                        corresponding_db_message_id = db_messages[ask_request.message_index].id
-                        db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
-                        if db_update_success:
-                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
-                        else:
-                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
-                else:  # 仅编辑不重新执行
-                    # 不需要截断记忆，仅替换指定消息内容
-                    new_content = ask_request.content or memory_messages[ask_request.message_index]["content"]
-                    result = memory_service.update_message_content(session_id, ask_request.message_index, new_content)
-                    messages_to_remove = 0
-                    
-                    # 更新数据库中的消息内容
-                    if ask_request.content and ask_request.message_index < len(db_messages):
-                        corresponding_db_message_id = db_messages[ask_request.message_index].id
-                        db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
-                        if db_update_success:
-                            api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
-                        else:
-                            api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
-            else:  # 编辑AI回复
-                # 检查是否为AI回复消息
-                if target_role != "assistant":
-                    api_logger.warning(f"尝试编辑非AI回复消息: memory_index={ask_request.message_index}, role={target_role}")
-                    return SuccessResponse(
-                        data={"success": False},
-                        msg="只能编辑AI回复消息",
-                        request_id=getattr(request.state, "request_id", None)
-                    )
+        else:
+            # 这种情况不应该发生，因为前面已经处理了
+            api_logger.error("未能确定工作索引")
+            return SuccessResponse(
+                data={"success": False},
+                msg="系统错误：未能确定消息索引",
+                request_id=getattr(request.state, "request_id", None)
+            )
+        
+        # 根据操作类型处理不同情况
+        if ask_request.is_user_message:  # 编辑用户消息
+            if ask_request.rerun:  # 需要重新执行
+                # 记录要删除的消息数量
+                messages_to_remove = len(memory_messages) - working_memory_index if working_memory_index < len(memory_messages) else 0
                 
-                # 仅编辑内容，不重新执行
-                new_content = ask_request.content or memory_messages[ask_request.message_index]["content"]
-                result = memory_service.update_message_content(session_id, ask_request.message_index, new_content)
+                # 替换消息并截断
+                if not ask_request.content:
+                    # 如果没有提供新内容，使用原消息内容
+                    original_content = memory_messages[working_memory_index]["content"]
+                    result = await replace_message_and_truncate(session_id, working_memory_index, original_content, target_role)
+                else:
+                    result = await replace_message_and_truncate(session_id, working_memory_index, ask_request.content, target_role)
+                
+                # 更新数据库中的消息内容
+                if ask_request.content and working_memory_index < len(db_messages):
+                    corresponding_message = db_messages[working_memory_index]
+                    db_update_success = await update_message_content(db, corresponding_message.public_id, ask_request.content)
+                    if db_update_success:
+                        api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_message.public_id}")
+                    else:
+                        api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_message.public_id}")
+            else:  # 仅编辑不重新执行
+                # 不需要截断记忆，仅替换指定消息内容
+                new_content = ask_request.content or memory_messages[working_memory_index]["content"]
+                result = memory_service.update_message_content(session_id, working_memory_index, new_content)
                 messages_to_remove = 0
                 
                 # 更新数据库中的消息内容
-                if ask_request.content and ask_request.message_index < len(db_messages):
-                    corresponding_db_message_id = db_messages[ask_request.message_index].id
-                    db_update_success = await update_message_content(db, corresponding_db_message_id, ask_request.content)
+                if ask_request.content and working_memory_index < len(db_messages):
+                    corresponding_message = db_messages[working_memory_index]
+                    db_update_success = await update_message_content(db, corresponding_message.public_id, ask_request.content)
                     if db_update_success:
-                        api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_db_message_id}")
+                        api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_message.public_id}")
                     else:
-                        api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_db_message_id}")
+                        api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_message.public_id}")
+        else:  # 编辑AI回复
+            # 检查是否为AI回复消息
+            if target_role != "assistant":
+                api_logger.warning(f"尝试编辑非AI回复消息: memory_index={working_memory_index}, role={target_role}")
+                return SuccessResponse(
+                    data={"success": False},
+                    msg="只能编辑AI回复消息",
+                    request_id=getattr(request.state, "request_id", None)
+                )
+            
+            # 仅编辑内容，不重新执行
+            new_content = ask_request.content or memory_messages[working_memory_index]["content"]
+            result = memory_service.update_message_content(session_id, working_memory_index, new_content)
+            messages_to_remove = 0
+            
+            # 更新数据库中的消息内容
+            if ask_request.content and working_memory_index < len(db_messages):
+                corresponding_message = db_messages[working_memory_index]
+                db_update_success = await update_message_content(db, corresponding_message.public_id, ask_request.content)
+                if db_update_success:
+                    api_logger.info(f"已更新数据库中的消息内容: message_id={corresponding_message.public_id}")
+                else:
+                    api_logger.warning(f"更新数据库中的消息内容失败: message_id={corresponding_message.public_id}")
         
         if not result:
             return SuccessResponse(
@@ -1390,15 +1661,15 @@ async def ask_again(
         if target_message_id and ask_request.is_user_message and ask_request.rerun:
             # 在删除后续消息之前，先更新原始消息的内容
             if ask_request.content:
-                update_success = await update_message_content(db, target_message_id, ask_request.content)
+                update_success = await update_message_content(db, target_message_public_id, ask_request.content)
                 if update_success:
-                    api_logger.info(f"已更新原始消息内容: message_id={target_message_id}")
+                    api_logger.info(f"已更新原始消息内容: message_id={target_message_public_id}")
                 else:
-                    api_logger.warning(f"更新原始消息内容失败: message_id={target_message_id}")
+                    api_logger.warning(f"更新原始消息内容失败: message_id={target_message_public_id}")
             
-            # 软删除指定消息ID之后的所有消息
-            db_deleted_count = await soft_delete_messages_after(db, session_id, target_message_id)
-            api_logger.info(f"已在数据库中软删除 {db_deleted_count} 条消息，从ID {target_message_id} 开始")
+            # 软删除指定消息ID之后的所有消息（soft_delete_messages_after已支持session_id）
+            db_deleted_count = await soft_delete_messages_after(db, session_id, target_message_public_id)
+            api_logger.info(f"已在数据库中软删除 {db_deleted_count} 条消息，从ID {target_message_public_id} 开始")
         
         # 如果重新执行，并且提供了新内容，则立即发送新消息
         if ask_request.is_user_message and ask_request.rerun and ask_request.content:
@@ -1411,7 +1682,7 @@ async def ask_again(
                 agent = await agent_crud.get_agent_for_user(db, agent_id=agent_id, user_id=current_user.id)
                 if agent:
                     agent_info = {
-                        "id": agent.id,
+                        "id": agent.public_id,  # 使用public_id
                         "name": "AI助手",
                         "avatar_url": None,
                         "model": agent.model
@@ -1489,196 +1760,4 @@ async def ask_again(
             data={"error": str(e)},
             msg="编辑消息失败",
             request_id=getattr(request.state, "request_id", None)
-        )
-
-
-@router.get("/{session_id}/history", response_model=List[ChatMessageResponse])
-async def get_chat_history_endpoint(
-    session_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """获取聊天历史记录"""
-    api_logger.info(f"获取聊天历史: session_id={session_id}, user_id={current_user.id}")
-    
-    # 验证会话存在且属于当前用户
-    chat = await get_chat(db, session_id)
-    if not chat or chat.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="聊天会话不存在或无权访问"
-        )
-    
-    # 获取聊天消息
-    messages = await get_chat_messages(db, session_id)
-    
-    # 为每个消息加载工具调用信息
-    from backend.crud.tool_call import get_tool_calls_by_message
-    
-    result = []
-    for msg in messages:
-        # 获取消息的工具调用记录
-        tool_calls = await get_tool_calls_by_message(db, msg.id)
-        
-        # 转换为响应格式
-        message_data = {
-            "id": msg.id,
-            "role": msg.role,
-            "content": msg.content,
-            "tokens": msg.tokens,
-            "prompt_tokens": msg.prompt_tokens,
-            "total_tokens": msg.total_tokens,
-            "agent_id": msg.agent_id,
-            "created_at": msg.created_at,
-            "updated_at": msg.updated_at,
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "tool_call_id": tc.tool_call_id,
-                    "tool_name": tc.tool_name,
-                    "function_name": tc.function_name,
-                    "arguments": tc.arguments,
-                    "status": tc.status,
-                    "result": tc.result,
-                    "error_message": tc.error_message,
-                    "started_at": tc.started_at,
-                    "completed_at": tc.completed_at
-                } for tc in tool_calls
-            ]
-        }
-        result.append(message_data)
-    
-    return result
-
-
-@router.post("/stop-and-save")
-async def stop_and_save_response(
-    request: Request,
-    stop_request: dict,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """
-    停止Agent响应并保存当前已生成的内容
-    """
-    request_id = str(uuid.uuid4())
-    api_logger.info(f"收到停止并保存响应请求: {stop_request}, request_id={request_id}")
-    
-    try:
-        session_id = stop_request.get("session_id")
-        current_content = stop_request.get("current_content", "")
-        user_content = stop_request.get("user_content", "")
-        agent_id = stop_request.get("agent_id")
-        
-        if not session_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="缺少会话ID"
-            )
-        
-        # 验证会话是否属于当前用户
-        chat = await get_chat(db, session_id)
-        if not chat or chat.user_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="会话不存在或无权访问"
-            )
-        
-        # 如果有内容需要保存，保存Agent消息
-        if current_content.strip():
-            from backend.crud.chat import add_message
-            
-            # 计算token数量（简单估算）
-            tokens = len(current_content) // 4
-            prompt_tokens = len(user_content) // 4 if user_content else 0
-            total_tokens = tokens + prompt_tokens
-            
-            # 如果提供了用户内容，且会话中还没有用户消息，先保存用户消息
-            if user_content.strip():
-                # 检查会话中最新的消息是否是用户消息
-                existing_messages = await get_chat_messages(db, session_id)
-                if not existing_messages or existing_messages[-1].role != "user":
-                    # 保存用户消息
-                    user_message = await add_message(
-                        db=db,
-                        session_id=session_id,
-                        role="user",
-                        content=user_content,
-                        tokens=prompt_tokens,
-                        prompt_tokens=0,
-                        total_tokens=prompt_tokens,
-                        agent_id=agent_id
-                    )
-                    
-                    # 添加到记忆服务
-                    from backend.services.memory import memory_service
-                    memory_service.add_user_message(session_id, user_content, current_user.id)
-                    
-                    api_logger.info(f"已保存停止时的用户消息: session_id={session_id}, message_id={user_message.id}")
-            
-            # 保存Agent的部分响应
-            ai_message = await add_message(
-                db=db,
-                session_id=session_id,
-                role="assistant",
-                content=current_content,
-                tokens=tokens,
-                prompt_tokens=prompt_tokens,
-                total_tokens=total_tokens,
-                agent_id=agent_id
-            )
-            
-            # 添加到记忆服务
-            from backend.services.memory import memory_service
-            memory_service.add_assistant_message(session_id, current_content, current_user.id)
-            
-            api_logger.info(f"已保存停止时的Agent响应: session_id={session_id}, message_id={ai_message.id}, content_length={len(current_content)}")
-        elif user_content.strip():
-            # 如果只有用户内容没有Agent响应，也要保存用户消息
-            from backend.crud.chat import add_message
-            
-            prompt_tokens = len(user_content) // 4
-            
-            # 检查会话中最新的消息是否是用户消息
-            existing_messages = await get_chat_messages(db, session_id)
-            if not existing_messages or existing_messages[-1].role != "user":
-                # 保存用户消息
-                user_message = await add_message(
-                    db=db,
-                    session_id=session_id,
-                    role="user",
-                    content=user_content,
-                    tokens=prompt_tokens,
-                    prompt_tokens=0,
-                    total_tokens=prompt_tokens,
-                    agent_id=agent_id
-                )
-                
-                # 添加到记忆服务
-                from backend.services.memory import memory_service
-                memory_service.add_user_message(session_id, user_content, current_user.id)
-                
-                api_logger.info(f"已保存停止时的用户消息: session_id={session_id}, message_id={user_message.id}")
-        
-        return {
-            "code": 200,
-            "msg": "成功保存停止时的响应内容",
-            "data": {
-                "session_id": session_id,
-                "content_saved": len(current_content) > 0,
-                "content_length": len(current_content),
-                "user_content_saved": len(user_content.strip()) > 0
-            },
-            "errors": None,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "request_id": request_id
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        api_logger.error(f"停止并保存响应失败: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"停止并保存响应失败: {str(e)}"
         ) 

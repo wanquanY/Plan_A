@@ -6,6 +6,9 @@ from backend.schemas.chat import ChatMemory
 from backend.utils.logging import api_logger
 from backend.core.config import settings
 from functools import lru_cache
+from datetime import datetime, timedelta
+from backend.utils.id_converter import IDConverter
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # 创建Redis客户端
 redis_client = redis.Redis.from_url(
@@ -24,21 +27,21 @@ class MemoryService:
         self.max_user_memories = settings.REDIS_MAX_USER_MEMORIES  # 每个用户的最大记忆会话数
         api_logger.info(f"记忆服务初始化完成 - 使用Redis存储，TTL={self.ttl}秒，最大消息数={self.max_messages}，每用户最大会话数={self.max_user_memories}")
     
-    def _get_key(self, session_id: int) -> str:
+    def _get_key(self, session_id: str) -> str:
         """生成Redis中记忆的key"""
-        return f"memory:{session_id}"
+        return f"memory:session:{session_id}"
         
     def _get_user_memories_key(self, user_id: int) -> str:
         """生成用户记忆索引的Redis键名"""
-        return f"user:memories:{user_id}"
+        return f"memory:user:{user_id}"
     
     @lru_cache(maxsize=100)
-    def get_memory(self, session_id: int) -> ChatMemory:
+    def get_memory(self, session_id: str) -> ChatMemory:
         """获取会话记忆，带LRU缓存"""
         messages = self._get_messages_from_redis(session_id)
         return ChatMemory(messages=messages)
     
-    def _get_messages_from_redis(self, session_id: int) -> List[Dict[str, str]]:
+    def _get_messages_from_redis(self, session_id: str) -> List[Dict[str, str]]:
         """从Redis获取消息记录"""
         try:
             key = self._get_key(session_id)
@@ -57,7 +60,7 @@ class MemoryService:
             api_logger.error(f"从Redis获取消息记录失败: {str(e)}", exc_info=True)
             return []  # 返回空列表，确保即使Redis出错也能继续工作
     
-    def _save_messages_to_redis(self, session_id: int, messages: List[Dict[str, str]]):
+    def _save_messages_to_redis(self, session_id: str, messages: List[Dict[str, str]]):
         """保存消息记录到Redis"""
         try:
             key = self._get_key(session_id)
@@ -72,7 +75,7 @@ class MemoryService:
             api_logger.error(f"保存消息到Redis失败: {str(e)}", exc_info=True)
             # 即使保存失败也不抛出异常，允许应用继续运行
     
-    def _register_memory_to_user(self, user_id: int, session_id: int):
+    def _register_memory_to_user(self, user_id: int, session_id: str):
         """将记忆关联到用户，用于用户记忆管理"""
         try:
             if not user_id:
@@ -119,7 +122,7 @@ class MemoryService:
                     
                     # 删除这些会话的记忆
                     for mem_id in valid_memories_to_remove:
-                        self.clear_memory(mem_id)
+                        self.clear_memory(str(mem_id))
                     
                     # 从用户索引中移除（移除所有超出限制的项，包括无效的）
                     self.redis.zremrangebyrank(user_key, 0, len(memories_to_remove) - 1)
@@ -130,7 +133,7 @@ class MemoryService:
             api_logger.error(f"注册用户记忆会话失败: {str(e)}", exc_info=True)
             # 即使失败也继续，不影响主要功能
     
-    def _update_memory_usage_time(self, user_id: int, session_id: int):
+    def _update_memory_usage_time(self, user_id: int, session_id: str):
         """更新记忆的使用时间"""
         try:
             if not user_id:
@@ -141,7 +144,7 @@ class MemoryService:
         except Exception as e:
             api_logger.warning(f"更新记忆使用时间失败: {e}")
     
-    def add_user_message(self, session_id: int, content: str, user_id: Optional[int] = None):
+    def add_user_message(self, session_id: str, content: str, user_id: Optional[int] = None):
         """添加用户消息到会话记忆中"""
         messages = self._get_messages_from_redis(session_id)
         messages.append({"role": "user", "content": content})
@@ -152,7 +155,7 @@ class MemoryService:
         if user_id:
             self._register_memory_to_user(user_id, session_id)
     
-    def add_assistant_message(self, session_id: int, content: str, user_id: Optional[int] = None):
+    def add_assistant_message(self, session_id: str, content: str, user_id: Optional[int] = None):
         """添加助手消息到会话记忆中"""
         messages = self._get_messages_from_redis(session_id)
         messages.append({"role": "assistant", "content": content})
@@ -163,11 +166,11 @@ class MemoryService:
         if user_id:
             self._update_memory_usage_time(user_id, session_id)
     
-    def get_messages(self, session_id: int) -> List[Dict[str, str]]:
+    def get_messages(self, session_id: str) -> List[Dict[str, str]]:
         """获取会话中的所有消息"""
         return self._get_messages_from_redis(session_id)
     
-    def clear_memory(self, session_id: int):
+    def clear_memory(self, session_id: str):
         """清空指定会话的记忆"""
         try:
             key = self._get_key(session_id)
@@ -176,7 +179,7 @@ class MemoryService:
         except Exception as e:
             api_logger.error(f"清空记忆失败: {e}")
     
-    def truncate_memory_after_message(self, session_id: int, message_index: int) -> bool:
+    def truncate_memory_after_message(self, session_id: str, message_index: int) -> bool:
         """
         截断指定消息索引之后的记忆
         
@@ -206,7 +209,7 @@ class MemoryService:
             api_logger.error(f"截断记忆失败: {e}")
             return False
             
-    def replace_message_and_truncate(self, session_id: int, message_index: int, new_content: str, role: str = None) -> bool:
+    def replace_message_and_truncate(self, session_id: str, message_index: int, new_content: str, role: str = None) -> bool:
         """
         替换指定索引的消息内容，并截断后续消息
         
@@ -245,11 +248,11 @@ class MemoryService:
             api_logger.error(f"替换消息失败: {e}")
             return False
     
-    def delete_memory(self, session_id: int):
+    def delete_memory(self, session_id: str):
         """删除指定会话的记忆（别名，同clear_memory）"""
         self.clear_memory(session_id)
         
-    def restore_memory_from_db(self, session_id: int, db_messages: List[Dict[str, Any]], user_id: Optional[int] = None):
+    def restore_memory_from_db(self, session_id: str, db_messages: List[Dict[str, Any]], user_id: Optional[int] = None):
         """
         从数据库消息恢复Redis记忆
         
@@ -290,7 +293,7 @@ class MemoryService:
             api_logger.error(f"从数据库恢复记忆失败: {e}")
             return False
             
-    def update_message_content(self, session_id: int, message_index: int, new_content: str) -> bool:
+    def update_message_content(self, session_id: str, message_index: int, new_content: str) -> bool:
         """
         更新指定索引消息的内容（不截断后续消息）
         
@@ -324,12 +327,12 @@ class MemoryService:
             api_logger.error(f"更新消息内容失败: {e}")
             return False
     
-    def get_user_memory_sessions(self, user_id: int) -> List[int]:
+    def get_user_memory_sessions(self, user_id: int) -> List[str]:
         """获取用户当前的记忆会话ID列表（按最近使用时间排序）"""
         try:
             user_key = self._get_user_memories_key(user_id)
-            memory_ids = self.redis.zrevrange(user_key, 0, -1)
-            return [int(mem_id) for mem_id in memory_ids]
+            sessions = self.redis.zrevrange(user_key, 0, -1)
+            return list(sessions)
         except Exception as e:
             api_logger.error(f"获取用户记忆会话列表失败: {str(e)}", exc_info=True)
             return []  # 返回空列表，确保API不会因为Redis错误而中断

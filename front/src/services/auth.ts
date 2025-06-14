@@ -21,8 +21,8 @@ interface RegisterData {
 
 interface RegisterResponse {
   user: User;
-  default_note?: {
-    id: number;
+  default_note: {
+    id: string;
     title: string;
   };
 }
@@ -30,10 +30,11 @@ interface RegisterResponse {
 interface LoginResponse {
   access_token: string;
   token_type: string;
+  user: User;
 }
 
 interface DefaultNote {
-  id: number;
+  id: string;
   title: string;
 }
 
@@ -43,7 +44,7 @@ const authService = {
     const response = await apiClient.post<ApiResponse<RegisterResponse>>('/auth/register', data);
     // 如果有默认笔记，存储默认笔记ID到本地存储，便于登录后自动打开
     if (response.data.data.default_note) {
-      localStorage.setItem('default_note_id', response.data.data.default_note.id.toString());
+      localStorage.setItem('default_note_id', response.data.data.default_note.id);
     }
     return response.data;
   },
@@ -103,9 +104,9 @@ const authService = {
   },
   
   // 获取默认笔记ID
-  getDefaultNoteId: (): number | null => {
+  getDefaultNoteId: (): string | null => {
     const noteId = localStorage.getItem('default_note_id');
-    return noteId ? parseInt(noteId) : null;
+    return noteId || null;
   },
   
   // 获取缓存的用户信息

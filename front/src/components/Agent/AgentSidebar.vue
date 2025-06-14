@@ -73,11 +73,11 @@ const props = defineProps({
     default: () => []
   },
   conversationId: {
-    type: [Number, String, null],
+    type: [String, null],
     default: null
   },
   noteId: {
-    type: [Number, String, null],
+    type: [String, null],
     default: null
   }
 });
@@ -460,7 +460,7 @@ const handleStopResponse = () => {
 };
 
 // 处理会话切换
-const handleSessionSwitched = (sessionId: number) => {
+const handleSessionSwitched = (sessionId: string) => {
   console.log('[AgentSidebar] 会话切换到:', sessionId);
   
   // 清理当前消息

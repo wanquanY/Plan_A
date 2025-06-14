@@ -12,7 +12,7 @@ const username = ref('用户');
 const sidebarCollapsed = ref(false);
 const sessions = ref([]);
 const notes = ref([]);
-const currentSessionId = ref(null);
+const currentSessionId = ref<string | null>(null);
 const activeTab = ref('notes');
 
 // 分页相关数据
@@ -250,8 +250,8 @@ const handleNoteDeleted = async (deleteData) => {
   const { deletedNoteId, deletedNoteIndex, totalNotes } = deleteData;
   
   // 检查被删除的笔记是否是当前正在编辑的笔记
-  const currentNoteId = router.currentRoute.value.query.note;
-  const isCurrentNoteDeleted = currentNoteId && parseInt(currentNoteId) === deletedNoteId;
+      const currentNoteId = router.currentRoute.value.query.note as string;
+    const isCurrentNoteDeleted = currentNoteId && currentNoteId === deletedNoteId;
   
   console.log(`当前编辑的笔记ID: ${currentNoteId}, 被删除的笔记ID: ${deletedNoteId}, 是否删除当前笔记: ${isCurrentNoteDeleted}`);
   

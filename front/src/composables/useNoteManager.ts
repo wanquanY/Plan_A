@@ -12,7 +12,7 @@ export function useNoteManager() {
   const fetchNotes = inject('fetchNotes') as any;
   
   // 笔记相关状态
-  const currentNoteId = ref<number | null>(null);
+  const currentNoteId = ref<string | null>(null);
   const editorTitle = ref('新笔记');
   const editorContent = ref('<p>请输入内容...</p>');
   const isAutoSaveEnabled = ref(true);
@@ -61,7 +61,7 @@ export function useNoteManager() {
   }, 2000);
 
   // 获取笔记详情
-  const fetchNoteDetail = async (noteId: number) => {
+  const fetchNoteDetail = async (noteId: string) => {
     try {
       console.log(`开始获取笔记详情，ID: ${noteId}`);
       
@@ -69,7 +69,7 @@ export function useNoteManager() {
       currentNoteId.value = noteId;
       
       // 同时保存到localStorage作为备份
-      localStorage.setItem('lastNoteId', noteId.toString());
+      localStorage.setItem('lastNoteId', noteId);
       
       // 加载笔记内容
       const noteRes = await noteService.getNoteDetail(noteId);
@@ -92,7 +92,7 @@ export function useNoteManager() {
       editorTitle.value = note.title || '无标题笔记';
       
       // 保存最近打开的笔记ID到localStorage
-      localStorage.setItem('lastNoteId', noteId.toString());
+      localStorage.setItem('lastNoteId', noteId);
       
       saved.value = true;
       
@@ -114,7 +114,7 @@ export function useNoteManager() {
   };
 
   // 通过会话ID查找关联的笔记
-  const fetchNoteBySessionId = async (sessionId: number) => {
+  const fetchNoteBySessionId = async (sessionId: string) => {
     try {
       const noteData = await noteService.getNoteBySessionId(sessionId);
       if (noteData) {
@@ -157,12 +157,9 @@ export function useNoteManager() {
     // 如果内存中没有，尝试从localStorage获取
     const lastNoteId = localStorage.getItem('lastNoteId');
     if (lastNoteId) {
-      const noteId = parseInt(lastNoteId);
-      if (!isNaN(noteId)) {
-        console.log('从localStorage恢复笔记ID:', noteId);
-        currentNoteId.value = noteId;
-        return noteId;
-      }
+      console.log('从localStorage恢复笔记ID:', lastNoteId);
+      currentNoteId.value = lastNoteId;
+      return lastNoteId;
     }
     
     return null;

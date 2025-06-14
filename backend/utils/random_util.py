@@ -33,8 +33,44 @@ class RandomUtil:
     @staticmethod
     def generate_chat_id():
         """生成聊天会话ID，格式为：chat-随机字符串"""
-        random_str = RandomUtil.generate_random_str(10)
+        random_str = RandomUtil.generate_random_str(12)
         return f"chat-{random_str}"
+    
+    @staticmethod
+    def generate_note_id():
+        """生成笔记ID，格式为：note-随机字符串"""
+        random_str = RandomUtil.generate_random_str(12)
+        return f"note-{random_str}"
+    
+    @staticmethod
+    def generate_agent_id():
+        """生成Agent ID，格式为：agent-随机字符串"""
+        random_str = RandomUtil.generate_random_str(12)
+        return f"agent-{random_str}"
+    
+    @staticmethod
+    def generate_user_id():
+        """生成用户ID，格式为：user-随机字符串"""
+        random_str = RandomUtil.generate_random_str(12)
+        return f"user-{random_str}"
+    
+    @staticmethod
+    def generate_message_id():
+        """生成消息ID，格式为：msg-随机字符串"""
+        random_str = RandomUtil.generate_random_str(12)
+        return f"msg-{random_str}"
+    
+    @staticmethod
+    def generate_tool_call_id():
+        """生成工具调用ID，格式为：tool-随机字符串"""
+        random_str = RandomUtil.generate_random_str(12)
+        return f"tool-{random_str}"
+    
+    @staticmethod
+    def generate_session_relation_id():
+        """生成会话关联ID，格式为：rel-随机字符串"""
+        random_str = RandomUtil.generate_random_str(12)
+        return f"rel-{random_str}"
     
     @staticmethod
     def generate_random_number(min_val=1, max_val=100):

@@ -86,12 +86,16 @@ class ChatToolProcessor:
                 tool_call_objects.append(tool_call_obj)
             
             # 处理工具调用（不保存到数据库，因为上面已经保存过了）
+            # 获取agent的数据库ID，避免在handle_tool_calls中懒加载
+            agent_db_id = agent.id if agent else None
+            
             tool_results, tool_calls_data = await chat_tool_handler.handle_tool_calls(
                 tool_call_objects, 
                 agent, 
                 None,  # 不传递数据库连接，避免重复保存
                 session_id,
-                message_id=None  # 不保存到数据库
+                message_id=None,  # 不保存到数据库
+                agent_id=agent_db_id  # 传递agent_id，避免懒加载
             )
             
             # 将工具调用和结果添加到消息列表
@@ -257,12 +261,16 @@ class ChatToolProcessor:
                 yield ("", session_id, None, json.dumps(tool_status))
                 
                 # 执行单个工具调用（传递message_id关联到特定消息）
+                # 获取agent的数据库ID，避免在handle_tool_calls中懒加载
+                agent_db_id = agent.id if agent else None
+                
                 single_result, single_tool_data = await chat_tool_handler.handle_tool_calls(
                     [tool_call_obj], 
                     agent, 
                     db,  # 传递数据库连接，保存工具调用记录
                     session_id,
-                    message_id=message_id  # 关联到特定消息
+                    message_id=message_id,  # 关联到特定消息
+                    agent_id=agent_db_id  # 传递agent_id，避免懒加载
                 )
                 
                 # 收集工具结果

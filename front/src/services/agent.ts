@@ -16,8 +16,8 @@ export interface ToolConfig {
 }
 
 export interface Agent {
-  id: number;
-  user_id: number;
+  id: string;
+  user_id: string;
   system_prompt: string;
   model: string;
   max_memory: number;
@@ -85,7 +85,7 @@ const updateMyAgent = async (agentData: Partial<Omit<Agent, 'id' | 'user_id' | '
 const deleteMyAgent = async (): Promise<boolean> => {
   try {
     console.log('发起deleteMyAgent请求');
-    const response = await apiClient.delete<ApiResponse<{deleted_agent_id: number}>>('/agent/my-agent');
+    const response = await apiClient.delete<ApiResponse<{deleted_agent_id: string}>>('/agent/my-agent');
     console.log('deleteMyAgent请求成功');
     return true;
   } catch (error) {
@@ -141,7 +141,7 @@ const getUserAgents = async (skip = 0, limit = 100): Promise<Agent[]> => {
 };
 
 // 获取Agent详情
-const getAgentDetail = async (agentId: number): Promise<Agent | null> => {
+const getAgentDetail = async (agentId: string): Promise<Agent | null> => {
   try {
     const response = await apiClient.get<ApiResponse<Agent>>(`/agent/agents/${agentId}`);
     return response.data.data;
@@ -158,7 +158,7 @@ const createAgent = async (agentData: Omit<Agent, 'id' | 'user_id' | 'created_at
 };
 
 // 更新Agent（需要检查权限）
-const updateAgent = async (agentId: number, agentData: Partial<Agent>): Promise<Agent | null> => {
+const updateAgent = async (agentId: string, agentData: Partial<Agent>): Promise<Agent | null> => {
   try {
     const response = await apiClient.put<ApiResponse<Agent>>(`/agent/agents/${agentId}`, agentData);
     return response.data.data;
@@ -169,9 +169,9 @@ const updateAgent = async (agentId: number, agentData: Partial<Agent>): Promise<
 };
 
 // 删除Agent（需要检查权限）
-const deleteAgent = async (agentId: number): Promise<boolean> => {
+const deleteAgent = async (agentId: string): Promise<boolean> => {
   try {
-    const response = await apiClient.delete<ApiResponse<{deleted_agent_id: number}>>(`/agent/agents/${agentId}`);
+    const response = await apiClient.delete<ApiResponse<{deleted_agent_id: string}>>(`/agent/agents/${agentId}`);
     return true;
   } catch (error) {
     console.error(`删除Agent(ID:${agentId})失败:`, error);
@@ -191,7 +191,7 @@ const getAvailableModels = async (): Promise<string[]> => {
 };
 
 // 基于公开Agent创建自己的Agent（从模板复制设置）
-const createAgentFromTemplate = async (templateAgentId: number): Promise<Agent | null> => {
+const createAgentFromTemplate = async (templateAgentId: string): Promise<Agent | null> => {
   try {
     // 先获取模板Agent的详情
     const templateAgent = await getAgentDetail(templateAgentId);

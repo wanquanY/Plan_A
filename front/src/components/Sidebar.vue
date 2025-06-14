@@ -41,7 +41,7 @@ const props = defineProps({
     default: 'notes'
   },
   currentSessionId: {
-    type: [Number, String, null],
+    type: [String, null],
     default: null
   },
   collapsed: {
@@ -89,12 +89,12 @@ const menuPosition = ref({ x: 0, y: 0 });
 
 // 重命名对话框状态
 const showRenameInput = ref(false);
-const editingNoteId = ref(null);
+const editingNoteId = ref<string | null>(null);
 const newNoteName = ref('');
 
 // 会话重命名状态
 const showSessionRenameInput = ref(false);
-const editingSessionId = ref(null);
+const editingSessionId = ref<string | null>(null);
 const newSessionName = ref('');
 
 // 从全局布局中注入刷新笔记和会话列表的方法
@@ -356,7 +356,7 @@ const handleSessionDeleteClick = async (event, session) => {
 };
 
 // 处理笔记点击
-const noteItemClick = (noteId, event) => {
+const noteItemClick = (noteId: string, event: Event) => {
   console.log(`笔记被点击，ID: ${noteId}`);
   event.stopPropagation();
   emit('note-click', noteId);
@@ -406,7 +406,7 @@ const noteItemClick = (noteId, event) => {
           v-for="note in notes" 
           :key="note.id" 
           class="note-item" 
-          :class="{ active: note.id.toString() === route.query.note }"
+          :class="{ active: note.id === route.query.note }"
           @click="noteItemClick(note.id, $event)"
         >
           <div class="note-content">
@@ -458,7 +458,7 @@ const noteItemClick = (noteId, event) => {
           v-for="session in sessions" 
           :key="session.id" 
           class="note-item" 
-          :class="{ active: session.id.toString() === route.query.id }"
+          :class="{ active: session.id === route.query.id }"
           @click="emit('session-click', session.id)"
         >
           <div class="note-content">

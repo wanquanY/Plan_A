@@ -135,7 +135,7 @@ async def get_tools_list(
     """
     try:
         tools_details = tools_manager.get_tools_with_details()
-        api_logger.info(f"用户 {current_user.id} 获取工具列表，共 {len(tools_details)} 个工具")
+        api_logger.info(f"用户 {current_user.public_id} 获取工具列表，共 {len(tools_details)} 个工具")
         return tools_details
     except Exception as e:
         api_logger.error(f"获取工具列表失败: {str(e)}", exc_info=True)
@@ -153,7 +153,7 @@ async def get_tools_grouped_by_provider(
     """
     try:
         grouped_tools = tools_manager.get_tools_grouped_by_provider()
-        api_logger.info(f"用户 {current_user.id} 获取分组工具列表")
+        api_logger.info(f"用户 {current_user.public_id} 获取分组工具列表")
         return grouped_tools
     except Exception as e:
         api_logger.error(f"获取分组工具列表失败: {str(e)}", exc_info=True)
@@ -171,7 +171,7 @@ async def get_tool_providers(
     """
     try:
         providers = tools_manager.get_tool_providers()
-        api_logger.info(f"用户 {current_user.id} 获取工具提供商信息")
+        api_logger.info(f"用户 {current_user.public_id} 获取工具提供商信息")
         return providers
     except Exception as e:
         api_logger.error(f"获取工具提供商信息失败: {str(e)}", exc_info=True)
@@ -190,7 +190,7 @@ async def validate_tools_config(
     """
     try:
         validation_result = tools_manager.validate_agent_tools_config(tools_config)
-        api_logger.info(f"用户 {current_user.id} 验证工具配置，类型: {validation_result['config_type']}")
+        api_logger.info(f"用户 {current_user.public_id} 验证工具配置，类型: {validation_result['config_type']}")
         return validation_result
     except Exception as e:
         api_logger.error(f"验证工具配置失败: {str(e)}", exc_info=True)
@@ -209,7 +209,7 @@ async def convert_provider_config_to_tool_config(
     """
     try:
         tool_config = tools_manager.convert_provider_config_to_tool_config(provider_config)
-        api_logger.info(f"用户 {current_user.id} 转换配置格式")
+        api_logger.info(f"用户 {current_user.public_id} 转换配置格式")
         return {
             "success": True,
             "tool_config": tool_config,
@@ -239,7 +239,7 @@ async def get_default_tool_config(
             enabled_list = [tool.strip() for tool in enabled_tools.split(",")]
         
         default_config = tools_manager.create_default_tool_config(enabled_list)
-        api_logger.info(f"用户 {current_user.id} 获取默认工具配置")
+        api_logger.info(f"用户 {current_user.public_id} 获取默认工具配置")
         return default_config
     except Exception as e:
         api_logger.error(f"获取默认工具配置失败: {str(e)}", exc_info=True)
@@ -261,7 +261,7 @@ async def get_tool_recommendations(
     """
     try:
         recommendations = tools_manager.get_recommended_tools(use_case)
-        api_logger.info(f"用户 {current_user.id} 获取 {use_case} 场景的推荐工具")
+        api_logger.info(f"用户 {current_user.public_id} 获取 {use_case} 场景的推荐工具")
         return recommendations
     except Exception as e:
         api_logger.error(f"获取推荐工具失败: {str(e)}", exc_info=True)
@@ -283,7 +283,7 @@ async def search_tools(
     """
     try:
         search_results = tools_manager.search_tools(query)
-        api_logger.info(f"用户 {current_user.id} 搜索工具: {query}")
+        api_logger.info(f"用户 {current_user.public_id} 搜索工具: {query}")
         return search_results
     except Exception as e:
         api_logger.error(f"搜索工具失败: {str(e)}", exc_info=True)

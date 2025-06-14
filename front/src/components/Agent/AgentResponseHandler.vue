@@ -426,7 +426,7 @@ const handleInputChat = async (inputElement, agentId, userInput, containerElemen
       // 保存会话ID
       if (completionData.session_id) {
         conversationId.value = completionData.session_id;
-        localStorage.setItem('lastConversationId', completionData.session_id.toString());
+        localStorage.setItem('lastConversationId', completionData.session_id);
         console.log(`更新会话ID: ${conversationId.value}`);
       }
       
@@ -529,7 +529,7 @@ const triggerChatRequest = async (agentId, userInputContent, responseParagraph =
 
   try {
     const chatRequest = {
-      agent_id: parseInt(agentId),
+      agent_id: agentId,
       content: userInputContent,
       session_id: conversationId.value || null,
       note_id: currentNoteId.value || null,

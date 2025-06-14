@@ -8,7 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.core.response import ResponseCode, ErrorDetail, ResponseUtil
 from backend.utils.logging import api_logger
-
+from backend.utils.id_converter import IDConverter
 
 class BusinessException(Exception):
     """业务异常"""

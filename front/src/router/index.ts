@@ -79,7 +79,7 @@ router.beforeEach(async (to, from, next) => {
           if (notes && notes.length > 0) {
             const latestNote = notes[0];
             console.log('自动跳转到最新笔记:', latestNote.id);
-            next({ name: 'Home', query: { note: latestNote.id.toString() } });
+            next({ name: 'Home', query: { note: latestNote.id } });
             return;
           }
         } catch (error) {
@@ -101,7 +101,7 @@ router.beforeEach(async (to, from, next) => {
         if (notes && notes.length > 0) {
           const latestNote = notes[0];
           console.log('登录后自动跳转到最新笔记:', latestNote.id);
-          next({ name: 'Home', query: { note: latestNote.id.toString() } });
+          next({ name: 'Home', query: { note: latestNote.id } });
           return;
         }
       } catch (error) {
