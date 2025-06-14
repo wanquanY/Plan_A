@@ -66,7 +66,7 @@ const goToRegister = () => {
         <div class="app-logo">
           <div class="title-container">
             <h1 class="app-title">Plan<span class="highlight">_A</span></h1>
-            <p class="app-desc">简单、高效的写作平台</p>
+            <p class="app-desc">AI native办公平台</p>
           </div>
         </div>
       </div>
