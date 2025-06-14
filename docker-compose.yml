@@ -21,6 +21,8 @@ services:
       - redis
     ports:
       - "1314:1314"
+    env_file:
+      - .env
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
