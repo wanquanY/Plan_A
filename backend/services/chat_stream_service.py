@@ -740,9 +740,55 @@ class ChatStreamService:
                 if has_tools:
                     api_params["tools"] = tools
                     api_logger.info(f"流式响应中添加工具配置: {len(tools)} 个工具")
+                    
+                    # 添加详细的工具格式调试日志
+                    for i, tool in enumerate(tools[:3]):  # 只显示前3个工具
+                        api_logger.info(f"工具 {i+1}: {json.dumps(tool, ensure_ascii=False, indent=2)}")
                 
                 # 记录请求参数详情
                 api_logger.info(f"[流式请求] API调用参数详情: model={use_model}, max_tokens={max_tokens}, temperature={temperature}, 消息数量={len(messages)}, 启用工具={has_tools}")
+                
+                # 添加完整API参数的调试日志（不包含敏感信息）
+                debug_params = api_params.copy()
+                if 'tools' in debug_params:
+                    # 显示工具的基本信息而不是完整内容
+                    tools_info = []
+                    for tool in debug_params['tools']:
+                        if tool.get('type') == 'mcp':
+                            tools_info.append({
+                                'type': 'mcp',
+                                'server': tool.get('mcp', {}).get('server'),
+                                'tool_name': tool.get('mcp', {}).get('tool', {}).get('name')
+                            })
+                        else:
+                            tools_info.append({
+                                'type': tool.get('type'),
+                                'name': tool.get('function', {}).get('name')
+                            })
+                    debug_params['tools'] = tools_info
+                api_logger.info(f"[调试] 完整API参数: {json.dumps(debug_params, ensure_ascii=False, indent=2)}")
+                
+                # 临时：显示实际发送的工具格式（用于调试）
+                if 'tools' in api_params and api_params['tools']:
+                    api_logger.info(f"[实际发送] 工具数量: {len(api_params['tools'])}")
+                    api_logger.info(f"[实际发送] 第一个工具: {json.dumps(api_params['tools'][0], ensure_ascii=False, indent=2)}")
+                
+                # 验证工具格式是否正确
+                if has_tools and tools:
+                    api_logger.info(f"[验证] 工具数据类型: {type(tools)}")
+                    api_logger.info(f"[验证] 第一个工具类型: {type(tools[0]) if tools else 'None'}")
+                    if tools:
+                        first_tool = tools[0]
+                        api_logger.info(f"[验证] 第一个工具内容: {json.dumps(first_tool, ensure_ascii=False)}")
+                        
+                        # 检查MCP工具格式
+                        if first_tool.get('type') == 'mcp':
+                            mcp_data = first_tool.get('mcp', {})
+                            api_logger.info(f"[验证] MCP服务器: {mcp_data.get('server')}")
+                            api_logger.info(f"[验证] MCP工具名: {mcp_data.get('tool', {}).get('name')}")
+                            api_logger.info(f"[验证] MCP工具描述: {mcp_data.get('tool', {}).get('description', '')[:50]}...")
+                else:
+                    api_logger.info("[验证] 没有工具数据")
                 
                 # 直接使用异步客户端，但开启流式响应
                 response = await openai_client_service.async_client.chat.completions.create(**api_params)

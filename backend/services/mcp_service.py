@@ -580,7 +580,7 @@ class MCPService:
     
     # 聊天集成方法（保持不变）
     async def get_available_tools_for_chat(self) -> List[Dict[str, Any]]:
-        """获取可用于聊天的工具列表"""
+        """获取可用于聊天的工具列表 - 返回原生MCP格式"""
         if not self.is_enabled():
             return []
         
@@ -592,11 +592,17 @@ class MCPService:
                 all_tools = []
                 for server_name, server_tools in tools.items():
                     for tool in server_tools:
+                        # 返回标准OpenAI MCP格式
                         tool_info = {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "server": server_name,
-                            "inputSchema": tool.inputSchema.model_dump() if hasattr(tool.inputSchema, 'model_dump') else tool.inputSchema.__dict__
+                            "type": "mcp",
+                            "mcp": {
+                                "server": server_name,
+                                "tool": {
+                                    "name": tool.name,
+                                    "description": tool.description,
+                                    "inputSchema": tool.inputSchema.model_dump() if hasattr(tool.inputSchema, 'model_dump') else tool.inputSchema.__dict__
+                                }
+                            }
                         }
                         all_tools.append(tool_info)
                 return all_tools
@@ -604,9 +610,15 @@ class MCPService:
                 # 如果是列表，直接转换
                 return [
                     {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "inputSchema": tool.inputSchema.model_dump() if hasattr(tool.inputSchema, 'model_dump') else tool.inputSchema.__dict__
+                        "type": "mcp",
+                        "mcp": {
+                            "server": "unknown",
+                            "tool": {
+                                "name": tool.name,
+                                "description": tool.description,
+                                "inputSchema": tool.inputSchema.model_dump() if hasattr(tool.inputSchema, 'model_dump') else tool.inputSchema.__dict__
+                            }
+                        }
                     }
                     for tool in tools
                 ]

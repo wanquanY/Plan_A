@@ -20,6 +20,46 @@ class AgentService:
     def __init__(self):
         pass
     
+    def _convert_mcp_tool_to_openai_format(self, mcp_tool: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        将MCP工具格式转换为OpenAI function格式
+        
+        Args:
+            mcp_tool: MCP格式的工具
+            
+        Returns:
+            OpenAI function格式的工具
+        """
+        try:
+            if mcp_tool.get("type") == "mcp" and "mcp" in mcp_tool:
+                mcp_data = mcp_tool["mcp"]
+                tool_info = mcp_data.get("tool", {})
+                
+                # 转换为OpenAI function格式
+                openai_tool = {
+                    "type": "function",
+                    "function": {
+                        "name": tool_info.get("name", "unknown"),
+                        "description": tool_info.get("description", ""),
+                        "parameters": tool_info.get("inputSchema", {})
+                    }
+                }
+                
+                # 保留MCP元数据，用于后续工具调用时识别
+                openai_tool["_mcp_metadata"] = {
+                    "server": mcp_data.get("server"),
+                    "original_tool": tool_info
+                }
+                
+                return openai_tool
+            else:
+                # 非MCP工具，直接返回
+                return mcp_tool
+                
+        except Exception as e:
+            logger.error(f"转换MCP工具格式失败: {e}, 工具: {mcp_tool}")
+            return None
+    
     async def get_agent_with_tools(
         self, 
         db: AsyncSession, 
@@ -105,7 +145,13 @@ class AgentService:
                     seen_names = set()
                     unique_mcp_tools = []
                     for tool in raw_mcp_tools:
-                        tool_name = tool.get("name")
+                        # 从MCP格式中提取工具名称
+                        tool_name = None
+                        if tool.get("type") == "mcp" and tool.get("mcp", {}).get("tool", {}).get("name"):
+                            tool_name = tool["mcp"]["tool"]["name"]
+                        elif tool.get("name"):  # 向后兼容
+                            tool_name = tool.get("name")
+                        
                         if tool_name and tool_name not in seen_names:
                             seen_names.add(tool_name)
                             unique_mcp_tools.append(tool)
@@ -122,45 +168,39 @@ class AgentService:
             except Exception as e:
                 logger.error(f"获取MCP工具失败: {e}")
             
-            # 合并所有工具
-            all_tools = builtin_tools + mcp_tools
-            logger.info(f"总共获取到 {len(all_tools)} 个工具")
+            # 处理工具格式 - 将MCP工具转换为OpenAI function格式
+            processed_tools = []
             
-            # 转换为OpenAI工具格式
-            openai_tools = []
-            for tool in all_tools:
+            # 处理内置工具
+            for tool in builtin_tools:
                 try:
-                    # 检查是否是MCP工具（通过server字段或is_mcp标记判断）
-                    is_mcp_tool = tool.get("is_mcp", False) or "server" in tool
-                    
-                    if is_mcp_tool:
-                        # MCP工具需要转换格式
-                        openai_tool = {
-                            "type": "function",
-                            "function": {
-                                "name": tool.get("name"),
-                                "description": tool.get("description", ""),
-                                "parameters": tool.get("inputSchema", {})
-                            }
-                        }
+                    if (tool.get("type") == "function" and 
+                        tool.get("function", {}).get("name") and
+                        tool.get("function", {}).get("description")):
+                        processed_tools.append(tool)
+                        logger.debug(f"添加内置工具: {tool.get('function', {}).get('name', 'unknown')}")
                     else:
-                        # 内置工具已经是正确格式
-                        openai_tool = tool
-                    
-                    # 验证工具格式
-                    if (openai_tool.get("type") == "function" and 
-                        openai_tool.get("function", {}).get("name") and
-                        openai_tool.get("function", {}).get("description")):
-                        openai_tools.append(openai_tool)
-                    else:
-                        logger.warning(f"跳过格式不正确的工具: {tool}")
-                        
+                        logger.warning(f"跳过格式不正确的内置工具: {tool}")
                 except Exception as e:
-                    logger.error(f"转换工具格式失败: {tool}, 错误: {e}")
+                    logger.error(f"处理内置工具格式失败: {tool}, 错误: {e}")
                     continue
             
-            logger.info(f"成功转换 {len(openai_tools)} 个工具为OpenAI格式")
-            return openai_tools
+            # 处理MCP工具 - 转换为OpenAI function格式
+            for tool in mcp_tools:
+                try:
+                    converted_tool = self._convert_mcp_tool_to_openai_format(tool)
+                    if converted_tool:
+                        processed_tools.append(converted_tool)
+                        tool_name = converted_tool.get("function", {}).get("name", "unknown")
+                        logger.debug(f"添加转换后的MCP工具: {tool_name}")
+                    else:
+                        logger.warning(f"跳过MCP工具转换失败: {tool}")
+                except Exception as e:
+                    logger.error(f"处理MCP工具格式失败: {tool}, 错误: {e}")
+                    continue
+            
+            logger.info(f"成功处理 {len(processed_tools)} 个工具（转换为统一OpenAI格式）")
+            return processed_tools
             
         except Exception as e:
             logger.error(f"获取Agent工具失败: {e}")
