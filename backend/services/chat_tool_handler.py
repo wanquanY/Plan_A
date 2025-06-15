@@ -300,6 +300,44 @@ class ChatToolHandler:
                                 config={"api_key": api_key} if api_key else None
                             )
                         
+                        elif function_name == "note_reader":
+                            # 处理笔记阅读工具
+                            # 会话ID通过配置传递给工具构造函数，而不是作为参数
+                            session_public_id = None
+                            if session_id:
+                                # 将内部session_id转换为public_id
+                                from backend.utils.id_converter import IDConverter
+                                session_public_id = await IDConverter.get_chat_public_id(db, session_id) if isinstance(session_id, int) else session_id
+                            
+                            tool_result = await tools_service.execute_tool_async(
+                                tool_name="note_reader",
+                                action="read_note",
+                                params=function_args,  # 只传递函数的原始参数
+                                config={
+                                    "db_session": db,
+                                    "session_id": session_public_id
+                                }
+                            )
+                        
+                        elif function_name == "note_editor":
+                            # 处理笔记编辑工具
+                            # 会话ID通过配置传递给工具构造函数，而不是作为参数
+                            session_public_id = None
+                            if session_id:
+                                # 将内部session_id转换为public_id
+                                from backend.utils.id_converter import IDConverter
+                                session_public_id = await IDConverter.get_chat_public_id(db, session_id) if isinstance(session_id, int) else session_id
+                            
+                            tool_result = await tools_service.execute_tool_async(
+                                tool_name="note_editor",
+                                action="edit_note",
+                                params=function_args,  # 只传递函数的原始参数
+                                config={
+                                    "db_session": db,
+                                    "session_id": session_public_id
+                                }
+                            )
+                        
                         else:
                             # 未知工具
                             tool_result = {"error": f"未知工具: {function_name}"}

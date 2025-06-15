@@ -276,44 +276,57 @@
                     </div>
                   </div>
 
-                  <!-- 工具列表折叠面板 -->
-                  <Collapse 
-                    v-if="server.tools_count > 0" 
-                    class="tools-collapse"
-                    ghost
-                    size="small"
-                    @change="(activeKeys) => onCollapseChange(activeKeys, server)"
-                  >
-                    <Collapse.Panel key="tools" header="查看可用工具">
-                      <div class="tools-loading" v-if="loadingTools.has(server.id)">
-                        <LoadingOutlined />
-                        <span>加载工具列表...</span>
-                      </div>
-                      <div v-else-if="serverTools[server.id]?.length" class="tools-list">
-                        <div 
-                          v-for="tool in serverTools[server.id]" 
-                          :key="tool.name"
-                          class="tool-item"
-                        >
-                          <div class="tool-header">
-                            <span class="tool-name">{{ tool.name }}</span>
-                            <Tag size="small" color="blue">工具</Tag>
+                  <!-- 工具列表下拉按钮 -->
+                  <div v-if="server.tools_count > 0" class="tools-dropdown-container" @click.stop>
+                    <Button 
+                      type="text" 
+                      size="small"
+                      @click.stop="toggleToolsDropdown(server.id, $event)"
+                      class="tools-dropdown-btn"
+                    >
+                      <ToolOutlined />
+                      查看可用工具 ({{ server.tools_count }})
+                      <DownOutlined :class="{ 'rotated': showToolsDropdown[server.id] }" />
+                    </Button>
+                    
+                    <!-- 工具列表下拉面板 - 使用 Teleport 渲染到 body -->
+                    <Teleport to="body">
+                      <div 
+                        v-if="showToolsDropdown[server.id]" 
+                        class="tools-dropdown-panel"
+                        :style="getDropdownPosition(server.id)"
+                        @click.stop
+                      >
+                        <div class="tools-loading" v-if="loadingTools.has(server.id)">
+                          <LoadingOutlined />
+                          <span>加载工具列表...</span>
+                        </div>
+                        <div v-else-if="serverTools[server.id]?.length" class="tools-list">
+                          <div 
+                            v-for="tool in serverTools[server.id]" 
+                            :key="tool.name"
+                            class="tool-item"
+                          >
+                            <div class="tool-header">
+                              <span class="tool-name">{{ tool.name }}</span>
+                              <Tag size="small" color="blue">工具</Tag>
+                            </div>
+                            <p class="tool-description">{{ tool.description }}</p>
                           </div>
-                          <p class="tool-description">{{ tool.description }}</p>
+                        </div>
+                        <div v-else class="no-tools">
+                          <span>暂无工具信息</span>
+                          <Button 
+                            type="link" 
+                            size="small"
+                            @click="loadServerTools(server)"
+                          >
+                            重新加载
+                          </Button>
                         </div>
                       </div>
-                      <div v-else class="no-tools">
-                        <span>暂无工具信息</span>
-                        <Button 
-                          type="link" 
-                          size="small"
-                          @click="loadServerTools(server)"
-                        >
-                          重新加载
-                        </Button>
-                      </div>
-                    </Collapse.Panel>
-                  </Collapse>
+                    </Teleport>
+                  </div>
                   
                   <div class="server-actions">
                     <Button 
@@ -500,14 +513,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, nextTick } from 'vue';
+import { ref, reactive, onMounted, onUnmounted, computed, nextTick, Teleport } from 'vue';
 import { 
   Card, Button, Input, Tabs, TabPane, Tag, Switch, Modal, Form, 
-  Select, Empty, message, Descriptions, Collapse 
+  Select, Empty, message, Descriptions 
 } from 'ant-design-vue';
 import { 
   ApiOutlined, LoadingOutlined, ReloadOutlined, PlusOutlined, 
-  DeleteOutlined, GlobalOutlined, SettingOutlined, ToolOutlined, EyeOutlined, EditOutlined 
+  DeleteOutlined, GlobalOutlined, SettingOutlined, ToolOutlined, EyeOutlined, EditOutlined, DownOutlined 
 } from '@ant-design/icons-vue';
 import mcpService from '@/services/mcp';
 import type { MCPServer, MCPServerCreate } from '@/services/mcp';
@@ -536,6 +549,8 @@ const loadingTools = ref(new Set<string>());
 
 // 工具数据
 const serverTools = ref<Record<string, any[]>>({});
+const showToolsDropdown = ref<Record<string, boolean>>({});
+const dropdownPositions = ref<Record<string, { top: number; left: number; width: number }>>({});
 
 // 模态框状态
 const createModalVisible = ref(false);
@@ -739,19 +754,43 @@ const loadServerTools = async (server: MCPServer) => {
   }
 };
 
-const onCollapseChange = async (activeKeys: string | string[], server: MCPServer) => {
-  const keys = Array.isArray(activeKeys) ? activeKeys : [activeKeys];
+const toggleToolsDropdown = async (serverId: string, event?: Event) => {
+  // 切换下拉状态
+  showToolsDropdown.value[serverId] = !showToolsDropdown.value[serverId];
   
-  // 如果展开了工具面板且还没有加载过工具
-  if (keys.includes('tools') && !serverTools.value[server.id]) {
-    // 如果服务器数据中已经有工具信息，直接使用
-    if (server.tools && server.tools.length > 0) {
-      serverTools.value[server.id] = server.tools;
-    } else {
-      // 否则调用loadServerTools来处理（不再调用loadMyServers）
-      serverTools.value[server.id] = [];
+  // 如果是展开，计算位置
+  if (showToolsDropdown.value[serverId] && event) {
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    dropdownPositions.value[serverId] = {
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: rect.width
+    };
+    
+    // 如果还没有加载过工具，则加载工具
+    if (!serverTools.value[serverId]) {
+      const server = myServers.value.find(s => s.id === serverId);
+      if (server && server.tools && server.tools.length > 0) {
+        serverTools.value[serverId] = server.tools;
+      } else {
+        serverTools.value[serverId] = [];
+      }
     }
   }
+};
+
+const getDropdownPosition = (serverId: string) => {
+  const pos = dropdownPositions.value[serverId];
+  if (!pos) return {};
+  
+  return {
+    position: 'fixed',
+    top: `${pos.top}px`,
+    left: `${pos.left}px`,
+    width: `${pos.width}px`,
+    zIndex: 9999
+  };
 };
 
 const showCreateModal = () => {
@@ -891,6 +930,11 @@ const getServerStatusText = (server: MCPServer) => {
   }
 };
 
+// 关闭所有下拉面板
+const closeAllDropdowns = () => {
+  showToolsDropdown.value = {};
+};
+
 // 生命周期
 onMounted(async () => {
   await Promise.all([
@@ -898,6 +942,14 @@ onMounted(async () => {
     loadPublicServers(),
     loadMyServers()
   ]);
+  
+  // 添加全局点击事件来关闭下拉面板
+  document.addEventListener('click', closeAllDropdowns);
+});
+
+// 组件卸载时移除事件监听
+onUnmounted(() => {
+  document.removeEventListener('click', closeAllDropdowns);
 });
 </script>
 
@@ -1076,6 +1128,7 @@ onMounted(async () => {
 
 .tab-content {
   padding: 32px;
+  overflow: visible;
 }
 
 .section-header {
@@ -1152,13 +1205,15 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
   gap: 20px;
+  overflow: visible;
 }
 
 .server-card {
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   transition: all 0.3s ease;
   border: 1px solid #e8e8e8;
+  position: relative;
 }
 
 .server-card:hover {
@@ -1307,15 +1362,44 @@ onMounted(async () => {
   color: #999;
 }
 
-.tools-collapse {
+.tools-dropdown-container {
+  position: relative;
   margin-bottom: 16px;
 }
 
-.tools-collapse :deep(.ant-collapse-header) {
-  padding: 8px 12px !important;
-  font-size: 12px;
+.tools-dropdown-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
   background: #fafafa;
+  border: 1px solid #f0f0f0;
   border-radius: 6px;
+  font-size: 12px;
+  transition: all 0.3s ease;
+}
+
+.tools-dropdown-btn:hover {
+  background: #f0f0f0;
+  border-color: #d9d9d9;
+}
+
+.tools-dropdown-btn .anticon {
+  font-size: 12px;
+}
+
+.tools-dropdown-btn .anticon.rotated {
+  transform: rotate(180deg);
+}
+
+.tools-dropdown-panel {
+  background: white;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-height: 300px;
+  overflow: hidden;
 }
 
 .tools-loading {
@@ -1328,8 +1412,9 @@ onMounted(async () => {
 }
 
 .tools-list {
-  max-height: 200px;
+  max-height: 250px;
   overflow-y: auto;
+  padding: 8px;
 }
 
 .tool-item {
@@ -1365,6 +1450,10 @@ onMounted(async () => {
   padding: 16px;
   color: #999;
   font-size: 12px;
+}
+
+.tools-loading {
+  padding: 8px;
 }
 
 .server-actions {

@@ -84,6 +84,7 @@ async def get_user_servers(
     request: Request,
     skip: int = Query(0, ge=0, description="跳过数量"),
     limit: int = Query(100, ge=1, le=1000, description="限制数量"),
+    include_runtime_status: bool = Query(True, description="是否包含运行时状态"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -98,12 +99,61 @@ async def get_user_servers(
         
         # 使用schema转换为公开响应格式
         from backend.schemas.mcp_server import MCPServerPublicResponse
-        from backend.utils.serialization import serialize_pydantic_models
-        public_servers = [MCPServerPublicResponse.from_orm_model(server) for server in servers]
+        from backend.utils.serialization import serialize_pydantic_models, serialize_pydantic_model
+        public_servers = []
+        
+        for server in servers:
+            # 先创建基础的公开服务器对象
+            public_server = MCPServerPublicResponse.from_orm_model(server)
+            public_server_data = serialize_pydantic_model(public_server)
+            
+            # 如果需要包含运行时状态，获取并合并状态信息
+            if include_runtime_status and mcp_service.is_enabled():
+                try:
+                    runtime_status = await mcp_service.session_manager.get_server_status(server.id)
+                    if runtime_status.get("exists", False):
+                        # 合并运行时状态
+                        public_server_data.update({
+                            "connected": runtime_status.get("connected", False),
+                            "initialized": runtime_status.get("initialized", False),
+                            "tools_count": len(runtime_status.get("tools", [])),
+                            "resources_count": len(runtime_status.get("resources", [])),
+                            "prompts_count": len(runtime_status.get("prompts", [])),
+                            "tools": runtime_status.get("tools", []),
+                            "resources": runtime_status.get("resources", []),
+                            "prompts": runtime_status.get("prompts", [])
+                        })
+                    else:
+                        # 服务器不存在于运行时，设置默认状态
+                        public_server_data.update({
+                            "connected": False,
+                            "initialized": False,
+                            "tools_count": 0,
+                            "resources_count": 0,
+                            "prompts_count": 0,
+                            "tools": [],
+                            "resources": [],
+                            "prompts": []
+                        })
+                except Exception as e:
+                    api_logger.warning(f"获取服务器 {server.id} 运行时状态失败: {e}")
+                    # 设置默认状态
+                    public_server_data.update({
+                        "connected": False,
+                        "initialized": False,
+                        "tools_count": 0,
+                        "resources_count": 0,
+                        "prompts_count": 0,
+                        "tools": [],
+                        "resources": [],
+                        "prompts": []
+                    })
+            
+            public_servers.append(public_server_data)
         
         return SuccessResponse(
             data={
-                "servers": serialize_pydantic_models(public_servers),
+                "servers": public_servers,
                 "total": len(public_servers),
                 "skip": skip,
                 "limit": limit

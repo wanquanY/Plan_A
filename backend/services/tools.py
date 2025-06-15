@@ -849,7 +849,7 @@ class ToolsService:
         params: Dict[str, Any] = None, 
         config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
-        """执行工具操作"""
+        """执行工具操作（同步版本）"""
         tool = self.get_tool(tool_name, config)
         if not tool:
             return {"error": f"工具 {tool_name} 不可用"}
@@ -869,6 +869,44 @@ class ToolsService:
             return result
         except Exception as e:
             api_logger.error(f"工具 {tool_name} 执行 {action} 操作失败: {str(e)}", exc_info=True)
+            return {"error": str(e)}
+    
+    async def execute_tool_async(
+        self, 
+        tool_name: str, 
+        action: str, 
+        params: Dict[str, Any] = None, 
+        config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """执行工具操作（异步版本，专门用于笔记工具）"""
+        import asyncio  # 将导入移到方法开头
+        
+        tool = self.get_tool(tool_name, config)
+        if not tool:
+            return {"error": f"工具 {tool_name} 不可用"}
+        
+        if not hasattr(tool, action):
+            api_logger.error(f"工具 {tool_name} 不支持操作 {action}")
+            return {"error": f"操作 {action} 不支持"}
+        
+        try:
+            method = getattr(tool, action)
+            if params:
+                # 检查方法是否为协程
+                if asyncio.iscoroutinefunction(method):
+                    result = await method(**params)
+                else:
+                    result = method(**params)
+            else:
+                if asyncio.iscoroutinefunction(method):
+                    result = await method()
+                else:
+                    result = method()
+            
+            api_logger.info(f"工具 {tool_name} 异步执行 {action} 操作成功")
+            return result
+        except Exception as e:
+            api_logger.error(f"工具 {tool_name} 异步执行 {action} 操作失败: {str(e)}", exc_info=True)
             return {"error": str(e)}
 
 
