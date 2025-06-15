@@ -62,6 +62,15 @@ FROM python:3.11-slim AS backend
 
 WORKDIR /app
 
+# 安装 Node.js 和 npm（用于 MCP 服务器）- 使用预编译二进制文件，更快
+RUN apt-get update && \
+    apt-get install -y curl xz-utils && \
+    curl -fsSL https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.xz | tar -xJ -C /usr/local --strip-components=1 && \
+    apt-get purge -y curl xz-utils && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
 # 复制pip配置文件
 COPY pip.conf /etc/pip.conf
 
