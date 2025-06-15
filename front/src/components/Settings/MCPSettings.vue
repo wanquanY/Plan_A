@@ -440,6 +440,40 @@
               </Button>
             </div>
           </Form.Item>
+          
+          <Form.Item label="环境变量">
+            <div class="env-input">
+              <div 
+                v-for="(envValue, envKey, index) in serverForm.env" 
+                :key="envKey"
+                class="env-item"
+              >
+                <Input
+                  v-model:value="envKeys[index]"
+                  placeholder="变量名"
+                  style="width: 200px; margin-right: 8px"
+                  @blur="updateEnvKey(index, envKeys[index], envValue)"
+                />
+                <Input
+                  v-model:value="serverForm.env[envKey]"
+                  placeholder="变量值"
+                  style="flex: 1; margin-right: 8px"
+                />
+                <Button 
+                  type="text" 
+                  size="small" 
+                  danger
+                  @click="removeEnv(envKey)"
+                >
+                  <DeleteOutlined />
+                </Button>
+              </div>
+              <Button type="dashed" @click="addEnv" block>
+                <PlusOutlined />
+                添加环境变量
+              </Button>
+            </div>
+          </Form.Item>
         </div>
         
         <div v-if="serverForm.transport_type === 'sse'">
@@ -566,6 +600,7 @@ const serverForm = reactive<MCPServerCreate>({
   transport_type: 'stdio',
   command: '',
   args: [],
+  env: {},
   url: '',
   tags: []
 });
@@ -586,6 +621,9 @@ const serverRules = {
 const tagInputVisible = ref(false);
 const tagInputValue = ref('');
 const tagInputRef = ref();
+
+// 环境变量管理
+const envKeys = ref<string[]>([]);
 
 // 添加防抖标志
 const isLoadingMyServers = ref(false);
@@ -807,9 +845,11 @@ const editServer = (server: MCPServer) => {
     transport_type: server.transport_type,
     command: server.command || '',
     args: server.args || [],
+    env: server.env || {},
     url: server.url || '',
     tags: server.tags || []
   });
+  envKeys.value = Object.keys(serverForm.env);
   createModalVisible.value = true;
 };
 
@@ -820,9 +860,11 @@ const resetServerForm = () => {
     transport_type: 'stdio',
     command: '',
     args: [],
+    env: {},
     url: '',
     tags: []
   });
+  envKeys.value = [];
 };
 
 const submitServer = async () => {
@@ -951,6 +993,33 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('click', closeAllDropdowns);
 });
+
+// 环境变量管理方法
+const addEnv = () => {
+  const newKey = `ENV_VAR_${Object.keys(serverForm.env).length + 1}`;
+  serverForm.env[newKey] = '';
+  envKeys.value.push(newKey);
+};
+
+const removeEnv = (key: string) => {
+  delete serverForm.env[key];
+  const index = envKeys.value.indexOf(key);
+  if (index > -1) {
+    envKeys.value.splice(index, 1);
+  }
+};
+
+const updateEnvKey = (index: number, newKey: string, value: string) => {
+  const oldKey = envKeys.value[index];
+  if (oldKey !== newKey && newKey.trim()) {
+    // 删除旧key
+    delete serverForm.env[oldKey];
+    // 添加新key
+    serverForm.env[newKey] = value;
+    // 更新keys数组
+    envKeys.value[index] = newKey;
+  }
+};
 </script>
 
 <style scoped>
@@ -1520,6 +1589,19 @@ onUnmounted(() => {
 .args-input {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+/* 添加环境变量样式 */
+.env-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.env-item {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 

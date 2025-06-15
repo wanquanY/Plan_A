@@ -28,6 +28,7 @@ class MCPServerBase(BaseModel):
     # SSE配置
     url: Optional[str] = Field(None, description="SSE服务器URL", max_length=500)
     headers: Optional[Dict[str, str]] = Field(default_factory=dict, description="HTTP请求头")
+    api_key: Optional[str] = Field(None, description="API密钥", max_length=500)
     
     # 状态配置
     enabled: bool = Field(True, description="是否启用")
@@ -85,6 +86,7 @@ class MCPServerUpdate(BaseModel):
     # SSE配置
     url: Optional[str] = Field(None, description="SSE服务器URL", max_length=500)
     headers: Optional[Dict[str, str]] = Field(None, description="HTTP请求头")
+    api_key: Optional[str] = Field(None, description="API密钥", max_length=500)
     
     # 状态配置
     enabled: Optional[bool] = Field(None, description="是否启用")

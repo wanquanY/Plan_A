@@ -206,6 +206,100 @@ async def create_user_server(
         )
 
 
+# ==================== 特定路径的路由（必须在路径参数路由之前） ====================
+
+@router.post("/servers/import")
+async def import_user_servers(
+    request: Request,
+    import_data: MCPServerConfigImport,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """批量导入用户的MCP服务器配置"""
+    try:
+        api_logger.info(f"用户 {current_user.username} 批量导入MCP服务器配置, 请求ID: {getattr(request.state, 'request_id', '')}")
+        result = await mcp_service.import_user_servers(
+            user_id=current_user.id,
+            servers_config=import_data.servers,
+            overwrite=import_data.overwrite
+        )
+        
+        return SuccessResponse(
+            data=result,
+            msg="服务器配置导入完成",
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except Exception as e:
+        api_logger.error(f"用户 {current_user.username} 批量导入MCP服务器配置失败: {str(e)}", exc_info=True)
+        return ErrorResponse(
+            msg=f"导入服务器配置失败: {str(e)}",
+            request_id=getattr(request.state, "request_id", None)
+        )
+
+
+@router.get("/servers/export")
+async def export_user_servers(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """导出用户的所有MCP服务器配置"""
+    try:
+        api_logger.info(f"用户 {current_user.username} 导出MCP服务器配置, 请求ID: {getattr(request.state, 'request_id', '')}")
+        from datetime import datetime
+        
+        servers_config = await mcp_service.export_user_servers(
+            user_id=current_user.id
+        )
+        
+        export_data = {
+            "servers": servers_config,
+            "export_time": datetime.now().isoformat(),
+            "user_id": current_user.public_id,  # 使用public_id而不是数据库ID
+            "version": "1.0"
+        }
+        
+        return SuccessResponse(
+            data=export_data,
+            msg="导出服务器配置成功",
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except Exception as e:
+        api_logger.error(f"用户 {current_user.username} 导出MCP服务器配置失败: {str(e)}", exc_info=True)
+        return ErrorResponse(
+            msg=f"导出服务器配置失败: {str(e)}",
+            request_id=getattr(request.state, "request_id", None)
+        )
+
+
+@router.get("/servers/statistics")
+async def get_user_servers_statistics(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取用户的MCP服务器统计信息"""
+    try:
+        api_logger.info(f"用户 {current_user.username} 获取MCP服务器统计信息, 请求ID: {getattr(request.state, 'request_id', '')}")
+        stats = await mcp_service.get_user_servers_statistics(
+            user_id=current_user.id
+        )
+        
+        return SuccessResponse(
+            data=stats,
+            msg="获取统计信息成功",
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except Exception as e:
+        api_logger.error(f"用户 {current_user.username} 获取MCP服务器统计信息失败: {str(e)}", exc_info=True)
+        return ErrorResponse(
+            msg=f"获取统计信息失败: {str(e)}",
+            request_id=getattr(request.state, "request_id", None)
+        )
+
+
+# ==================== 带路径参数的路由（必须在特定路径路由之后） ====================
+
 @router.get("/servers/{server_id}")
 async def get_user_server(
     request: Request,
@@ -508,98 +602,6 @@ async def reconnect_user_server(
         api_logger.error(f"用户 {current_user.username} 重连MCP服务器失败: {str(e)}", exc_info=True)
         return ErrorResponse(
             msg=f"重连服务器失败: {str(e)}",
-            request_id=getattr(request.state, "request_id", None)
-        )
-
-
-# ==================== 批量操作接口 ====================
-
-@router.post("/servers/import")
-async def import_user_servers(
-    request: Request,
-    import_data: MCPServerConfigImport,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """批量导入MCP服务器配置"""
-    try:
-        api_logger.info(f"用户 {current_user.username} 批量导入MCP服务器配置, 请求ID: {getattr(request.state, 'request_id', '')}")
-        result = await mcp_service.import_user_servers(
-            user_id=current_user.id,
-            servers_config=import_data.servers,
-            overwrite=import_data.overwrite
-        )
-        
-        return SuccessResponse(
-            data=result,
-            msg=f"导入完成: 创建{len(result['created'])}个, 更新{len(result['updated'])}个, 跳过{len(result['skipped'])}个",
-            request_id=getattr(request.state, "request_id", None)
-        )
-    except Exception as e:
-        api_logger.error(f"用户 {current_user.username} 批量导入MCP服务器配置失败: {str(e)}", exc_info=True)
-        return ErrorResponse(
-            msg=f"导入服务器配置失败: {str(e)}",
-            request_id=getattr(request.state, "request_id", None)
-        )
-
-
-@router.get("/servers/export")
-async def export_user_servers(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """导出用户的所有MCP服务器配置"""
-    try:
-        api_logger.info(f"用户 {current_user.username} 导出MCP服务器配置, 请求ID: {getattr(request.state, 'request_id', '')}")
-        from datetime import datetime
-        
-        servers_config = await mcp_service.export_user_servers(
-            user_id=current_user.id
-        )
-        
-        export_data = {
-            "servers": servers_config,
-            "export_time": datetime.now().isoformat(),
-            "user_id": current_user.public_id,  # 使用public_id而不是数据库ID
-            "version": "1.0"
-        }
-        
-        return SuccessResponse(
-            data=export_data,
-            msg="导出服务器配置成功",
-            request_id=getattr(request.state, "request_id", None)
-        )
-    except Exception as e:
-        api_logger.error(f"用户 {current_user.username} 导出MCP服务器配置失败: {str(e)}", exc_info=True)
-        return ErrorResponse(
-            msg=f"导出服务器配置失败: {str(e)}",
-            request_id=getattr(request.state, "request_id", None)
-        )
-
-
-@router.get("/servers/statistics")
-async def get_user_servers_statistics(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """获取用户的MCP服务器统计信息"""
-    try:
-        api_logger.info(f"用户 {current_user.username} 获取MCP服务器统计信息, 请求ID: {getattr(request.state, 'request_id', '')}")
-        stats = await mcp_service.get_user_servers_statistics(
-            user_id=current_user.id
-        )
-        
-        return SuccessResponse(
-            data=stats,
-            msg="获取统计信息成功",
-            request_id=getattr(request.state, "request_id", None)
-        )
-    except Exception as e:
-        api_logger.error(f"用户 {current_user.username} 获取MCP服务器统计信息失败: {str(e)}", exc_info=True)
-        return ErrorResponse(
-            msg=f"获取统计信息失败: {str(e)}",
             request_id=getattr(request.state, "request_id", None)
         )
 
