@@ -396,4 +396,17 @@ class IDConverter:
     @staticmethod
     async def get_tool_call_public_id(db: AsyncSession, db_id: int) -> Optional[str]:
         """获取工具调用的public_id"""
-        return await IDConverter.db_id_to_public_id(db, db_id, ToolCallHistory) 
+        return await IDConverter.db_id_to_public_id(db, db_id, ToolCallHistory)
+    
+    # MCP服务器相关方法
+    @staticmethod
+    async def get_mcp_server_db_id(db: AsyncSession, public_id: str) -> Optional[int]:
+        """获取MCP服务器的数据库ID"""
+        from backend.models.mcp_server import MCPServer
+        return await IDConverter.public_id_to_db_id(db, public_id, MCPServer)
+    
+    @staticmethod
+    async def get_mcp_server_public_id(db: AsyncSession, db_id: int) -> Optional[str]:
+        """获取MCP服务器的public_id"""
+        from backend.models.mcp_server import MCPServer
+        return await IDConverter.db_id_to_public_id(db, db_id, MCPServer) 

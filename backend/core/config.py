@@ -88,6 +88,57 @@ class Settings(BaseSettings):
     # Tavily API配置
     TAVILY_API_KEY: Optional[str] = None
     
+    # MCP配置
+    MCP_ENABLED: bool = os.getenv("MCP_ENABLED", "true").lower() == "true"
+    MCP_SERVERS: Dict[str, Any] = {}
+    MCP_CONNECTION_TIMEOUT: int = int(os.getenv("MCP_CONNECTION_TIMEOUT", "30"))  # 连接超时时间(秒)
+    MCP_REQUEST_TIMEOUT: int = int(os.getenv("MCP_REQUEST_TIMEOUT", "60"))  # 请求超时时间(秒)
+    MCP_RETRY_ATTEMPTS: int = int(os.getenv("MCP_RETRY_ATTEMPTS", "3"))  # 重试次数
+    MCP_RETRY_DELAY: float = float(os.getenv("MCP_RETRY_DELAY", "1.0"))  # 重试延迟(秒)
+    
+    # MCP内置服务器配置
+    MCP_FILESYSTEM_ENABLED: bool = os.getenv("MCP_FILESYSTEM_ENABLED", "true").lower() == "true"
+    MCP_FILESYSTEM_ALLOWED_PATHS: List[str] = os.getenv("MCP_FILESYSTEM_ALLOWED_PATHS", "").split(",") if os.getenv("MCP_FILESYSTEM_ALLOWED_PATHS") else []
+    
+    MCP_DATABASE_ENABLED: bool = os.getenv("MCP_DATABASE_ENABLED", "true").lower() == "true"
+    
+    MCP_WEB_ENABLED: bool = os.getenv("MCP_WEB_ENABLED", "false").lower() == "true"
+    MCP_WEB_USER_AGENT: str = os.getenv("MCP_WEB_USER_AGENT", "FreeWrite MCP Client/1.0")
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._load_mcp_servers()
+    
+    def _load_mcp_servers(self):
+        """从环境变量加载MCP服务器配置"""
+        mcp_servers_env = os.getenv("MCP_SERVERS", "")
+        if mcp_servers_env:
+            try:
+                import json
+                self.MCP_SERVERS = json.loads(mcp_servers_env)
+            except json.JSONDecodeError:
+                # 如果JSON解析失败，使用默认配置
+                self.MCP_SERVERS = {}
+        
+        # 如果没有配置外部服务器，使用默认内置服务器配置
+        if not self.MCP_SERVERS:
+            self.MCP_SERVERS = {
+                "database": {
+                    "enabled": self.MCP_DATABASE_ENABLED,
+                    "type": "stdio", 
+                    "command": "python",
+                    "args": ["-m", "backend.mcp.servers.database_server"],
+                    "description": "数据库查询服务"
+                },
+                "filesystem": {
+                    "enabled": False,  # 暂时禁用，需要正确安装和配置
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["@modelcontextprotocol/server-filesystem", "/tmp"],
+                    "description": "文件系统访问服务"
+                }
+            }
+    
     @property
     def DATABASE_URI(self) -> Optional[PostgresDsn]:
         return PostgresDsn.build(

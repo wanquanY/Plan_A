@@ -308,6 +308,14 @@ async def startup_event():
     except Exception as e:
         app_logger.warning(f"Redis服务初始化失败，将使用无缓存模式: {e}")
     
+    # 初始化MCP服务
+    try:
+        from backend.services.mcp_service import mcp_service
+        await mcp_service.initialize()
+        app_logger.info("MCP服务初始化完成")
+    except Exception as e:
+        app_logger.warning(f"MCP服务初始化失败: {e}")
+    
     app_logger.info(f"随机测试ID: {RandomUtil.generate_request_id()}")
     app_logger.info("应用程序启动完成")
 
@@ -315,6 +323,14 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     app_logger.info("应用程序关闭")
+    
+    # 关闭MCP服务
+    try:
+        from backend.services.mcp_service import mcp_service
+        await mcp_service.shutdown()
+        app_logger.info("MCP服务已关闭")
+    except Exception as e:
+        app_logger.error(f"关闭MCP服务失败: {e}")
 
 
 if __name__ == "__main__":

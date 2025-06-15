@@ -479,7 +479,7 @@ onMounted(async () => {
               <Slider 
                 v-model:value="formState.model_settings.max_tokens" 
                 :min="500" 
-                :max="8000" 
+                :max="32000" 
                 :step="100"
               />
               <div class="slider-value">{{ formState.model_settings.max_tokens }}</div>

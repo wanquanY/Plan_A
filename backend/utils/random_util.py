@@ -73,6 +73,12 @@ class RandomUtil:
         return f"rel-{random_str}"
     
     @staticmethod
+    def generate_mcp_server_id():
+        """生成MCP服务器ID，格式为：mcp-随机字符串"""
+        random_str = RandomUtil.generate_random_str(12)
+        return f"mcp-{random_str}"
+    
+    @staticmethod
     def generate_random_number(min_val=1, max_val=100):
         """生成指定范围内的随机整数"""
         return random.randint(min_val, max_val) 

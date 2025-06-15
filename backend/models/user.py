@@ -21,6 +21,7 @@ class User(BaseModel):
     chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
     agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
     notes = relationship("Note", back_populates="user", cascade="all, delete-orphan")
+    mcp_servers = relationship("MCPServer", back_populates="user", cascade="all, delete-orphan")
 
 
 # 为User模型添加事件监听器，在创建前自动生成public_id

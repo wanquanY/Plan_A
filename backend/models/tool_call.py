@@ -11,9 +11,11 @@ class ToolCallHistory(BaseModel):
     __tablename__ = "tool_call_history"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=False, index=True)
     session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=True, index=True)
+    mcp_server_id = Column(Integer, ForeignKey("mcp_servers.id"), nullable=True, index=True)
     
     # 工具调用基本信息
     tool_call_id = Column(String, nullable=False, index=True)  # 工具调用的唯一ID
@@ -31,9 +33,11 @@ class ToolCallHistory(BaseModel):
     completed_at = Column(DateTime(timezone=True), nullable=True)  # 完成时间
     
     # 关联关系
+    user = relationship("User")
     message = relationship("ChatMessage", back_populates="tool_calls")
     conversation = relationship("Chat")
     agent = relationship("Agent")
+    mcp_server = relationship("MCPServer", back_populates="tool_calls")
 
 
 # 为ToolCallHistory模型添加事件监听器，在创建前自动生成public_id
