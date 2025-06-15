@@ -1,7 +1,7 @@
 """MCP服务器实现"""
 
-from .database_server import DatabaseMCPServer
+from .note_server import NoteMCPServer
 
 __all__ = [
-    "DatabaseMCPServer",
+    "NoteMCPServer",
 ] 

@@ -15,15 +15,43 @@ class ChatToolHandler:
     
     @staticmethod
     def get_agent_tools(agent):
-        """根据Agent的配置返回可用工具列表"""
+        """根据Agent的配置返回可用工具列表（仅内置工具，向后兼容）"""
         if not agent or not agent.tools_enabled:
             return []
         
         # 使用工具管理器获取工具列表
         tools = tools_manager.get_agent_tools(agent.tools_enabled)
         
-        api_logger.info(f"为Agent AI助手 配置了 {len(tools)} 个工具")
+        api_logger.info(f"为Agent AI助手 配置了 {len(tools)} 个内置工具")
         return tools
+    
+    @staticmethod
+    async def get_agent_tools_async(agent, user_id: Optional[int] = None, db: Optional[AsyncSession] = None):
+        """根据Agent的配置返回可用工具列表（包括内置工具和MCP工具）"""
+        if not agent or not agent.tools_enabled:
+            return []
+        
+        try:
+            # 如果没有提供数据库会话，创建一个新的
+            if db is None:
+                from backend.core.database import get_db
+                async for db_session in get_db():
+                    db = db_session
+                    break
+            
+            # 使用Agent服务获取工具
+            from backend.services.agent_service import agent_service
+            tools = await agent_service.get_agent_tools_for_chat(db, agent.public_id, user_id)
+            
+            api_logger.info(f"为Agent {agent.public_id} 配置了 {len(tools)} 个工具（包括MCP工具）")
+            return tools
+            
+        except Exception as e:
+            api_logger.error(f"获取Agent工具失败: {e}")
+            # 降级到内置工具
+            tools = tools_manager.get_agent_tools(agent.tools_enabled)
+            api_logger.info(f"降级为Agent {agent.public_id} 配置了 {len(tools)} 个内置工具")
+            return tools
     
     @staticmethod
     async def handle_tool_calls(
@@ -128,68 +156,41 @@ class ChatToolHandler:
                         config={"api_key": api_key} if api_key else None
                     )
                 
-                elif function_name == "note_reader":
-                    # 笔记阅读工具需要特殊处理，因为需要数据库会话
-                    if not db:
-                        tool_result = {"error": "数据库连接不可用"}
-                    else:
-                        try:
-                            # 创建笔记阅读工具实例
-                            note_reader = tools_service.get_tool(
-                                "note_reader", 
-                                config={"db_session": db, "session_id": session_id}
-                            )
-                            
-                            if note_reader:
-                                api_logger.info("笔记阅读工具开始执行")
-                                # 确保在正确的异步上下文中执行笔记读取
-                                tool_result = await note_reader.read_note(
-                                    note_id=function_args.get("note_id"),
-                                    search_title=function_args.get("search_title"),
-                                    start_line=function_args.get("start_line", 1),
-                                    line_count=function_args.get("line_count", -1),
-                                    include_metadata=function_args.get("include_metadata", True)
-                                )
-                                api_logger.info(f"笔记阅读工具执行完成，结果类型: {type(tool_result)}")
-                            else:
-                                tool_result = {"error": "无法创建笔记阅读工具实例"}
-                        except Exception as e:
-                            api_logger.error(f"笔记阅读工具执行异常: {str(e)}", exc_info=True)
-                            tool_result = {"error": f"笔记阅读失败: {str(e)}"}
-                
-                elif function_name == "note_editor":
-                    # 笔记编辑工具需要特殊处理，因为需要数据库会话
-                    if not db:
-                        tool_result = {"error": "数据库连接不可用"}
-                    else:
-                        try:
-                            # 创建笔记编辑工具实例
-                            note_editor = tools_service.get_tool(
-                                "note_editor", 
-                                config={"db_session": db, "session_id": session_id}
-                            )
-                            
-                            if note_editor:
-                                api_logger.info("笔记编辑工具开始执行")
-                                # 确保在正确的异步上下文中执行笔记编辑
-                                tool_result = await note_editor.edit_note(
-                                    note_id=function_args.get("note_id"),
-                                    search_title=function_args.get("search_title"),
-                                    edit_type=function_args.get("edit_type", "replace"),
-                                    content=function_args.get("content"),
-                                    title=function_args.get("title"),
-                                    start_line=function_args.get("start_line"),
-                                    end_line=function_args.get("end_line"),
-                                    insert_position=function_args.get("insert_position"),
-                                    search_text=function_args.get("search_text"),
-                                    replace_text=function_args.get("replace_text")
-                                )
-                                api_logger.info(f"笔记编辑工具执行完成，结果类型: {type(tool_result)}")
-                            else:
-                                tool_result = {"error": "无法创建笔记编辑工具实例"}
-                        except Exception as e:
-                            api_logger.error(f"笔记编辑工具执行异常: {str(e)}", exc_info=True)
-                            tool_result = {"error": f"笔记编辑失败: {str(e)}"}
+                else:
+                    # 尝试通过MCP服务执行工具
+                    try:
+                        from backend.services.mcp_service import MCPService
+                        mcp_service = MCPService()
+                        
+                        # 确保MCP服务已初始化，并加载用户特定的服务器
+                        if not mcp_service.is_enabled():
+                            await mcp_service.initialize(user_id=user_id)
+                        else:
+                            # 确保用户的MCP服务器已加载
+                            if user_id:
+                                await mcp_service.ensure_user_servers_loaded(user_id)
+                        
+                        # 为MCP工具添加session_id参数（如果工具支持的话）
+                        mcp_arguments = function_args.copy()
+                        if session_id:
+                            mcp_arguments["session_id"] = session_id
+                        
+                        # 尝试通过MCP执行工具
+                        mcp_result = await mcp_service.execute_mcp_tool_for_chat(
+                            tool_name=function_name,
+                            arguments=mcp_arguments
+                        )
+                        
+                        if mcp_result["success"]:
+                            tool_result = mcp_result["result"]
+                            api_logger.info(f"MCP工具 {function_name} 执行成功")
+                        else:
+                            tool_result = {"error": f"MCP工具执行失败: {mcp_result.get('error', '未知错误')}"}
+                            api_logger.error(f"MCP工具 {function_name} 执行失败: {mcp_result.get('error')}")
+                    
+                    except Exception as mcp_error:
+                        api_logger.error(f"MCP工具 {function_name} 执行异常: {str(mcp_error)}", exc_info=True)
+                        tool_result = {"error": f"工具不存在或MCP服务不可用: {str(mcp_error)}"}
                 
                 # 更新状态为完成
                 tool_call_data["status"] = "completed"
@@ -216,6 +217,7 @@ class ChatToolHandler:
                         # 创建工具调用记录
                         await create_tool_call(
                             db=db,
+                            user_id=user_id,
                             message_id=db_message_id,  # 使用数据库ID
                             session_id=db_session_id,  # 使用数据库ID
                             tool_call_id=tool_call_id,
@@ -263,6 +265,7 @@ class ChatToolHandler:
                         # 创建工具调用错误记录
                         await create_tool_call(
                             db=db,
+                            user_id=user_id,
                             message_id=db_message_id,  # 使用数据库ID
                             session_id=db_session_id,  # 使用数据库ID
                             tool_call_id=tool_call_id,

@@ -438,6 +438,38 @@ class MCPSessionManager:
         
         return None
     
+    def get_status(self) -> Dict[str, Any]:
+        """获取会话管理器状态"""
+        if not self._initialized:
+            return {
+                "initialized": False,
+                "server_count": 0,
+                "connected_count": 0,
+                "servers": {}
+            }
+        
+        servers_status = {}
+        connected_count = 0
+        
+        for server_id, client in self._clients.items():
+            is_connected = client.is_connected if client else False
+            if is_connected:
+                connected_count += 1
+            
+            servers_status[str(server_id)] = {
+                "id": server_id,
+                "connected": is_connected,
+                "initialized": is_connected,  # 如果连接成功，认为已初始化
+                "name": client.name if client else f"server_{server_id}"
+            }
+        
+        return {
+            "initialized": True,
+            "server_count": len(self._clients),
+            "connected_count": connected_count,
+            "servers": servers_status
+        }
+
     @property
     def is_initialized(self) -> bool:
         """检查是否已初始化"""

@@ -135,7 +135,8 @@ class ChatResponseService:
                 has_tools, 
                 session_id,
                 db,
-                message_id=message_id
+                message_id=message_id,
+                user_id=user_id
             )
             
             # 如果有额外的内容，记录到交互流程
@@ -431,6 +432,15 @@ class ChatResponseService:
             
             # 如果有Agent，使用Agent的设置
             if current_agent:
+                # 确保用户的MCP服务器已加载（如果有的话）
+                try:
+                    from backend.services.mcp_service import mcp_service
+                    if user_id and mcp_service.is_enabled():
+                        await mcp_service.ensure_user_servers_loaded(user_id)
+                        api_logger.info(f"已为用户 {user_id} 加载MCP服务器")
+                except Exception as e:
+                    api_logger.warning(f"加载用户MCP服务器失败: {e}")
+                
                 # 优先使用请求中的模型，如果没有提供则使用Agent的默认模型
                 if chat_request.model:
                     use_model = chat_request.model
@@ -467,7 +477,7 @@ class ChatResponseService:
                 api_logger.info(f"使用系统默认模型: {use_model}")
             
             # 获取工具配置
-            tools = chat_tool_handler.get_agent_tools(current_agent) if current_agent else []
+            tools = await chat_tool_handler.get_agent_tools_async(current_agent, user_id, db) if current_agent else []
             has_tools = len(tools) > 0
             api_logger.info(f"当前聊天启用工具: {has_tools}, 工具数量: {len(tools)}")
             

@@ -13,7 +13,7 @@
 - ✅ **提示管理**: 获取和使用MCP提示
 - ✅ **自动重连**: 自动处理连接故障和重连
 - ✅ **API接口**: 完整的REST API支持
-- ✅ **内置服务器**: 包含示例数据库查询服务器
+- ✅ **内置服务器**: 包含笔记管理服务器
 
 ## 配置说明
 
@@ -30,25 +30,16 @@ MCP_RETRY_ATTEMPTS=3
 MCP_RETRY_DELAY=1.0
 
 # MCP内置服务器配置
-MCP_DATABASE_ENABLED=true
-MCP_FILESYSTEM_ENABLED=false
-MCP_WEB_ENABLED=false
+MCP_NOTE_ENABLED=true
 
 # MCP服务器配置 (JSON格式)
 MCP_SERVERS='{
-  "database": {
+  "note": {
     "enabled": true,
     "type": "stdio",
     "command": "python",
-    "args": ["-m", "backend.mcp.servers.database_server"],
-    "description": "数据库查询服务"
-  },
-  "filesystem": {
-    "enabled": false,
-    "type": "stdio",
-    "command": "npx",
-    "args": ["@modelcontextprotocol/server-filesystem", "/tmp"],
-    "description": "文件系统访问服务"
+    "args": ["-m", "backend.mcp.servers.note_server"],
+    "description": "笔记阅读和编辑服务"
   }
 }'
 ```
@@ -120,7 +111,7 @@ DELETE /api/v1/mcp/servers/{server_name}
 
 #### 获取工具列表
 ```http
-GET /api/v1/mcp/tools?server_name=database&force_refresh=false
+GET /api/v1/mcp/tools?server_name=note&force_refresh=false
 ```
 
 #### 调用指定服务器的工具
@@ -129,11 +120,11 @@ POST /api/v1/mcp/tools/call
 Content-Type: application/json
 
 {
-  "server_name": "database",
-  "tool_name": "query_notes",
+  "server_name": "note",
+  "tool_name": "read_note",
   "arguments": {
-    "query": "python",
-    "limit": 5
+    "note_id": "abc123",
+    "include_metadata": true
   }
 }
 ```
@@ -144,10 +135,10 @@ POST /api/v1/mcp/tools/call-auto
 Content-Type: application/json
 
 {
-  "tool_name": "query_notes",
+  "tool_name": "read_note",
   "arguments": {
-    "query": "python",
-    "limit": 5
+    "note_id": "abc123",
+    "include_metadata": true
   }
 }
 ```
@@ -156,7 +147,7 @@ Content-Type: application/json
 
 #### 获取资源列表
 ```http
-GET /api/v1/mcp/resources?server_name=filesystem
+GET /api/v1/mcp/resources?server_name=note
 ```
 
 #### 读取指定服务器的资源
@@ -165,8 +156,8 @@ POST /api/v1/mcp/resources/read
 Content-Type: application/json
 
 {
-  "server_name": "filesystem",
-  "uri": "file:///tmp/example.txt"
+  "server_name": "note",
+  "uri": "note://abc123"
 }
 ```
 
@@ -176,7 +167,7 @@ POST /api/v1/mcp/resources/read-auto
 Content-Type: application/json
 
 {
-  "uri": "file:///tmp/example.txt"
+  "uri": "note://abc123"
 }
 ```
 
@@ -184,7 +175,7 @@ Content-Type: application/json
 
 #### 获取提示列表
 ```http
-GET /api/v1/mcp/prompts?server_name=database
+GET /api/v1/mcp/prompts?server_name=note
 ```
 
 #### 获取指定服务器的提示
@@ -193,147 +184,128 @@ POST /api/v1/mcp/prompts/get
 Content-Type: application/json
 
 {
-  "server_name": "database",
-  "prompt_name": "analyze_data",
+  "server_name": "note",
+  "prompt_name": "analyze_note",
   "arguments": {
-    "dataset": "user_notes"
+    "note_id": "abc123"
   }
 }
 ```
 
 ## 内置服务器
 
-### 数据库服务器
+### 笔记服务器
 
-项目包含一个示例数据库MCP服务器，提供以下工具：
+项目包含一个内置的笔记MCP服务器，提供以下工具：
 
-#### query_notes
-查询笔记数据，支持按标题、内容、标签等条件搜索。
+#### read_note
+读取笔记内容，支持通过笔记ID或标题搜索笔记，可指定阅读范围和是否包含元数据。
 
 **参数:**
-- `query` (必需): 搜索关键词
+- `note_id` (可选): 要读取的笔记ID
+- `search_title` (可选): 通过标题搜索笔记，支持模糊匹配
+- `start_line` (可选): 开始阅读的行数，默认1
+- `line_count` (可选): 要读取的行数，-1表示读取全部，默认-1
+- `include_metadata` (可选): 是否包含笔记元数据，默认true
+
+#### edit_note
+编辑笔记内容，支持多种编辑操作：完全替换、追加、前置、插入、替换行、替换文本等。
+
+**参数:**
+- `note_id` (可选): 要编辑的笔记ID
+- `search_title` (可选): 通过标题搜索要编辑的笔记
+- `edit_type` (可选): 编辑类型，默认"replace"
+- `content` (可选): 新内容
+- `title` (可选): 新标题
+- `save_immediately` (可选): 是否立即保存，默认false
+
+#### create_note
+创建新笔记，可以指定标题、内容，以及是否关联到当前会话。
+
+**参数:**
+- `title` (可选): 笔记标题，默认"新笔记"
+- `content` (可选): 笔记内容，默认空
+- `link_to_session` (可选): 是否关联到当前会话，默认true
+
+#### list_notes
+列出用户的笔记，支持搜索、分页和排序。
+
+**参数:**
+- `search` (可选): 搜索关键词
 - `limit` (可选): 返回结果数量限制，默认10
-- `user_id` (可选): 用户ID，如果提供则只查询该用户的笔记
+- `offset` (可选): 偏移量，默认0
+- `sort_by` (可选): 排序字段，默认"updated_at"
+- `sort_order` (可选): 排序顺序，默认"desc"
 
-**示例:**
-```json
-{
-  "query": "python",
-  "limit": 5,
-  "user_id": 1
-}
-```
+## 使用示例
 
-#### get_note_stats
-获取笔记统计信息，包括总数、分类统计等。
-
-**参数:**
-- `user_id` (可选): 用户ID，如果提供则只统计该用户的笔记
-
-#### query_users
-查询用户信息。
-
-**参数:**
-- `username` (可选): 用户名
-- `email` (可选): 邮箱
-
-## 开发指南
-
-### 添加新的MCP服务器
-
-1. 在`backend/mcp/servers/`目录下创建新的服务器文件
-2. 实现MCP协议的消息处理逻辑
-3. 在配置中添加服务器信息
-4. 重启应用即可自动连接
-
-### 示例代码
-
-#### Python客户端使用示例
+### Python客户端示例
 
 ```python
+import asyncio
 from backend.services.mcp_service import mcp_service
 
-# 获取工具列表
-tools = await mcp_service.list_tools()
+async def main():
+    # 初始化MCP服务
+    await mcp_service.initialize()
+    
+    # 调用笔记工具
+    result = await mcp_service.call_tool_auto(
+        "read_note",
+        {"note_id": "abc123", "include_metadata": True}
+    )
+    
+    print(f"笔记内容: {result.content}")
 
-# 调用工具
-result = await mcp_service.call_tool_auto("query_notes", {
-    "query": "python",
-    "limit": 5
-})
-
-# 读取资源
-content = await mcp_service.read_resource_auto("file:///tmp/data.txt")
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-#### 集成到聊天系统
+### 聊天集成
 
-```python
-# 为聊天系统执行MCP工具
-result = await mcp_service.execute_mcp_tool_for_chat("query_notes", {
-    "query": "python"
-})
+MCP工具已集成到聊天系统中，AI助手可以自动调用笔记工具来：
 
-if result["success"]:
-    print(result["content"])
-else:
-    print(f"Error: {result['error']}")
-
-# 获取可用于聊天的工具列表
-available_tools = await mcp_service.get_available_tools_for_chat()
-```
+- 读取和搜索笔记
+- 编辑和创建笔记
+- 分析笔记内容
+- 管理笔记结构
 
 ## 故障排除
 
 ### 常见问题
 
-1. **服务器连接失败**
-   - 检查命令路径是否正确
-   - 确认依赖包已安装
-   - 查看应用日志获取详细错误信息
+1. **连接失败**: 检查服务器配置和网络连接
+2. **工具调用失败**: 验证参数格式和权限
+3. **性能问题**: 调整超时和重试参数
 
-2. **工具调用失败**
-   - 验证工具名称是否正确
-   - 检查参数格式是否符合要求
-   - 确认服务器状态正常
+### 日志查看
 
-3. **性能问题**
-   - 调整连接超时时间
-   - 检查服务器响应时间
-   - 考虑使用缓存减少重复请求
+```bash
+# 查看MCP相关日志
+tail -f logs/app.log | grep MCP
+```
 
-### 日志调试
+### 调试模式
 
-启用调试日志：
-
+在环境变量中设置：
 ```bash
 LOG_LEVEL=DEBUG
-CONSOLE_LOG_LEVEL=debug
 ```
 
-查看MCP相关日志：
+## 扩展开发
 
-```bash
-grep "MCP" logs/app.log
-```
+### 添加新工具
 
-## 扩展功能
+1. 在笔记服务器中添加新的工具定义
+2. 实现工具的处理逻辑
+3. 更新工具列表
+4. 测试工具功能
 
-### 计划中的功能
+### 添加新服务器
 
-- [ ] WebSocket传输支持
-- [ ] 更多内置服务器
-- [ ] 图形化管理界面
-- [ ] 性能监控和指标
-- [ ] 服务器负载均衡
-- [ ] 缓存优化
+1. 创建新的MCP服务器实现
+2. 在配置中添加服务器定义
+3. 实现必要的协议方法
+4. 集成到系统中
 
-### 贡献指南
-
-欢迎提交Issue和Pull Request来改进MCP功能！
-
-## 相关资源
-
-- [MCP官方文档](https://modelcontextprotocol.io/)
-- [MCP规范](https://spec.modelcontextprotocol.io/)
-- [示例MCP服务器](https://github.com/modelcontextprotocol) 
+更多详细信息请参考 [MCP协议开发文档.md](./MCP协议开发文档.md)。 

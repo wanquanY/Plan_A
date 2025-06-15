@@ -6,12 +6,13 @@ from datetime import datetime
 from backend.db.session import get_async_session
 from backend.api.deps import get_current_active_user, get_db
 from backend.models.user import User
-from backend.core.response import SuccessResponse
+from backend.core.response import SuccessResponse, ErrorResponse
 from backend.crud.agent import agent
 from backend.schemas.agent import AgentCreate, AgentUpdate, AgentInDB, AgentListResponse
 from backend.utils.logging import api_logger
 from backend.core.config import settings
 from backend.utils.id_converter import IDConverter
+from backend.services.agent_service import agent_service
 
 router = APIRouter()
 
@@ -348,4 +349,92 @@ async def list_agents(
         data=agent_list,
         msg="获取Agent列表成功",
         request_id=getattr(request.state, "request_id", None)
-    ) 
+    )
+
+
+@router.get("/{agent_id}/tools")
+async def get_agent_tools(
+    request: Request,
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取Agent的工具信息"""
+    try:
+        api_logger.info(f"用户 {current_user.username} 获取Agent工具信息: {agent_id}, 请求ID: {getattr(request.state, 'request_id', '')}")
+        
+        # 获取Agent及其工具信息
+        agent_info = await agent_service.get_agent_with_tools(db, agent_id, current_user.id)
+        if not agent_info:
+            return ErrorResponse(
+                msg=f"Agent不存在或无权限访问: {agent_id}",
+                request_id=getattr(request.state, "request_id", None)
+            )
+        
+        # 构建响应数据
+        response_data = {
+            "agent_id": agent_info["agent"].public_id,
+            "agent_name": "AI助手",
+            "total_tools": agent_info["tool_count"],
+            "builtin_tools_count": len(agent_info["builtin_tools"]),
+            "mcp_tools_count": len(agent_info["mcp_tools"]),
+            "builtin_tools": [
+                {
+                    "name": tool.get("function", {}).get("name", "unknown"),
+                    "description": tool.get("function", {}).get("description", ""),
+                    "source": "builtin",
+                    "parameters": tool.get("function", {}).get("parameters", {})
+                }
+                for tool in agent_info["builtin_tools"]
+            ],
+            "mcp_tools": [
+                {
+                    "name": tool.get("name", "unknown"),
+                    "description": tool.get("description", ""),
+                    "source": "mcp",
+                    "server": tool.get("server", "unknown"),
+                    "parameters": tool.get("inputSchema", {})
+                }
+                for tool in agent_info["mcp_tools"]
+            ]
+        }
+        
+        return SuccessResponse(
+            data=response_data,
+            msg="获取Agent工具信息成功",
+            request_id=getattr(request.state, "request_id", None)
+        )
+        
+    except Exception as e:
+        api_logger.error(f"用户 {current_user.username} 获取Agent工具信息失败: {str(e)}", exc_info=True)
+        return ErrorResponse(
+            msg=f"获取Agent工具信息失败: {str(e)}",
+            request_id=getattr(request.state, "request_id", None)
+        )
+
+
+@router.get("/statistics")
+async def get_agent_statistics(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取用户Agent的统计信息"""
+    try:
+        api_logger.info(f"用户 {current_user.username} 获取Agent统计信息, 请求ID: {getattr(request.state, 'request_id', '')}")
+        
+        # 获取Agent统计信息
+        stats = await agent_service.get_agent_statistics(db, current_user.id)
+        
+        return SuccessResponse(
+            data=stats,
+            msg="获取Agent统计信息成功",
+            request_id=getattr(request.state, "request_id", None)
+        )
+        
+    except Exception as e:
+        api_logger.error(f"用户 {current_user.username} 获取Agent统计信息失败: {str(e)}", exc_info=True)
+        return ErrorResponse(
+            msg=f"获取Agent统计信息失败: {str(e)}",
+            request_id=getattr(request.state, "request_id", None)
+        ) 

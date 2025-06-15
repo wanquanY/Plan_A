@@ -37,6 +37,7 @@ class ChatStreamService:
         db: Optional[AsyncSession] = None,
         message_id: Optional[int] = None,
         interaction_flow: List[Dict[str, Any]] = None,
+        user_id: Optional[int] = None,
         max_iterations: int = 10  # 防止无限循环
     ):
         """
@@ -147,6 +148,7 @@ class ChatStreamService:
                         db,  # 传递数据库连接，保存工具调用记录
                         session_id,
                         message_id=message_id,  # 关联到特定消息
+                        user_id=user_id,  # 传递用户ID
                         agent_id=agent_db_id  # 传递agent_id，避免懒加载
                     )
                     
@@ -671,6 +673,15 @@ class ChatStreamService:
             
             # 如果有Agent，使用Agent的设置
             if current_agent:
+                # 确保用户的MCP服务器已加载（如果有的话）
+                try:
+                    from backend.services.mcp_service import mcp_service
+                    if user_id and mcp_service.is_enabled():
+                        await mcp_service.ensure_user_servers_loaded(user_id)
+                        api_logger.info(f"已为用户 {user_id} 加载MCP服务器")
+                except Exception as e:
+                    api_logger.warning(f"加载用户MCP服务器失败: {e}")
+                
                 # 优先使用请求中的模型，如果没有提供则使用Agent的默认模型
                 if chat_request.model:
                     use_model = chat_request.model
@@ -707,7 +718,7 @@ class ChatStreamService:
                 api_logger.info(f"流式响应使用系统默认模型: {use_model}")
             
             # 获取工具配置
-            tools = chat_tool_handler.get_agent_tools(current_agent) if current_agent else []
+            tools = await chat_tool_handler.get_agent_tools_async(current_agent, user_id, db) if current_agent else []
             has_tools = len(tools) > 0
             api_logger.info(f"流式聊天启用工具: {has_tools}, 工具数量: {len(tools)}")
             
@@ -939,7 +950,8 @@ class ChatStreamService:
                         session_id,
                         db,
                         message_id=ai_message.public_id if ai_message else None,
-                        interaction_flow=interaction_flow
+                        interaction_flow=interaction_flow,
+                        user_id=user_id
                     ):
                         if isinstance(content_chunk, tuple):
                             # 工具状态信息
@@ -1193,7 +1205,8 @@ class ChatStreamService:
                                 session_id,
                                 db,
                                 message_id=ai_message.public_id if ai_message else None,
-                                interaction_flow=interaction_flow
+                                interaction_flow=interaction_flow,
+                                user_id=user_id
                             ):
                                 if isinstance(content_chunk, tuple):
                                     yield content_chunk

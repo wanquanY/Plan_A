@@ -18,6 +18,7 @@ async def create_tool_call(
     function_name: str,
     arguments: Dict[str, Any],
     agent_id: Optional[int] = None,
+    user_id: Optional[int] = None,
     status: str = "preparing",
     result: Optional[Dict[str, Any]] = None,
     error_message: Optional[str] = None
@@ -26,6 +27,7 @@ async def create_tool_call(
     db_logger.debug(f"创建工具调用记录: tool_call_id={tool_call_id}, tool_name={tool_name}, status={status}")
     
     tool_call = ToolCallHistory(
+        user_id=user_id,
         message_id=message_id,
         session_id=session_id,
         agent_id=agent_id,
@@ -164,6 +166,7 @@ async def get_or_create_tool_call(
     function_name: str,
     arguments: Dict[str, Any],
     agent_id: Optional[int] = None,
+    user_id: Optional[int] = None,
     status: str = "preparing",
     result: Optional[Dict[str, Any]] = None,
     error_message: Optional[str] = None
@@ -187,10 +190,11 @@ async def get_or_create_tool_call(
         function_name=function_name,
         arguments=arguments,
         agent_id=agent_id,
+        user_id=user_id,
         status=status,
         result=result,
         error_message=error_message
-    ) 
+    )
 
 
 async def create_tool_call_history(

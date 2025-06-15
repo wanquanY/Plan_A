@@ -26,6 +26,7 @@ class ChatToolProcessor:
         session_id: int,
         db: Optional[AsyncSession] = None,
         message_id: Optional[int] = None,
+        user_id: Optional[int] = None,
         max_iterations: int = 10  # 防止无限循环
     ) -> str:
         """
@@ -95,6 +96,7 @@ class ChatToolProcessor:
                 None,  # 不传递数据库连接，避免重复保存
                 session_id,
                 message_id=None,  # 不保存到数据库
+                user_id=user_id,  # 传递用户ID
                 agent_id=agent_db_id  # 传递agent_id，避免懒加载
             )
             
@@ -179,6 +181,7 @@ class ChatToolProcessor:
         session_id: int,
         db: Optional[AsyncSession] = None,
         message_id: Optional[int] = None,
+        user_id: Optional[int] = None,
         max_iterations: int = 10  # 防止无限循环
     ):
         """
@@ -270,6 +273,7 @@ class ChatToolProcessor:
                     db,  # 传递数据库连接，保存工具调用记录
                     session_id,
                     message_id=message_id,  # 关联到特定消息
+                    user_id=user_id,  # 传递用户ID
                     agent_id=agent_db_id  # 传递agent_id，避免懒加载
                 )
                 

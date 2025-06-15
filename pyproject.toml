@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "Plan_A"
 version = "0.1.0"
 description = "Plan_A Backend API"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.103.0",
     "uvicorn>=0.23.2",

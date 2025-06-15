@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     )
     DEFAULT_AGENT_TOOLS_ENABLED: str = os.getenv(
         "DEFAULT_AGENT_TOOLS_ENABLED", 
-        '{"note_reader": {"enabled": true}, "note_editor": {"enabled": true}}'
+        '{}'
     )
     DEFAULT_AGENT_TEMPERATURE: float = float(os.getenv("DEFAULT_AGENT_TEMPERATURE", "0.7"))
     DEFAULT_AGENT_TOP_P: float = float(os.getenv("DEFAULT_AGENT_TOP_P", "1.0"))
@@ -97,13 +97,7 @@ class Settings(BaseSettings):
     MCP_RETRY_DELAY: float = float(os.getenv("MCP_RETRY_DELAY", "1.0"))  # 重试延迟(秒)
     
     # MCP内置服务器配置
-    MCP_FILESYSTEM_ENABLED: bool = os.getenv("MCP_FILESYSTEM_ENABLED", "true").lower() == "true"
-    MCP_FILESYSTEM_ALLOWED_PATHS: List[str] = os.getenv("MCP_FILESYSTEM_ALLOWED_PATHS", "").split(",") if os.getenv("MCP_FILESYSTEM_ALLOWED_PATHS") else []
-    
-    MCP_DATABASE_ENABLED: bool = os.getenv("MCP_DATABASE_ENABLED", "true").lower() == "true"
-    
-    MCP_WEB_ENABLED: bool = os.getenv("MCP_WEB_ENABLED", "false").lower() == "true"
-    MCP_WEB_USER_AGENT: str = os.getenv("MCP_WEB_USER_AGENT", "FreeWrite MCP Client/1.0")
+    MCP_NOTE_ENABLED: bool = os.getenv("MCP_NOTE_ENABLED", "true").lower() == "true"
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -123,19 +117,13 @@ class Settings(BaseSettings):
         # 如果没有配置外部服务器，使用默认内置服务器配置
         if not self.MCP_SERVERS:
             self.MCP_SERVERS = {
-                "database": {
-                    "enabled": self.MCP_DATABASE_ENABLED,
+                "note": {
+                    "enabled": self.MCP_NOTE_ENABLED,
                     "type": "stdio", 
                     "command": "python",
-                    "args": ["-m", "backend.mcp.servers.database_server"],
-                    "description": "数据库查询服务"
-                },
-                "filesystem": {
-                    "enabled": False,  # 暂时禁用，需要正确安装和配置
-                    "type": "stdio",
-                    "command": "npx",
-                    "args": ["@modelcontextprotocol/server-filesystem", "/tmp"],
-                    "description": "文件系统访问服务"
+                    "args": ["-m", "backend.mcp.servers.note_server"],
+                    "description": "笔记阅读和编辑服务",
+                    "name": "note-server"
                 }
             }
     

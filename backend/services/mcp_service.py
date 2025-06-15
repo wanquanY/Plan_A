@@ -65,20 +65,40 @@ class MCPService:
                 "enabled": False,
                 "server_count": 0,
                 "connected_count": 0,
-                "servers": {}
+                "active_servers": 0,
+                "available_tools": 0,
+                "servers": {},
+                "healthy": False,
+                "message": "MCP服务未启用"
             }
         
-        status = self.session_manager.get_status()
-        connected_count = sum(1 for s in status["servers"].values() if s.get("connected", False))
-        
-        return {
-            "enabled": True,
-            "server_count": len(status["servers"]),
-            "connected_count": connected_count,
-            "servers": status["servers"],
-            "healthy": connected_count > 0,
-            "message": f"已连接 {connected_count}/{len(status['servers'])} 个服务器"
-        }
+        try:
+            status = self.session_manager.get_status()
+            connected_count = sum(1 for s in status["servers"].values() if s.get("connected", False))
+            server_count = len(status["servers"])
+            
+            return {
+                "enabled": True,
+                "server_count": server_count,
+                "connected_count": connected_count,
+                "active_servers": connected_count,
+                "available_tools": 0,  # TODO: 计算可用工具数量
+                "servers": status["servers"],
+                "healthy": connected_count > 0,
+                "message": f"已连接 {connected_count}/{server_count} 个服务器"
+            }
+        except Exception as e:
+            logger.error(f"获取MCP状态时出错: {e}")
+            return {
+                "enabled": True,
+                "server_count": 0,
+                "connected_count": 0,
+                "active_servers": 0,
+                "available_tools": 0,
+                "servers": {},
+                "healthy": False,
+                "message": f"获取状态失败: {str(e)}"
+            }
     
     async def get_server_status(self, server_id: str, user_id: int = None) -> Dict[str, Any]:
         """获取指定服务器状态"""
@@ -177,54 +197,19 @@ class MCPService:
         await self.session_manager.reconnect_server(db_id)
     
     # 用户级别的服务器管理方法
-    async def get_user_servers(self, user_id: int, skip: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_user_servers(self, user_id: int, skip: int = 0, limit: int = 100) -> List[MCPServer]:
         """获取用户的MCP服务器配置列表"""
         async for db in get_async_session():
             servers = await mcp_server.get_user_servers(db, user_id=user_id, skip=skip, limit=limit)
             
-            # 添加运行时状态信息
-            result = []
-            for server in servers:
-                server_dict = {
-                    "id": server.id,
-                    "public_id": server.public_id,
-                    "name": server.name,
-                    "description": server.description,
-                    "transport_type": server.transport_type,
-                    "enabled": server.enabled,
-                    "auto_start": server.auto_start,
-                    "is_public": server.is_public,
-                    "tags": server.tags or [],
-                    "created_at": server.created_at.isoformat() if server.created_at else None,
-                    "updated_at": server.updated_at.isoformat() if server.updated_at else None,
-                    # 运行时状态
-                    "connected": False,
-                    "initialized": False,
-                    "tools_count": 0,
-                    "resources_count": 0,
-                    "prompts_count": 0
-                }
-                
-                # 检查运行时状态
-                if self.is_enabled():
-                    try:
-                        runtime_status = await self.session_manager.get_server_status(server.id)
-                        server_dict.update({
-                            "connected": runtime_status.get("connected", False),
-                            "initialized": runtime_status.get("initialized", False),
-                            "tools_count": len(runtime_status.get("tools", [])),
-                            "resources_count": len(runtime_status.get("resources", [])),
-                            "prompts_count": len(runtime_status.get("prompts", []))
-                        })
-                    except:
-                        pass  # 服务器未连接或出错，保持默认状态
-                
-                result.append(server_dict)
+            # 确保用户服务器已加载到会话管理器中
+            if self.is_enabled():
+                await self.ensure_user_servers_loaded(user_id)
             
-            return result
+            return servers
             break
     
-    async def create_user_server(self, user_id: int, server_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_user_server(self, user_id: int, server_data: Dict[str, Any]) -> MCPServer:
         """为用户创建MCP服务器配置"""
         async for db in get_async_session():
             # 检查名称是否已存在（用户级别）
@@ -247,15 +232,10 @@ class MCPService:
                 except Exception as e:
                     logger.error(f"连接新创建的服务器失败 ID {server.id}: {e}")
             
-            return {
-                "id": server.id,
-                "public_id": server.public_id,
-                "name": server.name,
-                "message": "服务器配置创建成功"
-            }
+            return server
             break
     
-    async def update_user_server(self, user_id: int, server_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_user_server(self, user_id: int, server_id: int, update_data: Dict[str, Any]) -> MCPServer:
         """更新用户的MCP服务器配置"""
         async for db in get_async_session():
             try:
@@ -301,11 +281,7 @@ class MCPService:
                     except Exception as e:
                         logger.error(f"同步会话管理器失败 ID {server.id}: {e}")
                 
-                # 转换为字典并包含public_id
-                result_dict = server.to_dict()
-                result_dict["public_id"] = await IDConverter.get_mcp_server_public_id(db, server.id)
-                
-                return result_dict
+                return server
             finally:
                 await db.close()
                 break
@@ -343,6 +319,8 @@ class MCPService:
     
     async def toggle_user_server(self, user_id: int, server_id: int) -> Dict[str, Any]:
         """切换用户MCP服务器的启用状态"""
+        logger.info(f"toggle_user_server调用: user_id={user_id}, server_id={server_id}")
+        
         async for db in get_async_session():
             try:
                 # 查询服务器
@@ -350,42 +328,64 @@ class MCPService:
                     MCPServer.id == server_id,
                     MCPServer.user_id == user_id
                 )
+                logger.info(f"执行查询: MCPServer.id={server_id} AND MCPServer.user_id={user_id}")
+                
                 result = await db.execute(stmt)
                 server = result.scalar_one_or_none()
                 
+                logger.info(f"查询结果: server={server}")
+                
                 if not server:
+                    # 检查服务器是否存在但用户不匹配
+                    stmt2 = select(MCPServer).where(MCPServer.id == server_id)
+                    result2 = await db.execute(stmt2)
+                    server2 = result2.scalar_one_or_none()
+                    
+                    if server2:
+                        logger.error(f"服务器存在但用户不匹配: server.user_id={server2.user_id}, 期望user_id={user_id}")
+                    else:
+                        logger.error(f"服务器完全不存在: server_id={server_id}")
+                    
                     raise MCPError(f"服务器不存在: ID {server_id}")
                 
                 # 切换启用状态
-                new_status = not server.enabled
-                server.enabled = new_status
+                old_enabled = server.enabled
+                server.enabled = not server.enabled
+                
+                logger.info(f"切换状态: {old_enabled} -> {server.enabled}")
                 
                 await db.commit()
                 await db.refresh(server)
                 
-                action = "启用" if new_status else "禁用"
+                action = "启用" if server.enabled else "禁用"
                 
                 # 如果MCP服务已启用，同步更新会话管理器
                 if self.is_enabled():
                     try:
-                        if new_status and server.auto_start:
+                        if server.enabled and server.auto_start:
                             # 启用服务器
                             await self.session_manager.add_server(server.id, server.to_config_dict())
-                        elif not new_status:
+                        elif not server.enabled:
                             # 禁用服务器
                             await self.session_manager.remove_server(server.id)
                     except Exception as e:
                         logger.error(f"同步会话管理器失败 ID {server.id}: {e}")
                 
-                # 转换为字典并包含public_id
-                result_dict = server.to_dict()
-                result_dict["public_id"] = await IDConverter.get_mcp_server_public_id(db, server.id)
-                result_dict["action"] = action
-                
-                return result_dict
+                result_data = {
+                    "server": server,
+                    "action": action,
+                    "message": f"服务器已{action}"
+                }
+                logger.info(f"toggle_user_server成功: {result_data}")
+                return result_data
+            except MCPError:
+                # 重新抛出MCPError，让上层处理
+                raise
+            except Exception as e:
+                logger.error(f"切换服务器状态失败: {e}")
+                raise MCPError(f"切换服务器状态失败: {str(e)}")
             finally:
                 await db.close()
-                break
     
     async def get_public_servers(self, skip: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
         """获取公开的MCP服务器配置"""
@@ -579,36 +579,6 @@ class MCPService:
         return await self.session_manager.get_prompt(server_name, prompt_name, arguments or {})
     
     # 聊天集成方法（保持不变）
-    async def execute_mcp_tool_for_chat(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """为聊天执行MCP工具调用"""
-        if not self.is_enabled():
-            return {
-                "success": False,
-                "error": "MCP服务未启用",
-                "result": None
-            }
-        
-        try:
-            # 尝试自动调用工具
-            result = await self.call_tool_auto(tool_name, arguments)
-            
-            return {
-                "success": True,
-                "error": None,
-                "result": {
-                    "content": result.content,
-                    "isError": result.isError
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"执行MCP工具调用失败: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "result": None
-            }
-    
     async def get_available_tools_for_chat(self) -> List[Dict[str, Any]]:
         """获取可用于聊天的工具列表"""
         if not self.is_enabled():
@@ -644,6 +614,36 @@ class MCPService:
         except Exception as e:
             logger.error(f"获取可用工具失败: {e}")
             return []
+    
+    async def execute_mcp_tool_for_chat(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """为聊天执行MCP工具调用"""
+        if not self.is_enabled():
+            return {
+                "success": False,
+                "error": "MCP服务未启用",
+                "result": None
+            }
+        
+        try:
+            # 尝试自动调用工具
+            result = await self.call_tool_auto(tool_name, arguments)
+            
+            return {
+                "success": True,
+                "error": None,
+                "result": {
+                    "content": result.content,
+                    "isError": result.isError
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"执行MCP工具调用失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "result": None
+            }
     
     async def health_check(self) -> Dict[str, Any]:
         """健康检查"""

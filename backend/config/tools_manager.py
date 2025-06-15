@@ -13,6 +13,7 @@ from .tools_config import (
     get_tool_by_name,
     get_all_tool_names
 )
+import asyncio
 
 class ToolsManager:
     """工具配置管理器"""
@@ -25,6 +26,66 @@ class ToolsManager:
     def get_available_tools(self) -> List[Dict[str, Any]]:
         """获取所有可用工具"""
         return AVAILABLE_TOOLS.copy()
+    
+    async def get_mcp_tools(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        获取MCP服务提供的工具
+        
+        Args:
+            user_id: 用户ID，用于加载用户特定的MCP服务器
+            
+        Returns:
+            List: MCP工具列表
+        """
+        try:
+            from backend.services.mcp_service import MCPService
+            mcp_service = MCPService()
+            
+            # 确保MCP服务已初始化
+            if not mcp_service.is_enabled():
+                await mcp_service.initialize(user_id=user_id)
+            elif user_id:
+                await mcp_service.ensure_user_servers_loaded(user_id)
+            
+            # 获取MCP工具
+            mcp_tools = await mcp_service.get_available_tools_for_chat()
+            return mcp_tools
+            
+        except Exception as e:
+            # 如果MCP服务不可用，返回空列表
+            return []
+    
+    async def get_all_available_tools(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        获取所有可用工具（包括内置工具和MCP工具）
+        
+        Args:
+            user_id: 用户ID，用于加载用户特定的MCP服务器
+            
+        Returns:
+            List: 所有可用工具列表
+        """
+        # 获取内置工具
+        builtin_tools = self.get_available_tools()
+        
+        # 获取MCP工具
+        mcp_tools = await self.get_mcp_tools(user_id)
+        
+        # 合并工具列表
+        all_tools = builtin_tools.copy()
+        for mcp_tool in mcp_tools:
+            # 转换MCP工具格式为内置工具格式
+            tool_def = {
+                "type": "function",
+                "function": {
+                    "name": mcp_tool["name"],
+                    "description": mcp_tool.get("description", ""),
+                    "parameters": mcp_tool.get("inputSchema", {})
+                }
+            }
+            all_tools.append(tool_def)
+        
+        return all_tools
     
     def get_tool_providers(self) -> Dict[str, Dict[str, Any]]:
         """获取所有工具提供商信息"""
@@ -59,7 +120,7 @@ class ToolsManager:
     
     def get_agent_tools(self, agent_tools_config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        根据Agent配置获取可用工具列表
+        根据Agent配置获取可用工具列表（仅内置工具，同步方法）
         支持两种配置格式：
         1. 提供商级别配置（向后兼容）
         2. 工具级别配置（新格式）
@@ -84,6 +145,39 @@ class ToolsManager:
             tools = self._get_tools_from_provider_config(agent_tools_config)
         
         return tools
+    
+    async def get_agent_tools_async(self, agent_tools_config: Dict[str, Any], user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        根据Agent配置获取可用工具列表（包括内置工具和MCP工具，异步方法）
+        
+        Args:
+            agent_tools_config: Agent的工具配置
+            user_id: 用户ID，用于加载用户特定的MCP服务器
+            
+        Returns:
+            List: 可用工具列表
+        """
+        # 获取内置工具
+        builtin_tools = self.get_agent_tools(agent_tools_config)
+        
+        # 获取MCP工具
+        mcp_tools = await self.get_mcp_tools(user_id)
+        
+        # 将MCP工具转换为Agent工具格式并合并
+        all_tools = builtin_tools.copy()
+        for mcp_tool in mcp_tools:
+            # 转换MCP工具格式
+            tool_def = {
+                "type": "function",
+                "function": {
+                    "name": mcp_tool["name"],
+                    "description": mcp_tool.get("description", ""),
+                    "parameters": mcp_tool.get("inputSchema", {})
+                }
+            }
+            all_tools.append(tool_def)
+        
+        return all_tools
     
     def _is_tool_level_config(self, config: Dict[str, Any]) -> bool:
         """

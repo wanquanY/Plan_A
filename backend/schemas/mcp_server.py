@@ -124,9 +124,61 @@ class MCPServerResponse(MCPServerBase):
         from_attributes = True
 
 
+class MCPServerPublicResponse(MCPServerBase):
+    """MCP服务器配置公开响应schema - 只返回public_id作为id"""
+    id: str = Field(..., description="公开ID")
+    user_id: int = Field(..., description="所属用户ID")
+    
+    # 时间戳
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
+    
+    # 软删除
+    is_deleted: bool = Field(..., description="是否已删除")
+    deleted_at: Optional[datetime] = Field(None, description="删除时间")
+    
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    
+    @classmethod
+    def from_orm_model(cls, mcp_server):
+        """从ORM模型创建响应对象，将public_id映射为id"""
+        # 构建基础数据字典
+        data = {
+            'id': mcp_server.public_id,  # 使用public_id作为id
+            'user_id': mcp_server.user_id,
+            'name': mcp_server.name,
+            'description': mcp_server.description,
+            'is_public': mcp_server.is_public,
+            'share_link': mcp_server.share_link,
+            'transport_type': mcp_server.transport_type,
+            'command': mcp_server.command,
+            'args': mcp_server.args or [],
+            'env': mcp_server.env or {},
+            'cwd': mcp_server.cwd,
+            'url': mcp_server.url,
+            'headers': mcp_server.headers or {},
+            'enabled': mcp_server.enabled,
+            'auto_start': mcp_server.auto_start,
+            'timeout': mcp_server.timeout,
+            'retry_attempts': mcp_server.retry_attempts,
+            'retry_delay': mcp_server.retry_delay,
+            'config': mcp_server.config or {},
+            'tags': mcp_server.tags or [],
+            'created_at': mcp_server.created_at,
+            'updated_at': mcp_server.updated_at,
+            'is_deleted': mcp_server.is_deleted,
+            'deleted_at': mcp_server.deleted_at,
+        }
+        return cls(**data)
+
+
 class MCPServerListResponse(BaseModel):
     """MCP服务器配置列表响应schema"""
-    servers: List[MCPServerResponse] = Field(..., description="服务器列表")
+    servers: List[MCPServerPublicResponse] = Field(..., description="服务器列表")
     total: int = Field(..., description="总数量")
     skip: int = Field(..., description="跳过数量")
     limit: int = Field(..., description="限制数量")
@@ -179,7 +231,7 @@ class MCPServerStatistics(BaseModel):
 
 class MCPServerToggleResponse(BaseModel):
     """MCP服务器状态切换响应schema"""
-    server: MCPServerResponse = Field(..., description="服务器信息")
+    id: str = Field(..., description="服务器公开ID")
     action: str = Field(..., description="执行的操作: enabled/disabled")
     message: str = Field(..., description="操作结果消息")
 
@@ -254,4 +306,17 @@ class MCPServerConfigExport(BaseModel):
     """MCP服务器配置导出schema"""
     servers: Dict[str, Dict[str, Any]]
     export_time: datetime
-    total_count: int 
+    total_count: int
+
+
+class MCPServerCreateResponse(BaseModel):
+    """MCP服务器创建响应schema"""
+    id: str = Field(..., description="服务器公开ID")
+    name: str = Field(..., description="服务器名称")
+    message: str = Field(..., description="创建结果消息")
+
+
+class MCPServerDeleteResponse(BaseModel):
+    """MCP服务器删除响应schema"""
+    id: str = Field(..., description="服务器公开ID")
+    message: str = Field(..., description="删除结果消息") 
