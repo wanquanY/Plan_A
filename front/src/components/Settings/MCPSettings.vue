@@ -445,14 +445,14 @@
             <div class="env-input">
               <div 
                 v-for="(envValue, envKey, index) in serverForm.env" 
-                :key="envKey"
+                :key="`env-${index}`"
                 class="env-item"
               >
                 <Input
-                  v-model:value="envKeys[index]"
-                  placeholder="变量名"
-                  style="width: 200px; margin-right: 8px"
-                  @blur="updateEnvKey(index, envKeys[index], envValue)"
+                  :value="envKey"
+                  placeholder="变量名（如：AMAP_MAPS_API_KEY）"
+                  style="width: 250px; margin-right: 8px"
+                  @input="(e) => updateEnvKey(envKey, e.target.value, envValue)"
                 />
                 <Input
                   v-model:value="serverForm.env[envKey]"
@@ -622,8 +622,7 @@ const tagInputVisible = ref(false);
 const tagInputValue = ref('');
 const tagInputRef = ref();
 
-// 环境变量管理
-const envKeys = ref<string[]>([]);
+// 环境变量管理（现在直接操作serverForm.env对象）
 
 // 添加防抖标志
 const isLoadingMyServers = ref(false);
@@ -849,7 +848,6 @@ const editServer = (server: MCPServer) => {
     url: server.url || '',
     tags: server.tags || []
   });
-  envKeys.value = Object.keys(serverForm.env);
   createModalVisible.value = true;
 };
 
@@ -864,7 +862,6 @@ const resetServerForm = () => {
     url: '',
     tags: []
   });
-  envKeys.value = [];
 };
 
 const submitServer = async () => {
@@ -872,11 +869,23 @@ const submitServer = async () => {
     await serverFormRef.value.validate();
     submitLoading.value = true;
     
+    // 清理空的参数
+    const cleanedForm = {
+      ...serverForm,
+      args: serverForm.args.filter(arg => arg.trim() !== ''),
+      // 清理空的环境变量
+      env: Object.fromEntries(
+        Object.entries(serverForm.env).filter(([key, value]) => 
+          key.trim() !== '' && value.trim() !== ''
+        )
+      )
+    };
+    
     if (editingServer.value) {
-      await mcpService.updateServer(editingServer.value.id, serverForm);
+      await mcpService.updateServer(editingServer.value.id, cleanedForm);
       message.success('服务器更新成功');
     } else {
-      await mcpService.createServer(serverForm);
+      await mcpService.createServer(cleanedForm);
       message.success('服务器创建成功');
     }
     
@@ -996,29 +1005,39 @@ onUnmounted(() => {
 
 // 环境变量管理方法
 const addEnv = () => {
-  const newKey = `ENV_VAR_${Object.keys(serverForm.env).length + 1}`;
+  // 使用一个合理的默认名称
+  const defaultKey = 'API_KEY';
+  let newKey = defaultKey;
+  let counter = 1;
+  
+  // 确保key是唯一的
+  while (serverForm.env[newKey]) {
+    newKey = `${defaultKey}_${counter}`;
+    counter++;
+  }
+  
   serverForm.env[newKey] = '';
-  envKeys.value.push(newKey);
 };
 
 const removeEnv = (key: string) => {
   delete serverForm.env[key];
-  const index = envKeys.value.indexOf(key);
-  if (index > -1) {
-    envKeys.value.splice(index, 1);
-  }
 };
 
-const updateEnvKey = (index: number, newKey: string, value: string) => {
-  const oldKey = envKeys.value[index];
-  if (oldKey !== newKey && newKey.trim()) {
-    // 删除旧key
-    delete serverForm.env[oldKey];
-    // 添加新key
-    serverForm.env[newKey] = value;
-    // 更新keys数组
-    envKeys.value[index] = newKey;
+const updateEnvKey = (oldKey: string, newKey: string, value: string) => {
+  // 如果新key为空或者与旧key相同，不做任何操作
+  if (!newKey.trim() || oldKey === newKey) {
+    return;
   }
+  
+  // 如果新key已经存在且不是旧key，不允许覆盖
+  if (serverForm.env.hasOwnProperty(newKey) && newKey !== oldKey) {
+    message.warning('环境变量名称已存在');
+    return;
+  }
+  
+  // 删除旧key，添加新key
+  delete serverForm.env[oldKey];
+  serverForm.env[newKey] = value;
 };
 </script>
 
