@@ -27,7 +27,8 @@ from backend.schemas.mcp_server import (
     MCPServerCreate, MCPServerUpdate, MCPServerResponse, 
     MCPServerListResponse, MCPServerConfigImport, MCPServerConfigExport,
     MCPServerImportResult, MCPServerStatistics, MCPServerPublicResponse,
-    MCPServerDeleteResponse, MCPServerToggleResponse, MCPServerCreateResponse
+    MCPServerDeleteResponse, MCPServerToggleResponse, MCPServerCreateResponse,
+    MCPServerPublicToggleResponse
 )
 
 
@@ -103,8 +104,8 @@ async def get_user_servers(
         public_servers = []
         
         for server in servers:
-            # 先创建基础的公开服务器对象
-            public_server = MCPServerPublicResponse.from_orm_model(server)
+            # 先创建基础的公开服务器对象，默认启用敏感信息脱敏
+            public_server = MCPServerPublicResponse.from_orm_model(server, mask_sensitive=True)
             public_server_data = serialize_pydantic_model(public_server)
             
             # 如果需要包含运行时状态，获取并合并状态信息
@@ -338,10 +339,10 @@ async def get_user_server(
                 request_id=getattr(request.state, "request_id", None)
             )
         
-        # 使用schema转换为公开响应格式
+        # 使用schema转换为公开响应格式，启用敏感信息脱敏
         from backend.schemas.mcp_server import MCPServerPublicResponse
         from backend.utils.serialization import serialize_pydantic_model
-        public_server = MCPServerPublicResponse.from_orm_model(server)
+        public_server = MCPServerPublicResponse.from_orm_model(server, mask_sensitive=True)
         
         return SuccessResponse(
             data=serialize_pydantic_model(public_server),
@@ -385,10 +386,18 @@ async def update_user_server(
             update_data=update_dict
         )
         
-        # 使用schema转换为公开响应格式
+        # 确保server不为None
+        if server is None:
+            api_logger.error(f"update_user_server返回None: user_id={current_user.id}, server_id={db_id}")
+            return ErrorResponse(
+                msg=f"更新服务器配置失败: 服务器不存在",
+                request_id=getattr(request.state, "request_id", None)
+            )
+        
+        # 使用schema转换为公开响应格式，启用敏感信息脱敏
         from backend.schemas.mcp_server import MCPServerPublicResponse
         from backend.utils.serialization import serialize_pydantic_model
-        public_server = MCPServerPublicResponse.from_orm_model(server)
+        public_server = MCPServerPublicResponse.from_orm_model(server, mask_sensitive=True)
         
         return SuccessResponse(
             data=serialize_pydantic_model(public_server),
@@ -602,6 +611,64 @@ async def reconnect_user_server(
         api_logger.error(f"用户 {current_user.username} 重连MCP服务器失败: {str(e)}", exc_info=True)
         return ErrorResponse(
             msg=f"重连服务器失败: {str(e)}",
+            request_id=getattr(request.state, "request_id", None)
+        )
+
+
+@router.post("/servers/{server_id}/toggle-public")
+async def toggle_user_server_public(
+    request: Request,
+    server_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """切换MCP服务器公开状态"""
+    try:
+        api_logger.info(f"用户 {current_user.username} (ID: {current_user.id}) 切换MCP服务器公开状态: {server_id}, 请求ID: {getattr(request.state, 'request_id', '')}")
+        
+        # 验证并转换public_id为内部ID
+        db_id = await IDConverter.get_mcp_server_db_id(db, server_id)
+        if not db_id:
+            api_logger.error(f"无效的服务器ID: {server_id}")
+            return ErrorResponse(
+                msg=f"无效的服务器ID: {server_id}",
+                request_id=getattr(request.state, "request_id", None)
+            )
+        
+        api_logger.info(f"转换后的数据库ID: {db_id}, 当前用户ID: {current_user.id}")
+        
+        result = await mcp_service.toggle_user_server_public(
+            user_id=current_user.id,
+            server_id=db_id  # 使用数据库ID
+        )
+        
+        # 确保result不为None
+        if result is None:
+            api_logger.error(f"toggle_user_server_public返回None: user_id={current_user.id}, server_id={db_id}")
+            return ErrorResponse(
+                msg=f"切换服务器公开状态失败: 服务器不存在",
+                request_id=getattr(request.state, "request_id", None)
+            )
+        
+        # 使用schema构建响应
+        from backend.utils.serialization import serialize_pydantic_model
+        response_data = MCPServerPublicToggleResponse(
+            id=server_id,
+            is_public=result["is_public"],
+            share_link=result["share_link"],
+            action=result["action"],
+            message=result["message"]
+        )
+        
+        return SuccessResponse(
+            data=serialize_pydantic_model(response_data),
+            msg=result["message"],
+            request_id=getattr(request.state, "request_id", None)
+        )
+    except Exception as e:
+        api_logger.error(f"用户 {current_user.username} 切换MCP服务器公开状态失败: {str(e)}", exc_info=True)
+        return ErrorResponse(
+            msg=f"切换服务器公开状态失败: {str(e)}",
             request_id=getattr(request.state, "request_id", None)
         )
 

@@ -109,6 +109,26 @@ class MCPSessionManager:
         server_name = server_config.get("name", f"server_{server_id}")
         app_logger.info(f"连接MCP服务器: {server_name} (ID: {server_id})")
         
+        # 添加调试日志
+        app_logger.info(f"服务器配置: {server_config}")
+        
+        # 检查必要的环境变量
+        transport_type = server_config.get("type", "stdio")
+        if transport_type == "stdio":
+            # 对于stdio类型，检查是否需要特定的环境变量
+            command = server_config.get("command", "")
+            args = server_config.get("args", [])
+            full_command = f"{command} {' '.join(args)}" if args else command
+            app_logger.info(f"检查完整命令: {full_command}")
+            
+            requires_key = self._requires_api_key(server_config)
+            has_env_vars = self._has_required_env_vars(server_config)
+            app_logger.info(f"需要API密钥: {requires_key}, 有环境变量: {has_env_vars}")
+            
+            if requires_key and not has_env_vars:
+                app_logger.warning(f"跳过MCP服务器连接 {server_name} (ID: {server_id}): 缺少必要的环境变量")
+                return
+        
         client = MCPClient(
             name=server_name,
             version="1.0.0",
@@ -118,7 +138,6 @@ class MCPSessionManager:
         )
         
         # 准备连接参数
-        transport_type = server_config.get("type", "stdio")
         # 过滤掉数据库和控制字段，只保留传输层需要的参数
         excluded_fields = [
             "enabled", "type", "description", "transport_type", 
@@ -138,6 +157,62 @@ class MCPSessionManager:
         self._connection_locks[server_id] = asyncio.Lock()
         
         app_logger.info(f"MCP服务器连接成功: {server_name} (ID: {server_id})")
+    
+    def _requires_api_key(self, server_config: Dict[str, Any]) -> bool:
+        """检查服务器是否需要API密钥"""
+        command = server_config.get("command", "")
+        args = server_config.get("args", [])
+        
+        # 将命令和参数组合成完整的命令字符串
+        full_command = f"{command} {' '.join(args)}" if args else command
+        
+        # 已知需要API密钥的MCP服务器
+        api_key_required_servers = [
+            "@amap/amap-maps-mcp-server",  # 高德地图
+            "weather-mcp-server",          # 天气服务
+            "openai-mcp-server",          # OpenAI服务
+            # 可以根据需要添加更多
+        ]
+        
+        return any(server in full_command for server in api_key_required_servers)
+    
+    def _has_required_env_vars(self, server_config: Dict[str, Any]) -> bool:
+        """检查是否有必要的环境变量的具体值"""
+        env_vars = server_config.get("env", {})
+        command = server_config.get("command", "")
+        args = server_config.get("args", [])
+        
+        # 将命令和参数组合成完整的命令字符串
+        full_command = f"{command} {' '.join(args)}" if args else command
+        
+        def has_valid_env_value(key: str) -> bool:
+            """检查环境变量是否有有效值（非空且非脱敏值）"""
+            if key not in env_vars:
+                return False
+            value = env_vars[key]
+            if not value or not isinstance(value, str):
+                return False
+            value = value.strip()
+            if not value:
+                return False
+            # 检查是否是脱敏值（包含*号）
+            if '*' in value:
+                return False
+            return True
+        
+        # 检查高德地图服务
+        if "@amap/amap-maps-mcp-server" in full_command:
+            return has_valid_env_value("AMAP_MAPS_API_KEY")
+        
+        # 检查其他需要API密钥的服务
+        if "weather-mcp-server" in full_command:
+            return has_valid_env_value("WEATHER_API_KEY")
+        
+        if "openai-mcp-server" in full_command:
+            return has_valid_env_value("OPENAI_API_KEY")
+        
+        # 默认情况下，如果不是已知需要API密钥的服务，允许连接
+        return True
     
     async def add_server(self, server_id: int, server_config: Dict[str, Any]) -> None:
         """动态添加MCP服务器"""

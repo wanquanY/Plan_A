@@ -63,12 +63,45 @@ class StdioTransport(Transport):
         try:
             app_logger.info(f"启动MCP服务器进程: {self.command} {' '.join(self.args)}")
             
-            # 准备环境变量
+            # 准备环境变量 - 只使用用户配置的环境变量，不继承系统环境变量
             import os
-            process_env = os.environ.copy()
+            
+            # 只保留必要的系统环境变量（PATH等）
+            essential_env_vars = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'LC_ALL']
+            process_env = {key: os.environ[key] for key in essential_env_vars if key in os.environ}
+            
+            # 检查是否是需要API密钥的服务，如果是，则明确排除相关的系统环境变量
+            full_command = f"{self.command} {' '.join(self.args)}"
+            api_key_services = {
+                '@amap/amap-maps-mcp-server': ['AMAP_MAPS_API_KEY'],
+                'weather-mcp-server': ['WEATHER_API_KEY', 'OPENWEATHER_API_KEY'],
+                'openai-mcp-server': ['OPENAI_API_KEY'],
+            }
+            
+            # 检查是否匹配需要API密钥的服务
+            excluded_env_vars = set()
+            for service_name, env_keys in api_key_services.items():
+                if service_name in full_command:
+                    excluded_env_vars.update(env_keys)
+                    app_logger.info(f"检测到API密钥服务 {service_name}，将排除系统环境变量: {env_keys}")
+                    break
+            
+            # 从系统环境变量中排除API密钥相关的变量
+            app_logger.info(f"排除前process_env中的API密钥变量: {[k for k in excluded_env_vars if k in process_env]}")
+            for key in excluded_env_vars:
+                if key in process_env:
+                    del process_env[key]
+                    app_logger.info(f"已排除系统环境变量: {key}")
+                else:
+                    app_logger.info(f"系统环境变量中未找到: {key}")
+            
+            # 添加用户配置的环境变量
             if self.env:
                 process_env.update(self.env)
-                app_logger.info(f"设置环境变量: {list(self.env.keys())}")
+                app_logger.info(f"设置用户环境变量: {list(self.env.keys())}")
+                app_logger.info(f"最终环境变量中的API密钥: {[k for k in excluded_env_vars if k in process_env]}")
+            else:
+                app_logger.info("未设置任何用户环境变量")
             
             self.process = await asyncio.create_subprocess_exec(
                 self.command,

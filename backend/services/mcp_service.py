@@ -256,7 +256,19 @@ class MCPService:
                 # 更新服务器配置
                 for key, value in update_data.items():
                     if hasattr(server, key):
-                        setattr(server, key, value)
+                        if key == 'env' and server.env:
+                            # 对于环境变量，进行合并而不是替换
+                            # 保留原有的环境变量，只更新提供的新值
+                            merged_env = server.env.copy()
+                            merged_env.update(value)
+                            setattr(server, key, merged_env)
+                        elif key == 'headers' and server.headers:
+                            # 对于HTTP头部，也进行合并
+                            merged_headers = server.headers.copy()
+                            merged_headers.update(value)
+                            setattr(server, key, merged_headers)
+                        else:
+                            setattr(server, key, value)
                 
                 await db.commit()
                 await db.refresh(server)
@@ -281,10 +293,17 @@ class MCPService:
                     except Exception as e:
                         logger.error(f"同步会话管理器失败 ID {server.id}: {e}")
                 
+                logger.info(f"成功更新用户服务器: user_id={user_id}, server_id={server_id}, server={server}")
                 return server
+            except MCPError:
+                # 重新抛出MCPError，让上层处理
+                raise
+            except Exception as e:
+                logger.error(f"更新用户服务器失败: user_id={user_id}, server_id={server_id}, error={e}")
+                raise MCPError(f"更新用户服务器失败: {str(e)}")
             finally:
                 await db.close()
-                break
+            break
     
     async def delete_user_server(self, user_id: int, server_id: int) -> Dict[str, Any]:
         """删除用户的MCP服务器配置"""
@@ -387,6 +406,64 @@ class MCPService:
             finally:
                 await db.close()
     
+    async def toggle_user_server_public(self, user_id: int, server_id: int) -> Dict[str, Any]:
+        """切换用户MCP服务器的公开状态"""
+        logger.info(f"toggle_user_server_public调用: user_id={user_id}, server_id={server_id}")
+        
+        async for db in get_async_session():
+            try:
+                # 查询服务器
+                stmt = select(MCPServer).where(
+                    MCPServer.id == server_id,
+                    MCPServer.user_id == user_id
+                )
+                logger.info(f"执行查询: MCPServer.id={server_id} AND MCPServer.user_id={user_id}")
+                
+                result = await db.execute(stmt)
+                server = result.scalar_one_or_none()
+                
+                logger.info(f"查询结果: server={server}")
+                
+                if not server:
+                    raise MCPError(f"服务器不存在: ID {server_id}")
+                
+                # 切换公开状态
+                old_is_public = server.is_public
+                server.is_public = not server.is_public
+                
+                # 如果设置为公开，生成分享链接；如果取消公开，清空分享链接
+                if server.is_public:
+                    from backend.utils.security import generate_random_string
+                    if not server.share_link:
+                        server.share_link = f"mcp-share-{generate_random_string(16)}"
+                else:
+                    server.share_link = None
+                
+                logger.info(f"切换公开状态: {old_is_public} -> {server.is_public}")
+                
+                await db.commit()
+                await db.refresh(server)
+                
+                action = "设为公开" if server.is_public else "取消公开"
+                
+                result_data = {
+                    "server": server,
+                    "action": action,
+                    "message": f"服务器已{action}",
+                    "is_public": server.is_public,
+                    "share_link": server.share_link
+                }
+                logger.info(f"toggle_user_server_public成功: {result_data}")
+                return result_data
+            except MCPError:
+                # 重新抛出MCPError，让上层处理
+                raise
+            except Exception as e:
+                logger.error(f"切换服务器公开状态失败: {e}")
+                raise MCPError(f"切换服务器公开状态失败: {str(e)}")
+            finally:
+                await db.close()
+    
     async def get_public_servers(self, skip: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
         """获取公开的MCP服务器配置"""
         async for db in get_async_session():
@@ -394,14 +471,30 @@ class MCPService:
             
             result = []
             for server in servers:
+                from backend.utils.security import mask_env_variables, mask_headers
+                
                 result.append({
                     "public_id": server.public_id,
                     "name": server.name,
                     "description": server.description,
                     "transport_type": server.transport_type,
+                    "command": server.command,
+                    "args": server.args or [],
+                    "env": mask_env_variables(server.env or {}),  # 脱敏环境变量
+                    "cwd": server.cwd,
+                    "url": server.url,
+                    "headers": mask_headers(server.headers or {}),  # 脱敏HTTP头部
+                    "enabled": server.enabled,
+                    "auto_start": server.auto_start,
+                    "timeout": server.timeout,
+                    "retry_attempts": server.retry_attempts,
+                    "retry_delay": server.retry_delay,
+                    "config": server.config or {},
                     "tags": server.tags or [],
                     "created_at": server.created_at.isoformat() if server.created_at else None,
-                    "user_id": server.user_id  # 显示创建者
+                    "user_id": server.user_id,  # 显示创建者
+                    "is_public": server.is_public,
+                    "share_link": server.share_link
                 })
             
             return result

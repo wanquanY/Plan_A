@@ -7,6 +7,7 @@ MCP服务器配置相关的Pydantic schemas
 from typing import Dict, List, Optional, Any, Literal, Union
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
+from backend.utils.security import mask_env_variables, mask_headers
 
 
 class MCPServerBase(BaseModel):
@@ -146,9 +147,20 @@ class MCPServerPublicResponse(MCPServerBase):
         }
     
     @classmethod
-    def from_orm_model(cls, mcp_server):
+    def from_orm_model(cls, mcp_server, mask_sensitive: bool = True):
         """从ORM模型创建响应对象，将public_id映射为id"""
+        if mcp_server is None:
+            raise ValueError("mcp_server 不能为 None")
+        
         # 构建基础数据字典
+        env_data = mcp_server.env or {}
+        headers_data = mcp_server.headers or {}
+        
+        # 如果需要脱敏处理
+        if mask_sensitive:
+            env_data = mask_env_variables(env_data)
+            headers_data = mask_headers(headers_data)
+        
         data = {
             'id': mcp_server.public_id,  # 使用public_id作为id
             'user_id': mcp_server.user_id,
@@ -159,10 +171,10 @@ class MCPServerPublicResponse(MCPServerBase):
             'transport_type': mcp_server.transport_type,
             'command': mcp_server.command,
             'args': mcp_server.args or [],
-            'env': mcp_server.env or {},
+            'env': env_data,
             'cwd': mcp_server.cwd,
             'url': mcp_server.url,
-            'headers': mcp_server.headers or {},
+            'headers': headers_data,
             'enabled': mcp_server.enabled,
             'auto_start': mcp_server.auto_start,
             'timeout': mcp_server.timeout,
@@ -321,4 +333,13 @@ class MCPServerCreateResponse(BaseModel):
 class MCPServerDeleteResponse(BaseModel):
     """MCP服务器删除响应schema"""
     id: str = Field(..., description="服务器公开ID")
-    message: str = Field(..., description="删除结果消息") 
+    message: str = Field(..., description="删除结果消息")
+
+
+class MCPServerPublicToggleResponse(BaseModel):
+    """MCP服务器公开状态切换响应schema"""
+    id: str = Field(..., description="服务器公开ID")
+    is_public: bool = Field(..., description="当前公开状态")
+    share_link: Optional[str] = Field(None, description="分享链接")
+    action: str = Field(..., description="执行的操作: 设为公开/取消公开")
+    message: str = Field(..., description="操作结果消息")

@@ -258,6 +258,17 @@
                   
                   <p class="server-description">{{ server.description }}</p>
                   
+                  <!-- 环境变量缺失警告 -->
+                  <div v-if="isMissingRequiredEnvVars(server)" class="env-warning">
+                    <div class="warning-content">
+                      <span class="warning-icon">⚠️</span>
+                      <div class="warning-text">
+                        <span class="warning-title">缺少必要的环境变量</span>
+                        <span class="warning-desc">此服务器需要API密钥才能正常工作，请编辑服务器配置添加环境变量</span>
+                      </div>
+                    </div>
+                  </div>
+                  
                   <div class="server-meta">
                     <div class="meta-row">
                       <Tag :color="server.transport_type === 'stdio' ? 'blue' : 'green'" size="small">
@@ -265,6 +276,9 @@
                       </Tag>
                       <Tag :color="server.connected ? 'success' : 'error'" size="small" v-if="server.connected !== undefined">
                         {{ server.connected ? '已连接' : '未连接' }}
+                      </Tag>
+                      <Tag color="warning" size="small" v-if="isMissingRequiredEnvVars(server)">
+                        ⚠️ 缺少API密钥
                       </Tag>
                     </div>
                     <div class="meta-info">
@@ -378,18 +392,21 @@
       v-model:open="createModalVisible"
       :title="editingServer ? '编辑MCP服务器' : '添加MCP服务器'"
       width="600px"
+      height="600px"
       @ok="submitServer"
       @cancel="cancelEdit"
       :confirmLoading="submitLoading"
+      :bodyStyle="{ height: '500px', overflow: 'hidden', padding: 0 }"
       class="server-modal"
     >
-      <Form
-        ref="serverFormRef"
-        :model="serverForm"
-        :rules="serverRules"
-        layout="vertical"
-        class="server-form"
-      >
+      <div class="server-form-container">
+        <Form
+          ref="serverFormRef"
+          :model="serverForm"
+          :rules="serverRules"
+          layout="vertical"
+          class="server-form"
+        >
         <Form.Item label="服务器名称" name="name">
           <Input v-model:value="serverForm.name" placeholder="请输入服务器名称" />
         </Form.Item>
@@ -456,8 +473,10 @@
                 />
                 <Input
                   v-model:value="serverForm.env[envKey]"
-                  placeholder="变量值"
+                  :placeholder="envValue && envValue.includes('*') ? '请重新输入敏感值' : '变量值'"
+                  :class="{ 'masked-input': envValue && envValue.includes('*') }"
                   style="flex: 1; margin-right: 8px"
+                  @focus="(e) => handleEnvInputFocus(e, envKey, envValue)"
                 />
                 <Button 
                   type="text" 
@@ -481,6 +500,31 @@
             <Input v-model:value="serverForm.url" placeholder="https://example.com/mcp" />
           </Form.Item>
         </div>
+        
+        <!-- 公开设置 -->
+        <Form.Item label="公开设置">
+          <div class="public-setting">
+            <div class="public-switch-container">
+              <Switch 
+                v-model:checked="serverForm.is_public" 
+                size="small"
+              />
+              <span class="public-switch-label">
+                <GlobalOutlined v-if="serverForm.is_public" style="color: #52c41a; margin-right: 4px;" />
+                <span v-else style="color: #8c8c8c; margin-right: 4px;">🔒</span>
+                {{ serverForm.is_public ? '公开' : '私有' }}
+              </span>
+            </div>
+            <div class="public-setting-description">
+              <p v-if="serverForm.is_public" class="public-desc">
+                此服务器将在公开列表中显示，其他用户可以查看和复制配置（敏感信息会被隐藏）
+              </p>
+              <p v-else class="private-desc">
+                此服务器仅对您可见，不会在公开列表中显示
+              </p>
+            </div>
+          </div>
+        </Form.Item>
         
         <Form.Item label="标签">
           <div class="tags-input">
@@ -508,6 +552,7 @@
           </div>
         </Form.Item>
       </Form>
+      </div>
     </Modal>
 
     <!-- 服务器详情模态框 -->
@@ -538,6 +583,13 @@
           </Descriptions.Item>
           <Descriptions.Item label="标签" v-if="selectedServer.tags?.length">
             <Tag v-for="tag in selectedServer.tags" :key="tag">{{ tag }}</Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="公开状态">
+            <Tag :color="selectedServer.is_public ? 'success' : 'default'">
+              <GlobalOutlined v-if="selectedServer.is_public" style="margin-right: 4px;" />
+              <span v-else style="margin-right: 4px;">🔒</span>
+              {{ selectedServer.is_public ? '公开' : '私有' }}
+            </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="创建时间">{{ formatDate(selectedServer.created_at) }}</Descriptions.Item>
         </Descriptions>
@@ -602,6 +654,7 @@ const serverForm = reactive<MCPServerCreate>({
   args: [],
   env: {},
   url: '',
+  is_public: false,
   tags: []
 });
 
@@ -707,18 +760,45 @@ const addPublicServer = async (server: MCPServer) => {
   try {
     addingServers.value.add(server.id);
     
+    // 处理环境变量：保留字段名但清空值，让用户知道需要配置哪些环境变量
+    const envTemplate = {};
+    if (server.env) {
+      for (const key of Object.keys(server.env)) {
+        envTemplate[key] = ''; // 保留字段名但清空值
+      }
+    }
+    
+    // 处理HTTP头部：同样保留字段名但清空值
+    const headersTemplate = {};
+    if (server.headers) {
+      for (const key of Object.keys(server.headers)) {
+        headersTemplate[key] = ''; // 保留字段名但清空值
+      }
+    }
+    
     const serverData: MCPServerCreate = {
       name: server.name,
       description: server.description,
       transport_type: server.transport_type,
       command: server.command,
       args: server.args,
+      env: envTemplate, // 包含环境变量字段但值为空
+      headers: headersTemplate, // 包含HTTP头部字段但值为空
       url: server.url,
+      is_public: false, // 从公开服务器添加时默认设为私有
       tags: server.tags
     };
     
     await mcpService.createServer(serverData);
-    message.success('服务器添加成功');
+    
+    // 根据是否需要配置环境变量给出不同的提示
+    const needsConfig = Object.keys(envTemplate).length > 0 || Object.keys(headersTemplate).length > 0;
+    if (needsConfig) {
+      message.success('服务器添加成功，请编辑服务器配置必要的环境变量');
+    } else {
+      message.success('服务器添加成功');
+    }
+    
     await loadMyServers();
   } catch (error) {
     console.error('添加服务器失败:', error);
@@ -838,14 +918,29 @@ const showCreateModal = () => {
 
 const editServer = (server: MCPServer) => {
   editingServer.value = server;
+  
+  // 处理环境变量：如果值是脱敏的（包含*），则保持脱敏显示但标记为需要重新输入
+  const cleanEnv = {};
+  if (server.env) {
+    for (const [key, value] of Object.entries(server.env)) {
+      if (typeof value === 'string' && value.includes('*')) {
+        // 脱敏的值，保持显示但用户输入时会被替换
+        cleanEnv[key] = value;
+      } else {
+        cleanEnv[key] = value;
+      }
+    }
+  }
+  
   Object.assign(serverForm, {
     name: server.name,
     description: server.description,
     transport_type: server.transport_type,
     command: server.command || '',
     args: server.args || [],
-    env: server.env || {},
+    env: cleanEnv,
     url: server.url || '',
+    is_public: server.is_public || false,
     tags: server.tags || []
   });
   createModalVisible.value = true;
@@ -860,6 +955,7 @@ const resetServerForm = () => {
     args: [],
     env: {},
     url: '',
+    is_public: false,
     tags: []
   });
 };
@@ -873,12 +969,26 @@ const submitServer = async () => {
     const cleanedForm = {
       ...serverForm,
       args: serverForm.args.filter(arg => arg.trim() !== ''),
-      // 清理空的环境变量
-      env: Object.fromEntries(
-        Object.entries(serverForm.env).filter(([key, value]) => 
-          key.trim() !== '' && value.trim() !== ''
-        )
-      )
+      // 处理环境变量
+      env: (() => {
+        const envEntries = Object.entries(serverForm.env).filter(([key, value]) => 
+          key.trim() !== ''
+        );
+        
+        if (editingServer.value) {
+          // 编辑模式：只包含有值且非脱敏的环境变量，脱敏值和空值都不提交（保留原有值）
+          return Object.fromEntries(
+            envEntries.filter(([key, value]) => 
+              value.trim() !== '' && !value.includes('*')
+            )
+          );
+        } else {
+          // 创建模式：包含所有非空key的环境变量
+          return Object.fromEntries(
+            envEntries.filter(([key, value]) => value.trim() !== '')
+          );
+        }
+      })()
     };
     
     if (editingServer.value) {
@@ -981,6 +1091,68 @@ const getServerStatusText = (server: MCPServer) => {
   }
 };
 
+// 检查服务器是否需要API密钥
+const requiresApiKey = (server: MCPServer) => {
+  const command = server.command || '';
+  const args = server.args || [];
+  const fullCommand = `${command} ${args.join(' ')}`.trim();
+  const apiKeyRequiredServers = [
+    '@amap/amap-maps-mcp-server',
+    'weather-mcp-server',
+    'openai-mcp-server'
+  ];
+  return apiKeyRequiredServers.some(serverName => fullCommand.includes(serverName));
+};
+
+// 检查服务器是否缺少必要的环境变量
+const isMissingRequiredEnvVars = (server: MCPServer) => {
+  if (!requiresApiKey(server)) {
+    return false;
+  }
+  
+  // 如果服务器已经连接成功，说明环境变量是有效的，不显示警告
+  if (server.connected === true) {
+    return false;
+  }
+  
+  const command = server.command || '';
+  const args = server.args || [];
+  const fullCommand = `${command} ${args.join(' ')}`.trim();
+  const env = server.env || {};
+  
+  // 检查环境变量是否有有效值（非空且非脱敏值）
+  const hasValidEnvValue = (key: string) => {
+    if (!env[key]) {
+      return false;
+    }
+    const value = env[key].toString().trim();
+    if (!value) {
+      return false;
+    }
+    // 如果是脱敏值，我们无法判断真实值是否有效
+    // 但如果服务器未连接且是脱敏值，可能需要用户重新配置
+    if (value.includes('*')) {
+      // 脱敏值的情况：如果服务器未连接，可能需要重新配置
+      return server.connected === true;
+    }
+    return true;
+  };
+  
+  if (fullCommand.includes('@amap/amap-maps-mcp-server')) {
+    return !hasValidEnvValue('AMAP_MAPS_API_KEY');
+  }
+  
+  if (fullCommand.includes('weather-mcp-server')) {
+    return !hasValidEnvValue('WEATHER_API_KEY');
+  }
+  
+  if (fullCommand.includes('openai-mcp-server')) {
+    return !hasValidEnvValue('OPENAI_API_KEY');
+  }
+  
+  return false;
+};
+
 // 关闭所有下拉面板
 const closeAllDropdowns = () => {
   showToolsDropdown.value = {};
@@ -1021,6 +1193,13 @@ const addEnv = () => {
 
 const removeEnv = (key: string) => {
   delete serverForm.env[key];
+};
+
+const handleEnvInputFocus = (event: Event, envKey: string, envValue: string) => {
+  // 如果是脱敏值，清空输入框让用户重新输入
+  if (envValue && envValue.includes('*')) {
+    serverForm.env[envKey] = '';
+  }
 };
 
 const updateEnvKey = (oldKey: string, newKey: string, value: string) => {
@@ -1398,6 +1577,44 @@ const updateEnvKey = (oldKey: string, newKey: string, value: string) => {
   overflow: hidden;
 }
 
+.env-warning {
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0 12px 0;
+  
+  .warning-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .warning-icon {
+    font-size: 14px;
+    margin-top: 1px;
+  }
+  
+  .warning-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  
+  .warning-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: #d46b08;
+  }
+  
+  .warning-desc {
+    font-size: 11px;
+    color: #ad6800;
+    line-height: 1.3;
+  }
+}
+
 .server-meta {
   margin-bottom: 16px;
 }
@@ -1601,6 +1818,32 @@ const updateEnvKey = (oldKey: string, newKey: string, value: string) => {
   border-bottom: 1px solid #e6f0ff;
 }
 
+.server-form-container {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  /* 美化滚动条 */
+  scrollbar-width: thin;
+  scrollbar-color: #d9d9d9 transparent;
+}
+
+.server-form-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.server-form-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.server-form-container::-webkit-scrollbar-thumb {
+  background-color: #d9d9d9;
+  border-radius: 3px;
+}
+
+.server-form-container::-webkit-scrollbar-thumb:hover {
+  background-color: #bfbfbf;
+}
+
 .server-form {
   padding: 0;
 }
@@ -1679,6 +1922,21 @@ const updateEnvKey = (oldKey: string, newKey: string, value: string) => {
   .action-btn {
     min-width: auto;
   }
+  
+  /* 移动端弹窗调整 */
+  .server-modal :deep(.ant-modal) {
+    margin: 16px;
+    height: calc(100vh - 32px);
+    max-height: none;
+  }
+  
+  .server-modal :deep(.ant-modal-content) {
+    height: 100%;
+  }
+  
+  .server-form-container {
+    padding: 16px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1697,5 +1955,56 @@ const updateEnvKey = (oldKey: string, newKey: string, value: string) => {
     align-items: flex-start;
     gap: 4px;
   }
+}
+
+/* 公开设置样式 */
+.public-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.public-switch-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.public-switch-label {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.public-setting-description {
+  margin-left: 32px; /* 与开关对齐 */
+}
+
+.public-desc {
+  color: #52c41a;
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.private-desc {
+  color: #8c8c8c;
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* 脱敏输入框样式 */
+.masked-input :deep(.ant-input) {
+  background-color: #fff7e6;
+  border-color: #ffa940;
+  color: #d46b08;
+}
+
+.masked-input :deep(.ant-input:focus) {
+  background-color: #fff;
+  border-color: #1890ff;
+  color: #000;
 }
 </style> 

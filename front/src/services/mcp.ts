@@ -60,6 +60,7 @@ export interface MCPServerCreate {
   env?: Record<string, string>;
   url?: string;
   enabled?: boolean;
+  is_public?: boolean;
   tags?: string[];
 }
 
@@ -72,6 +73,7 @@ export interface MCPServerUpdate {
   env?: Record<string, string>;
   url?: string;
   enabled?: boolean;
+  is_public?: boolean;
   tags?: string[];
 }
 
@@ -178,6 +180,12 @@ class MCPService {
       servers,
       overwrite
     });
+    return response.data.data;
+  }
+
+  // 切换MCP服务器公开状态
+  async toggleServerPublic(serverId: string): Promise<any> {
+    const response = await api.post(`/mcp/servers/${serverId}/toggle-public`);
     return response.data.data;
   }
 }
