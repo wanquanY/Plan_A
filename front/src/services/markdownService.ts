@@ -1,6 +1,7 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js';
+import katex from 'katex';
 
 // 配置DOMPurify，允许代码块的语言类和样式
 DOMPurify.addHook('afterSanitizeAttributes', function(node) {
@@ -22,6 +23,57 @@ DOMPurify.addHook('afterSanitizeAttributes', function(node) {
 
 // 用于生成思维导图的正则表达式
 const mindMapRegex = /^# .+(\n[#]+ .+)+$/m;
+
+/**
+ * 判断是否为LaTeX数学公式
+ */
+export const isLatexContent = (content: string): boolean => {
+  if (!content || typeof content !== 'string') return false;
+  
+  // 检查是否包含LaTeX数学公式标记
+  const latexPatterns = [
+    /\$\$[\S\s]*?\$\$/,  // 块级公式
+    /\$[^$\n]+\$/,       // 行内公式
+    /\\begin\{.*?\}[\S\s]*?\\end\{.*?\}/,  // LaTeX环境
+    /\\[a-zA-Z]+/        // LaTeX命令
+  ];
+  
+  return latexPatterns.some(pattern => pattern.test(content));
+};
+
+/**
+ * 处理LaTeX数学公式
+ */
+export const processLatexFormulas = (content: string): string => {
+  let processedContent = content;
+  
+  console.log('LaTeX处理前的内容:', content);
+  
+  // 处理块级公式 $$...$$
+  processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
+    const cleanFormula = formula.trim();
+    if (cleanFormula) {
+      const result = `<div class="latex-block" data-latex="${encodeURIComponent(cleanFormula)}" data-display="true"></div>`;
+      console.log('处理块级公式:', cleanFormula, '→', result);
+      return result;
+    }
+    return match;
+  });
+  
+  // 处理行内公式 $...$（简化版本，更宽泛的匹配）
+  processedContent = processedContent.replace(/\$([^$\r\n]+?)\$/g, (match, formula) => {
+    const cleanFormula = formula.trim();
+    if (cleanFormula && !cleanFormula.includes('$$')) {
+      const result = `<span class="latex-inline" data-latex="${encodeURIComponent(cleanFormula)}" data-display="false"></span>`;
+      console.log('处理行内公式:', cleanFormula, '→', result);
+      return result;
+    }
+    return match;
+  });
+  
+  console.log('LaTeX处理后的内容:', processedContent);
+  return processedContent;
+};
 
 /**
  * 判断文本内容是否是思维导图格式
@@ -261,13 +313,16 @@ export const markdownToHtml = (markdown: string): string => {
   if (!markdown) return '';
   
   try {
-    // 1. 处理代码块
-    const processedMarkdown = processCodeBlocks(markdown);
+    // 1. 处理LaTeX数学公式
+    const latexProcessed = processLatexFormulas(markdown);
     
-    // 2. 移除多余的空行
+    // 2. 处理代码块
+    const processedMarkdown = processCodeBlocks(latexProcessed);
+    
+    // 3. 移除多余的空行
     const cleanMarkdown = processedMarkdown.replace(/\n{3,}/g, '\n\n');
     
-    // 3. 将Markdown转换为HTML
+    // 4. 将Markdown转换为HTML
     const htmlContent = marked.parse(cleanMarkdown);
     
     // 确保内容是string类型

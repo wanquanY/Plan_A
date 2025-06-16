@@ -188,6 +188,13 @@ const updateEditorContent = (content) => {
       titlePlaceholder.innerHTML = '';
     }
     
+    // 触发内容渲染（包括LaTeX公式）
+    import('../../services/renderService').then(({ renderContentComponents }) => {
+      setTimeout(() => {
+        renderContentComponents(false);
+      }, 150);
+    });
+    
     // 查找所有代码块，确保在最后一个代码块后有段落
     setTimeout(() => {
       const codeBlocks = editorRef.value?.querySelectorAll('.code-block-wrapper, pre');
@@ -288,6 +295,15 @@ const handleInput = (event) => {
   console.log('编辑器内容已改变，长度:', cleanedContent.length);
   emit('update:modelValue', cleanedContent);
   countWords();
+  
+  // 触发内容渲染（包括LaTeX公式）
+  nextTick(() => {
+    import('../../services/renderService').then(({ renderContentComponents }) => {
+      setTimeout(() => {
+        renderContentComponents(false);
+      }, 100);
+    });
+  });
   
   // 检查是否有Agent标签，决定是否显示底部提示
   const hasAgentMention = !!editorRef.value.querySelector('.user-mention');
@@ -1765,5 +1781,45 @@ h1.title-placeholder:empty::before {
 
 .title-placeholder:not(:empty)::before {
   display: none !important;
+}
+
+/* LaTeX公式样式 */
+.latex-block, .latex-inline {
+  font-family: 'KaTeX_Main', 'Times New Roman', serif;
+}
+
+.latex-block {
+  display: block;
+  margin: 1em 0;
+  text-align: center;
+  padding: 8px;
+  background-color: #fafafa;
+  border: 1px solid #e1e5e9;
+  border-radius: 6px;
+}
+
+.latex-inline {
+  display: inline;
+  vertical-align: baseline;
+}
+
+/* 确保KaTeX样式不会与编辑器样式冲突 */
+.editor-content .katex {
+  font-size: 1em;
+}
+
+.editor-content .katex-display {
+  margin: 1em 0;
+}
+
+/* LaTeX错误显示样式 */
+.latex-error {
+  background-color: #ffebee;
+  border: 1px solid #f44336;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  font-size: 0.875em;
+  color: #d32f2f;
 }
 </style> 

@@ -10,15 +10,30 @@ const props = defineProps({
     type: String,
     required: true
   },
-  // 思维导图高度
+  // 思维导图高度 - 改为更合理的默认值
   height: {
     type: String,
-    default: '400px'
+    default: '300px'
   },
   // 思维导图配置项
   options: {
     type: Object,
     default: () => ({})
+  },
+  // 新增：是否自动调整大小
+  autoSize: {
+    type: Boolean,
+    default: true
+  },
+  // 新增：最小高度
+  minHeight: {
+    type: String,
+    default: '200px'
+  },
+  // 新增：最大高度
+  maxHeight: {
+    type: String,
+    default: '500px'
   }
 });
 
@@ -102,14 +117,20 @@ const renderMarkmap = async () => {
     // 清空现有的SVG内容
     svgRef.value.innerHTML = '';
     
-    // 创建新的markmap实例 - 优化配置提高性能
+    // 计算内容复杂度以优化配置
+    const contentComplexity = calculateContentComplexity(root);
+    
+    // 创建新的markmap实例 - 根据内容复杂度优化配置
     const mm = Markmap.create(svgRef.value, {
-      fontSize: 16,
+      fontSize: contentComplexity.fontSize,
       nodeFont: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial',
       linkShape: 'diagonal',
       color: d => d.children ? '#1677ff' : '#333',
-      duration: 200, // 减少动画时间
-      maxWidth: 500, // 节点最大宽度
+      duration: 150, // 减少动画时间
+      maxWidth: contentComplexity.maxWidth,
+      spacingVertical: contentComplexity.spacingVertical,
+      spacingHorizontal: contentComplexity.spacingHorizontal,
+      paddingX: contentComplexity.paddingX,
       ...props.options
     }, transformedData.value.root);
     
@@ -122,6 +143,11 @@ const renderMarkmap = async () => {
     
     console.log('Markmap实例创建成功');
     
+    // 如果启用自动调整大小，根据内容调整容器高度
+    if (props.autoSize) {
+      adjustContainerSize(contentComplexity);
+    }
+    
     // 检查SVG状态后再尝试适配 - 添加更严格的验证
     if (mm && typeof mm.fit === 'function') {
       try {
@@ -133,7 +159,7 @@ const renderMarkmap = async () => {
             isFinite(svgRect.width) && isFinite(svgRect.height)) {
           
           console.log('执行首次fit，SVG尺寸:', svgRect);
-      mm.fit();
+          mm.fit();
           console.log('首次fit执行成功');
         } else {
           console.warn('SVG尺寸包含无效值，跳过首次fit:', svgRect);
@@ -157,7 +183,7 @@ const renderMarkmap = async () => {
               isFinite(svgRect.width) && isFinite(svgRect.height)) {
             
             console.log('执行延迟fit，SVG尺寸:', svgRect);
-          mm.fit();
+            mm.fit();
             console.log('延迟fit执行成功');
           } else {
             console.warn('延迟fit时SVG尺寸包含无效值:', svgRect);
@@ -178,6 +204,73 @@ const renderMarkmap = async () => {
     errorMessage.value = error.message || '渲染思维导图失败';
     isLoading.value = false;
   }
+};
+
+// 新增：计算内容复杂度
+const calculateContentComplexity = (root: any) => {
+  let nodeCount = 0;
+  let maxDepth = 0;
+  let maxTextLength = 0;
+  
+  const traverse = (node: any, depth = 0) => {
+    nodeCount++;
+    maxDepth = Math.max(maxDepth, depth);
+    
+    if (node.content) {
+      maxTextLength = Math.max(maxTextLength, node.content.length);
+    }
+    
+    if (node.children) {
+      node.children.forEach((child: any) => traverse(child, depth + 1));
+    }
+  };
+  
+  traverse(root);
+  
+  // 根据复杂度返回适当的配置
+  if (nodeCount <= 10 && maxDepth <= 3) {
+    // 简单内容
+    return {
+      fontSize: 14,
+      maxWidth: 300,
+      spacingVertical: 10,
+      spacingHorizontal: 60,
+      paddingX: 8,
+      estimatedHeight: 180
+    };
+  } else if (nodeCount <= 25 && maxDepth <= 4) {
+    // 中等复杂度
+    return {
+      fontSize: 13,
+      maxWidth: 400,
+      spacingVertical: 12,
+      spacingHorizontal: 80,
+      paddingX: 10,
+      estimatedHeight: 250
+    };
+  } else {
+    // 复杂内容
+    return {
+      fontSize: 12,
+      maxWidth: 500,
+      spacingVertical: 15,
+      spacingHorizontal: 100,
+      paddingX: 12,
+      estimatedHeight: 350
+    };
+  }
+};
+
+// 新增：调整容器大小
+const adjustContainerSize = (complexity: any) => {
+  if (!svgRef.value) return;
+  
+  const minHeightPx = parseInt(props.minHeight);
+  const maxHeightPx = parseInt(props.maxHeight);
+  const estimatedHeight = Math.max(minHeightPx, Math.min(maxHeightPx, complexity.estimatedHeight));
+  
+  svgRef.value.style.height = `${estimatedHeight}px`;
+  console.log(`根据内容复杂度调整容器高度: ${estimatedHeight}px`);
 };
 
 // 复制思维导图内容
@@ -259,13 +352,15 @@ const fitMap = () => {
   padding: 5px;
   overflow: hidden;
   border: 1px solid #eaecef;
-  min-height: 100px;
+  min-height: 150px;
 }
 
 .markmap-svg {
   width: 100%;
-  min-height: 400px;
+  min-height: 200px;
+  height: auto;
   outline: none;
+  transition: height 0.3s ease;
 }
 
 /* 移除工具栏，直接定位按钮 */

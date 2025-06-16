@@ -26,6 +26,11 @@ const routes = [
         component: Test
       },
       {
+        path: 'latex-test',
+        name: 'LatexTest',
+        component: () => import('../components/editor/LatexTest.vue')
+      },
+      {
         path: 'user-profile',
         name: 'UserProfile',
         component: UserProfile

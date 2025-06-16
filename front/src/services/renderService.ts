@@ -2,6 +2,7 @@ import { createApp, h } from 'vue';
 import type { Component } from 'vue';
 import mermaid from 'mermaid';
 import { isMindMapContent } from './markdownService';
+import LatexRenderer from '../components/rendering/LatexRenderer.vue';
 
 /**
  * 渲染mermaid图表
@@ -129,7 +130,8 @@ export const renderCodeBlocks = async (handleMarkMaps = true) => {
             render() {
               return h(MarkMap as Component, {
                 content: code,
-                height: '400px'
+                height: '300px', // 减少默认高度
+                autoSize: true // 启用自动调整大小
               });
             }
           });
@@ -992,7 +994,8 @@ export const renderMarkMaps = async () => {
             render() {
               return h(MarkMap, {
                 content: code,
-                height: '400px'
+                height: '300px', // 减少默认高度
+                autoSize: true // 启用自动调整大小
               });
             }
           });
@@ -1062,7 +1065,8 @@ export const renderMarkMaps = async () => {
           // 使用创建MarkMap组件
           const markMapApp = createApp(MarkMap, {
             content: content,
-            height: '400px'
+            height: '300px', // 减少默认高度
+            autoSize: true // 启用自动调整大小
           });
           
           // 挂载组件到DOM
@@ -1093,6 +1097,119 @@ export const renderMarkMaps = async () => {
 };
 
 /**
+ * 渲染LaTeX数学公式
+ */
+export const renderLatexFormulas = () => {
+  try {
+    // 首先处理页面中的原始LaTeX文本，转换为HTML标记
+    import('./markdownService').then((module) => {
+      const processFunc = module.processLatexFormulas;
+      
+      // 查找所有可能包含LaTeX公式的文本节点
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode: function(node) {
+            const text = node.textContent || '';
+            // 检查是否包含LaTeX公式标记
+            if (text.includes('$') && (text.includes('$$') || /\$[^$]+\$/.test(text))) {
+              return NodeFilter.FILTER_ACCEPT;
+            }
+            return NodeFilter.FILTER_REJECT;
+          }
+        }
+      );
+      
+      const textNodes: Node[] = [];
+      let node;
+      while (node = walker.nextNode()) {
+        textNodes.push(node);
+      }
+      
+      // 处理找到的文本节点
+      textNodes.forEach(textNode => {
+        const parent = textNode.parentNode;
+        if (parent && !(parent as Element).closest?.('.latex-block, .latex-inline')) {
+          const originalText = textNode.textContent || '';
+          const processedHTML = processFunc(originalText);
+          
+          if (processedHTML !== originalText) {
+            console.log('发现LaTeX文本，转换中:', originalText);
+            console.log('转换结果:', processedHTML);
+            
+            // 创建临时容器来解析HTML
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = processedHTML;
+            
+            // 将解析后的内容替换原始文本节点
+            while (tempDiv.firstChild) {
+              parent.insertBefore(tempDiv.firstChild, textNode);
+            }
+            parent.removeChild(textNode);
+          }
+        }
+      });
+    });
+    
+    // 等待一下让DOM更新
+    setTimeout(() => {
+      // 渲染块级LaTeX公式
+      const latexBlocks = document.querySelectorAll('.latex-block[data-latex]:not([data-rendered])') as NodeListOf<HTMLElement>;
+      latexBlocks.forEach(element => {
+        const latex = decodeURIComponent(element.dataset.latex || '');
+        const isDisplay = element.dataset.display === 'true';
+        
+        if (latex) {
+          console.log('渲染块级LaTeX公式:', latex);
+          
+          // 创建Vue组件实例
+          const app = createApp(LatexRenderer, {
+            latex: latex,
+            isBlock: true,
+            displayMode: isDisplay
+          });
+          
+          // 挂载到元素
+          app.mount(element);
+          
+          // 标记为已渲染
+          element.setAttribute('data-rendered', 'true');
+        }
+      });
+      
+      // 渲染行内LaTeX公式
+      const latexInlines = document.querySelectorAll('.latex-inline[data-latex]:not([data-rendered])') as NodeListOf<HTMLElement>;
+      latexInlines.forEach(element => {
+        const latex = decodeURIComponent(element.dataset.latex || '');
+        
+        if (latex) {
+          console.log('渲染行内LaTeX公式:', latex);
+          
+          // 创建Vue组件实例
+          const app = createApp(LatexRenderer, {
+            latex: latex,
+            isBlock: false,
+            displayMode: false
+          });
+          
+          // 挂载到元素
+          app.mount(element);
+          
+          // 标记为已渲染
+          element.setAttribute('data-rendered', 'true');
+        }
+      });
+      
+      console.log(`LaTeX公式渲染完成: ${latexBlocks.length}个块级公式, ${latexInlines.length}个行内公式`);
+    }, 50);
+    
+  } catch (error) {
+    console.error('渲染LaTeX公式失败:', error);
+  }
+};
+
+/**
  * 统一渲染内容组件（思维导图和图表）
  * 该函数作为主入口点，处理所有类型的渲染内容
  * @param force 是否强制渲染所有元素，无视处理标记
@@ -1106,6 +1223,9 @@ export const renderContentComponents = (force = false) => {
     
     // 然后渲染图表
     renderMermaidDiagrams();
+    
+    // 渲染LaTeX数学公式
+    renderLatexFormulas();
     
     // 最后渲染思维导图
     renderMarkMaps();

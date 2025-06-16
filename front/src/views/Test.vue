@@ -379,10 +379,10 @@ const handleNavigation = (path) => {
             <h2>思维导图组件测试</h2>
             
             <h3>简单思维导图</h3>
-            <MarkMap :content="markdownMapSimple" height="400px" />
+            <MarkMap :content="markdownMapSimple" height="250px" :autoSize="true" />
             
             <h3>复杂思维导图</h3>
-            <MarkMap :content="markdownMapComplex" height="600px" />
+            <MarkMap :content="markdownMapComplex" height="350px" :autoSize="true" />
           </div>
           
           <div class="section">

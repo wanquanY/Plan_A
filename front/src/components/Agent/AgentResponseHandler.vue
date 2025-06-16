@@ -778,14 +778,16 @@ defineExpose(exposedMethods);
   padding: 5px;
   overflow: hidden;
   border: 1px solid #eaecef;
-  min-height: 400px;
+  min-height: 200px; /* 减少最小高度 */
   position: relative;
 }
 
 :deep(.markmap-svg) {
   width: 100%;
-  min-height: 400px;
+  min-height: 200px; /* 减少最小高度 */
+  height: auto; /* 添加自适应高度 */
   outline: none;
+  transition: height 0.3s ease; /* 添加过渡效果 */
 }
 
 /* 隐藏工具栏，使用单个按钮代替 */

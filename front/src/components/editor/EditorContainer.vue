@@ -5,6 +5,8 @@
       :editor-ref="editorContentRef?.editorRef"
       :selected-heading="editorState.selectedHeading.value"
       :interaction-mode="editorState.interactionMode.value"
+      :editor-content="props.modelValue"
+      :editor-title="extractTitleFromContent(props.modelValue)"
       @apply-formatting="handleApplyFormatting"
       @set-heading="handleSetHeading"
       @set-letter-spacing="handleSetLetterSpacing"
@@ -199,6 +201,39 @@ const toggleSidebarMode = () => {
 const updateWordCount = (count: number) => {
   editorState.wordCount.value = count;
   emit('word-count', count);
+};
+
+// 从内容中提取标题的函数
+const extractTitleFromContent = (content: string): string => {
+  console.log('extractTitleFromContent 输入内容:', content);
+  
+  // 如果内容为空，返回默认标题
+  if (!content || content.trim() === '') {
+    console.log('内容为空，返回默认标题');
+    return '无标题笔记';
+  }
+  
+  // 尝试从内容中提取第一个标题
+  const titleMatch = content.match(/<h[1-6][^>]*>(.*?)<\/h[1-6]>/i);
+  if (titleMatch) {
+    const title = titleMatch[1].replace(/<[^>]*>/g, '').trim();
+    console.log('从标题标签提取到标题:', title);
+    return title;
+  }
+
+  // 尝试提取第一段文本
+  const paragraphMatch = content.match(/<p[^>]*>(.*?)<\/p>/i);
+  if (paragraphMatch) {
+    const text = paragraphMatch[1].replace(/<[^>]*>/g, '').trim();
+    if (text.length > 0) {
+      const title = text.substring(0, 30) + (text.length > 30 ? '...' : '');
+      console.log('从段落提取到标题:', title);
+      return title;
+    }
+  }
+
+  console.log('无法提取标题，返回默认标题');
+  return '无标题笔记';
 };
 
 const handleInputUpdate = ({ hasAgentMention, hasSendingIndicator, selection, content }: any) => {

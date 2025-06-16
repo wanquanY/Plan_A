@@ -205,6 +205,30 @@
       @change="handleImageUpload"
     />
     
+    <!-- 数学公式按钮 -->
+    <div class="spacing-select">
+      <button class="toolbar-button" title="插入数学公式">
+        <function-outlined />
+      </button>
+      <div class="spacing-dropdown math-dropdown">
+        <button @click="insertMath('inline')" class="format-btn">
+          <function-outlined class="format-icon" />
+          <span>行内公式 $x$</span>
+        </button>
+        <button @click="insertMath('block')" class="format-btn">
+          <function-outlined class="format-icon" />
+          <span>块级公式 $$x$$</span>
+        </button>
+        <div class="math-examples">
+          <div class="example-title">常用公式示例：</div>
+          <button @click="insertMathExample('quadratic')" class="example-btn">二次方程</button>
+          <button @click="insertMathExample('integral')" class="example-btn">积分</button>
+          <button @click="insertMathExample('matrix')" class="example-btn">矩阵</button>
+          <button @click="insertMathExample('fraction')" class="example-btn">分数</button>
+        </div>
+      </div>
+    </div>
+    
     <div class="toolbar-divider"></div>
     
     <button class="toolbar-button" @click="undoAction">
@@ -213,6 +237,16 @@
     <button class="toolbar-button" @click="redoAction">
       <redo-outlined />
     </button>
+    
+    <div class="toolbar-divider"></div>
+    
+    <!-- PDF导出按钮 -->
+    <PDFExportButton 
+      :content="props.editorContent"
+      :title="props.editorTitle"
+      :collapsed="true"
+      @click="() => console.log('PDF导出按钮被点击，内容:', props.editorContent, '标题:', props.editorTitle)"
+    />
     
     <div class="toolbar-divider"></div>
     
@@ -262,10 +296,12 @@ import {
   PictureOutlined,
   MessageOutlined,
   WindowsOutlined,
+  FunctionOutlined,
 } from '@ant-design/icons-vue';
 import { ref } from 'vue';
 import uploadService from '../../services/uploadService';
 import { message } from 'ant-design-vue';
+import PDFExportButton from '../PDFExportButton.vue';
 
 const props = defineProps({
   editorRef: {
@@ -275,6 +311,14 @@ const props = defineProps({
   interactionMode: {
     type: String,
     default: 'sidebar'
+  },
+  editorContent: {
+    type: String,
+    default: ''
+  },
+  editorTitle: {
+    type: String,
+    default: '笔记'
   }
 });
 
@@ -580,6 +624,43 @@ const handleToggleModeClick = () => {
     showModeTip.value = false;
   }, 1500);
 };
+
+// 数学公式插入相关方法
+const insertMath = (type: 'inline' | 'block') => {
+  const placeholder = type === 'inline' ? 'x^2 + y^2 = z^2' : '\\sum_{i=1}^{n} x_i = \\int_{0}^{1} f(x) dx';
+  const mathText = type === 'inline' ? `$${placeholder}$` : `$$\n${placeholder}\n$$`;
+  
+  // 先插入原始LaTeX文本
+  emit('apply-formatting', { 
+    command: 'insertHTML', 
+    value: mathText 
+  });
+  
+  // 延迟处理LaTeX渲染
+  setTimeout(() => {
+    import('../../services/markdownService').then(({ processLatexFormulas }) => {
+      import('../../services/renderService').then(({ renderLatexFormulas }) => {
+        renderLatexFormulas();
+      });
+    });
+  }, 200);
+};
+
+const insertMathExample = (exampleType: string) => {
+  const examples = {
+    quadratic: '$$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$',
+    integral: '$$\\int_{a}^{b} f(x) dx = F(b) - F(a)$$',
+    matrix: '$$\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$$',
+    fraction: '$$\\frac{\\partial f}{\\partial x} = \\lim_{h \\to 0} \\frac{f(x+h) - f(x)}{h}$$'
+  };
+  
+  const mathText = examples[exampleType as keyof typeof examples] || '$$x = y$$';
+  
+  emit('apply-formatting', { 
+    command: 'insertHTML', 
+    value: mathText 
+  });
+};
 </script>
 
 <style scoped>
@@ -750,6 +831,42 @@ const handleToggleModeClick = () => {
 .format-icon {
   font-size: 14px;
   color: #555;
+}
+
+/* 数学公式下拉菜单样式 */
+.math-dropdown {
+  width: 200px;
+  padding: 8px 0;
+}
+
+.math-examples {
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.example-title {
+  font-size: 12px;
+  color: #666;
+  padding: 4px 12px;
+  font-weight: 500;
+}
+
+.example-btn {
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: #555;
+  border-radius: 0;
+}
+
+.example-btn:hover {
+  background-color: rgba(0, 123, 255, 0.1);
+  color: #007bff;
 }
 
 .font-size-buttons {
