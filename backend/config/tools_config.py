@@ -237,6 +237,41 @@ AVAILABLE_TOOLS = [
                 "required": []
             }
         }
+    },
+    # 时间工具
+    {
+        "type": "function",
+        "function": {
+            "name": "get_time",
+            "description": "在执行搜索或者类似任务时应该先获取当前时间。获取当前时间信息。默认获取北京时间（UTC+8），也可以获取其他时区的时间。支持多种时间格式输出。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timezone": {
+                        "type": "string",
+                        "description": "时区名称或UTC偏移。默认为'Asia/Shanghai'（北京时间）。可以使用如'America/New_York'、'Europe/London'等时区名称，或者'+08:00'、'-05:00'等UTC偏移格式",
+                        "default": "Asia/Shanghai"
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "时间格式。可选值：'standard'（标准格式：2024-01-01 15:30:45）、'iso'（ISO 8601格式）、'chinese'（中文格式：2024年1月1日 15时30分45秒）、'timestamp'（Unix时间戳）、'relative'（相对时间描述）",
+                        "default": "standard",
+                        "enum": ["standard", "iso", "chinese", "timestamp", "relative"]
+                    },
+                    "include_weekday": {
+                        "type": "boolean",
+                        "description": "是否包含星期信息",
+                        "default": True
+                    },
+                    "include_timezone_info": {
+                        "type": "boolean",
+                        "description": "是否包含时区信息",
+                        "default": True
+                    }
+                },
+                "required": []
+            }
+        }
     }
 ]
 
@@ -248,7 +283,9 @@ TOOL_CATEGORIES = {
     "document": ["note_reader", "note_editor"],
     "tavily": ["tavily_search", "tavily_extract"],
     "serper": ["serper_search", "serper_news", "serper_scrape"],
-    "local": ["note_reader", "note_editor"]
+    "local": ["note_reader", "note_editor", "get_time"],
+    "utility": ["get_time"],
+    "time": ["get_time"]
 }
 
 # 工具提供商配置
@@ -269,8 +306,8 @@ TOOL_PROVIDERS = {
     },
     "local": {
         "name": "本地工具",
-        "description": "用户笔记和文档处理工具",
-        "tools": ["note_reader", "note_editor"],
+        "description": "用户笔记、文档处理和实用工具",
+        "tools": ["note_reader", "note_editor", "get_time"],
         "api_key_required": False,
         "website": ""
     }

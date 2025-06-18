@@ -403,6 +403,16 @@ class ChatToolHandler:
                                     except:
                                         pass
                         
+                        elif function_name == "get_time":
+                            # 处理时间工具
+                            api_logger.info(f"正在执行时间查询操作: {function_args}")
+                            tool_result = tools_service.execute_tool(
+                                tool_name="get_time",
+                                action="get_current_time",
+                                params=function_args,
+                                config=None  # 时间工具不需要特殊配置
+                            )
+                        
                         else:
                             # 未知工具
                             tool_result = {"error": f"未知工具: {function_name}"}

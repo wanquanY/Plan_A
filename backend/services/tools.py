@@ -3,6 +3,9 @@ import os
 import json
 import requests
 import http.client
+from datetime import datetime, timedelta
+import pytz
+from datetime import timezone as dt_timezone
 from backend.utils.logging import api_logger
 
 class TavilyTool:
@@ -808,6 +811,164 @@ class NoteEditorTool:
             return {"error": f"编辑笔记失败: {str(e)}"}
 
 
+class TimeTool:
+    """时间工具，用于获取各种格式的时间信息"""
+    
+    def __init__(self):
+        """初始化时间工具"""
+        api_logger.info("时间工具初始化")
+        
+        # 中文星期映射
+        self.weekday_chinese = {
+            0: "周一", 1: "周二", 2: "周三", 3: "周四", 
+            4: "周五", 5: "周六", 6: "周日"
+        }
+        
+        # 中文月份映射
+        self.month_chinese = {
+            1: "1月", 2: "2月", 3: "3月", 4: "4月", 5: "5月", 6: "6月",
+            7: "7月", 8: "8月", 9: "9月", 10: "10月", 11: "11月", 12: "12月"
+        }
+    
+    def get_current_time(
+        self,
+        timezone: str = "Asia/Shanghai",
+        format: str = "standard",
+        include_weekday: bool = True,
+        include_timezone_info: bool = True
+    ) -> Dict[str, Any]:
+        """
+        获取当前时间信息
+        
+        Args:
+            timezone: 时区名称或UTC偏移，默认北京时间
+            format: 时间格式
+            include_weekday: 是否包含星期信息
+            include_timezone_info: 是否包含时区信息
+            
+        Returns:
+            包含时间信息的字典
+        """
+        try:
+            # 获取当前UTC时间
+            utc_now = datetime.now(dt_timezone.utc)
+            
+            # 处理时区
+            try:
+                if timezone.startswith(('+', '-')):
+                    # 处理UTC偏移格式如"+08:00"
+                    hours = int(timezone[1:3])
+                    minutes = int(timezone[4:6]) if len(timezone) > 4 else 0
+                    offset = timedelta(hours=hours, minutes=minutes)
+                    if timezone[0] == '-':
+                        offset = -offset
+                    target_tz = dt_timezone(offset)
+                    local_time = utc_now.replace(tzinfo=dt_timezone.utc).astimezone(target_tz)
+                    tz_name = timezone
+                else:
+                    # 处理时区名称如"Asia/Shanghai"
+                    target_tz = pytz.timezone(timezone)
+                    local_time = utc_now.astimezone(target_tz)
+                    tz_name = str(target_tz)
+            except Exception as e:
+                api_logger.warning(f"时区解析失败，使用北京时间: {e}")
+                target_tz = pytz.timezone("Asia/Shanghai")
+                local_time = utc_now.astimezone(target_tz)
+                tz_name = "Asia/Shanghai"
+            
+            # 格式化时间
+            result = {
+                "success": True,
+                "timezone": tz_name,
+                "utc_time": utc_now.isoformat(),
+                "local_time": {}
+            }
+            
+            # 根据格式生成时间字符串
+            if format == "standard":
+                time_str = local_time.strftime("%Y-%m-%d %H:%M:%S")
+            elif format == "iso":
+                time_str = local_time.isoformat()
+            elif format == "chinese":
+                year = local_time.year
+                month = self.month_chinese[local_time.month]
+                day = local_time.day
+                hour = local_time.hour
+                minute = local_time.minute
+                second = local_time.second
+                time_str = f"{year}年{month}{day}日 {hour}时{minute}分{second}秒"
+            elif format == "timestamp":
+                time_str = str(int(local_time.timestamp()))
+            elif format == "relative":
+                # 计算相对时间描述
+                current_hour = local_time.hour
+                if 5 <= current_hour < 12:
+                    period = "上午"
+                elif 12 <= current_hour < 18:
+                    period = "下午"
+                elif 18 <= current_hour < 22:
+                    period = "晚上"
+                else:
+                    period = "深夜"
+                time_str = f"现在是{period} {local_time.strftime('%H:%M')}"
+            else:
+                time_str = local_time.strftime("%Y-%m-%d %H:%M:%S")
+            
+            result["local_time"]["formatted"] = time_str
+            result["local_time"]["raw"] = {
+                "year": local_time.year,
+                "month": local_time.month,
+                "day": local_time.day,
+                "hour": local_time.hour,
+                "minute": local_time.minute,
+                "second": local_time.second,
+                "microsecond": local_time.microsecond,
+                "timestamp": local_time.timestamp()
+            }
+            
+            # 添加星期信息
+            if include_weekday:
+                weekday_num = local_time.weekday()
+                weekday_english = local_time.strftime("%A")
+                weekday_chinese = self.weekday_chinese[weekday_num]
+                result["local_time"]["weekday"] = {
+                    "number": weekday_num + 1,  # 1-7表示周一到周日
+                    "english": weekday_english,
+                    "chinese": weekday_chinese
+                }
+                
+                # 在格式化时间中添加星期信息
+                if format in ["standard", "chinese"]:
+                    if format == "chinese":
+                        result["local_time"]["formatted"] += f" {weekday_chinese}"
+                    else:
+                        result["local_time"]["formatted"] += f" ({weekday_chinese})"
+            
+            # 添加时区信息
+            if include_timezone_info:
+                result["timezone_info"] = {
+                    "name": tz_name,
+                    "offset": local_time.strftime("%z"),
+                    "dst": local_time.dst().total_seconds() != 0 if local_time.dst() else False
+                }
+            
+            # 添加一些额外的有用信息
+            result["additional_info"] = {
+                "is_weekend": local_time.weekday() >= 5,  # 周六和周日
+                "day_of_year": local_time.timetuple().tm_yday,
+                "week_of_year": local_time.isocalendar()[1],
+                "quarter": (local_time.month - 1) // 3 + 1,
+                "is_leap_year": local_time.year % 4 == 0 and (local_time.year % 100 != 0 or local_time.year % 400 == 0)
+            }
+            
+            api_logger.info(f"获取时间成功: {timezone} -> {time_str}")
+            return result
+            
+        except Exception as e:
+            api_logger.error(f"获取时间失败: {str(e)}", exc_info=True)
+            return {"error": f"获取时间失败: {str(e)}"}
+
+
 # 工具服务类，管理所有可用工具
 class ToolsService:
     """工具服务，管理所有可用的工具"""
@@ -819,7 +980,8 @@ class ToolsService:
             "tavily": TavilyTool,
             "serper": SerperTool,
             "note_reader": NoteReaderTool,
-            "note_editor": NoteEditorTool
+            "note_editor": NoteEditorTool,
+            "get_time": TimeTool
         }
         api_logger.info(f"工具服务初始化，可用工具: {list(self.available_tools.keys())}")
     
