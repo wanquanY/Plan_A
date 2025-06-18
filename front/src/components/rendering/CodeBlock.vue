@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, nextTick } from 'vue';
 import hljs from 'highlight.js';
-import 'highlight.js/styles/github.css';
+// 注释掉默认样式，使用自定义样式
+// import 'highlight.js/styles/github.css';
 
 // 定义组件的属性
 const props = defineProps({
@@ -21,31 +22,28 @@ const props = defineProps({
 const isCopied = ref(false);
 const codeRef = ref(null);
 
-// 高亮处理后的代码
-const highlightedCode = computed(() => {
-  if (!props.code) return '';
-  
-  try {
-    if (props.language && props.language !== 'text') {
-      return hljs.highlight(props.code, { language: props.language }).value;
-    } else {
-      return hljs.highlightAuto(props.code).value;
-    }
-  } catch (error) {
-    console.error('代码高亮处理失败:', error);
-    return props.code;
-  }
-});
-
 // 在组件挂载后应用代码高亮
-onMounted(() => {
-  // 对于手动设置innerHTML的情况，我们已经用computed处理了
-  // 这里只用于处理特殊情况
-  if (codeRef.value && props.language !== 'text') {
+onMounted(async () => {
+  await nextTick();
+  
+  if (codeRef.value && props.code) {
     try {
-      hljs.highlightElement(codeRef.value);
+      // 设置代码内容（纯文本，安全）
+      codeRef.value.textContent = props.code;
+      
+      // 应用高亮
+      if (props.language && props.language !== 'text') {
+        hljs.highlightElement(codeRef.value);
+      } else {
+        // 自动检测语言
+        hljs.highlightElement(codeRef.value);
+      }
     } catch (error) {
       console.error('代码高亮处理失败:', error);
+      // 如果高亮失败，至少显示原始代码
+      if (codeRef.value) {
+        codeRef.value.textContent = props.code;
+      }
     }
   }
 });
@@ -67,7 +65,7 @@ const copyCode = () => {
 
 <template>
   <div class="code-block-wrapper">
-    <pre :data-language="language"><code ref="codeRef" :class="`language-${language}`" v-html="highlightedCode"></code></pre>
+    <pre :data-language="language"><code ref="codeRef" :class="`language-${language}`"></code></pre>
     <div 
       class="code-copy-button" 
       :class="{ 'copied': isCopied }" 
@@ -89,7 +87,7 @@ const copyCode = () => {
 }
 
 pre {
-  background-color: #f6f8fa;
+  background-color: #f6f8fa !important;
   border-radius: 6px;
   padding: 2.4em 1em 1em;
   margin: 0;
@@ -104,15 +102,15 @@ pre {
 }
 
 code {
-  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-  background-color: transparent;
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace !important;
+  background-color: transparent !important;
   padding: 0;
   margin: 0;
   border-radius: 0;
   white-space: pre;
   display: block;
   overflow-x: auto;
-  color: #24292e;
+  color: #24292e !important;
   font-size: 0.95em;
 }
 
@@ -189,44 +187,84 @@ pre::-webkit-scrollbar-thumb {
   border-radius: 3px;
 }
 
-/* highlight.js相关样式覆盖 */
+/* highlight.js相关样式覆盖 - GitHub主题 */
+:deep(.hljs) {
+  background-color: transparent !important;
+  color: #24292e !important;
+}
+
 :deep(.hljs-keyword) {
-  color: #d73a49;
+  color: #d73a49 !important;
+  font-weight: bold;
 }
 
 :deep(.hljs-string) {
-  color: #032f62;
+  color: #032f62 !important;
 }
 
 :deep(.hljs-comment) {
-  color: #6a737d;
+  color: #6a737d !important;
+  font-style: italic;
 }
 
 :deep(.hljs-function) {
-  color: #6f42c1;
+  color: #6f42c1 !important;
 }
 
 :deep(.hljs-number) {
-  color: #005cc5;
+  color: #005cc5 !important;
 }
 
 :deep(.hljs-operator) {
-  color: #d73a49;
+  color: #d73a49 !important;
 }
 
 :deep(.hljs-tag) {
-  color: #22863a;
+  color: #22863a !important;
 }
 
 :deep(.hljs-name) {
-  color: #6f42c1;
+  color: #6f42c1 !important;
 }
 
 :deep(.hljs-attr) {
-  color: #032f62;
+  color: #032f62 !important;
 }
 
 :deep(.hljs-built_in) {
-  color: #e36209;
+  color: #e36209 !important;
+}
+
+:deep(.hljs-literal) {
+  color: #005cc5 !important;
+}
+
+:deep(.hljs-type) {
+  color: #d73a49 !important;
+}
+
+:deep(.hljs-params) {
+  color: #24292e !important;
+}
+
+:deep(.hljs-meta) {
+  color: #6a737d !important;
+}
+
+:deep(.hljs-title) {
+  color: #6f42c1 !important;
+  font-weight: bold;
+}
+
+:deep(.hljs-variable) {
+  color: #e36209 !important;
+}
+
+:deep(.hljs-emphasis) {
+  font-style: italic;
+}
+
+:deep(.hljs-strong) {
+  font-weight: bold;
 }
 </style> 

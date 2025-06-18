@@ -88,7 +88,8 @@ class ChatToolProcessor:
             
             # 处理工具调用（不保存到数据库，因为上面已经保存过了）
             # 获取agent的数据库ID，避免在handle_tool_calls中懒加载
-            agent_db_id = agent.id if agent else None
+            # 修复：避免在异步上下文中访问SQLAlchemy关系属性
+            agent_db_id = getattr(agent, 'id', None) if agent else None
             
             tool_results, tool_calls_data = await chat_tool_handler.handle_tool_calls(
                 tool_call_objects, 
@@ -254,6 +255,15 @@ class ChatToolProcessor:
                 func = Function(tc['function']['name'], tc['function']['arguments'])
                 tool_call_obj = ToolCall(tc['id'], tc['type'], func)
                 
+                # 发送工具调用开始状态
+                tool_status = {
+                    "type": "tool_call_start",
+                    "tool_call_id": tool_call_obj.id,
+                    "tool_name": tool_call_obj.function.name,
+                    "status": "preparing"
+                }
+                yield ("", session_id, None, json.dumps(tool_status))
+                
                 # 发送工具调用执行状态
                 tool_status = {
                     "type": "tool_call_executing",
@@ -265,7 +275,7 @@ class ChatToolProcessor:
                 
                 # 执行单个工具调用（传递message_id关联到特定消息）
                 # 获取agent的数据库ID，避免在handle_tool_calls中懒加载
-                agent_db_id = agent.id if agent else None
+                agent_db_id = getattr(agent, 'id', None) if agent else None
                 
                 single_result, single_tool_data = await chat_tool_handler.handle_tool_calls(
                     [tool_call_obj], 

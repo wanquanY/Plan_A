@@ -34,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue';
+import { ref, onMounted, watch, nextTick, onBeforeUnmount } from 'vue';
 import { message } from 'ant-design-vue';
 import AgentSidebarHeader from './sidebar/AgentSidebarHeader.vue';
 import AgentSidebarInputArea from './sidebar/AgentSidebarInputArea.vue';
@@ -448,6 +448,25 @@ onMounted(() => {
   });
 });
 
+// 组件卸载时清理
+onBeforeUnmount(() => {
+  // 清理编辑状态
+  if (editingController.value) {
+    console.log('[AgentSidebar] 组件卸载，清理编辑控制器');
+    editingController.value.abort();
+    editingController.value = null;
+  }
+  
+  // 重置编辑状态
+  isEditingMessage.value = false;
+  
+  // 如果当前正在响应，通知父组件停止
+  if (props.isAgentResponding) {
+    console.log('[AgentSidebar] 组件卸载时仍在响应中，通知父组件停止');
+    emit('stop-response');
+  }
+});
+
 // 暴露方法给父组件
 defineExpose({
   handleToolStatus: enhancedHandleToolStatus
@@ -456,7 +475,41 @@ defineExpose({
 // 停止Agent响应
 const handleStopResponse = () => {
   console.log('[AgentSidebar] 用户请求停止响应');
-  emit('stop-response');
+  
+  // 先检查是否有编辑重新执行的响应正在进行
+  if (editingController.value) {
+    console.log('[AgentSidebar] 检测到编辑重新执行正在进行，停止编辑响应');
+    
+    // 停止编辑响应
+    editingController.value.abort();
+    editingController.value = null;
+    isEditingMessage.value = false;
+    
+    // 更新UI状态
+    const editingMessage = messages.value.find((msg: any) => 
+      msg.type === 'agent' && 
+      msg.isTyping && 
+      msg.id && 
+      msg.id.includes('edit_agent_')
+    );
+    
+    if (editingMessage) {
+      editingMessage.isTyping = false;
+      console.log('[AgentSidebar] 已停止编辑重新执行的消息');
+    }
+    
+    // 通知父组件更新响应状态
+    emit('stop-responding', {
+      isEditing: true,
+      stopped: true
+    });
+    
+    message.info('已停止编辑重新执行');
+  } else {
+    // 没有编辑响应，检查正常响应
+    console.log('[AgentSidebar] 没有编辑响应，检查正常响应');
+    emit('stop-response');
+  }
 };
 
 // 处理会话切换

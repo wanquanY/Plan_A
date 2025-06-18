@@ -410,6 +410,18 @@ const handleStopResponse = () => {
   sessionManager.handleStopResponse();
 };
 
+// 处理Agent开始响应（编辑重新执行时）
+const handleStartResponding = (data: any) => {
+  console.log('[Home.vue] Agent开始响应（编辑重新执行）:', data);
+  sessionManager.sidebarIsAgentResponding.value = true;
+};
+
+// 处理Agent停止响应（编辑重新执行完成时）
+const handleStopResponding = (data: any) => {
+  console.log('[Home.vue] Agent停止响应（编辑重新执行完成）:', data);
+  sessionManager.sidebarIsAgentResponding.value = false;
+};
+
 // 处理会话切换
 const handleSessionSwitched = async (sessionId: string) => {
   console.log('[Home.vue] 处理会话切换:', sessionId);
@@ -551,6 +563,8 @@ onMounted(() => {
               @resize="handleSidebarResize"
               @note-edit-preview="handleNoteEditPreview"
               @stop-response="handleStopResponse"
+              @start-responding="handleStartResponding"
+              @stop-responding="handleStopResponding"
               @session-switched="handleSessionSwitched"
               ref="agentSidebarRef"
             />

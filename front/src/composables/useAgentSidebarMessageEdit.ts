@@ -195,6 +195,12 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
         rerun: true
       });
       
+      // 通知父组件agent开始响应
+      emit('start-responding', {
+        isEditing: true,
+        messageIndex
+      });
+      
       // 创建用于编辑重新执行的AI消息，使用特殊ID标识
       const currentTime = Date.now();
       const baseTimestamp = new Date();
@@ -230,6 +236,36 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
       console.log('发送编辑请求:', editRequest);
       
       let isEditingRerun = true;
+      
+      // 添加编辑重新执行的安全超时机制
+      const editSafetyTimeoutId = setTimeout(() => {
+        if (isEditingRerun && editingController.value) {
+          console.warn('[useAgentSidebarMessageEdit] 编辑重新执行安全超时：6分钟后强制重置状态');
+          isEditingRerun = false;
+          editingController.value.abort();
+          editingController.value = null;
+          isEditingMessage.value = false;
+          
+          // 查找编辑重新执行的AI消息并停止
+          const editAgentMsg = messages.value.find((msg: any) => 
+            msg.type === 'agent' && 
+            msg.isTyping && 
+            msg.id && 
+            msg.id.includes('edit_agent_')
+          );
+          
+          if (editAgentMsg) {
+            editAgentMsg.isTyping = false;
+            editAgentMsg.content += '\n\n[编辑重新执行超时，已自动停止]';
+          }
+          
+          // 通知父组件停止响应状态
+          emit('stop-responding', {
+            isEditing: true,
+            timeout: true
+          });
+        }
+      }, 360000); // 6分钟超时
       
       editingController.value = await chatService.editMessage(
         props.conversationId,
@@ -338,6 +374,7 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
           if (isComplete) {
             editingController.value = null;
             isEditingRerun = false;
+            clearTimeout(editSafetyTimeoutId); // 清除编辑重新执行的安全超时
             
             // 确保AI消息的isTyping状态被正确设置为false
             if (editAgentMsg) {
@@ -357,6 +394,12 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
               }
             }
             
+            // 通知父组件agent响应完成
+            emit('stop-responding', {
+              isEditing: true,
+              messageIndex
+            });
+            
             nextTick(() => {
               console.log('编辑重新执行完成，请求刷新会话历史记录');
               emit('edit-message', {
@@ -369,16 +412,16 @@ export function useAgentSidebarMessageEdit(props: any, emit: any, dependencies: 
           }
         }
       );
+    } catch (error) {
+      console.error('保存编辑消息失败:', error);
+      message.error('保存编辑消息失败');
+      isEditingMessage.value = false;
       
-      message.success('消息编辑成功，正在重新执行...');
-      
-    } catch (error: any) {
-      console.error('编辑消息失败:', error);
-      message.error('编辑消息失败: ' + (error.message || '未知错误'));
-      
-      // 恢复编辑状态
-      messageObj.isEditing = true;
-      isEditingMessage.value = true;
+      // 出错时也要通知父组件停止响应状态
+      emit('stop-responding', {
+        isEditing: true,
+        error: true
+      });
     }
   };
 

@@ -259,7 +259,7 @@ export const processCodeBlocks = (content: string): string => {
     }
     
     // 检测是否是思维导图内容
-    if ((language === 'markdown' || language === 'md') && isMindMapContent(code)) {
+    if ((language === 'markdown' || language === 'md' || language === 'markmap') && (language === 'markmap' || isMindMapContent(code))) {
       // 对思维导图内容进行编码，以便后续处理
       const encodedContent = encodeURIComponent(code);
       return `<div class="markmap-content" data-content="${encodedContent}"></div>`;
@@ -289,6 +289,12 @@ renderer.code = function(code, lang, escaped) {
   if (lang === 'mermaid') {
     // 使用与新建会话相同的格式：保留pre和code标签
     return `<pre data-mermaid-processed="true"><code class="language-mermaid">${code}</code></pre>`;
+  }
+  
+  // 特殊处理markmap思维导图
+  if (lang === 'markmap') {
+    // 对于markmap，直接创建pre和code标签，后续由渲染服务处理
+    return `<pre data-markmap-processed="true"><code class="language-markmap">${code}</code></pre>`;
   }
   
   // 检查代码内容是否可能是mermaid图表，即使没有明确标记语言

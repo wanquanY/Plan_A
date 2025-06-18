@@ -59,7 +59,8 @@ class ChatResponseService:
             
             # 处理工具调用
             # 获取agent的数据库ID，避免在handle_tool_calls中懒加载
-            agent_db_id = agent.id if agent else None
+            # 修复：避免在异步上下文中访问SQLAlchemy关系属性
+            agent_db_id = getattr(agent, 'id', None) if agent else None
             
             tool_results, tool_calls_data = await chat_tool_handler.handle_tool_calls(
                 tool_calls, 

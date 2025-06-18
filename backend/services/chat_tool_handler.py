@@ -16,11 +16,16 @@ class ChatToolHandler:
     @staticmethod
     def get_agent_tools(agent):
         """根据Agent的配置返回可用工具列表（仅内置工具，向后兼容）"""
-        if not agent or not agent.tools_enabled:
+        if not agent:
+            return []
+        
+        # 修复：避免在异步上下文中访问SQLAlchemy关系属性
+        tools_enabled = getattr(agent, 'tools_enabled', None)
+        if not tools_enabled:
             return []
         
         # 使用工具管理器获取工具列表
-        tools = tools_manager.get_agent_tools(agent.tools_enabled)
+        tools = tools_manager.get_agent_tools(tools_enabled)
         
         api_logger.info(f"为Agent AI助手 配置了 {len(tools)} 个内置工具")
         return tools
@@ -28,7 +33,12 @@ class ChatToolHandler:
     @staticmethod
     async def get_agent_tools_async(agent, user_id: Optional[int] = None, db: Optional[AsyncSession] = None):
         """根据Agent的配置返回可用工具列表（包括内置工具和MCP工具）"""
-        if not agent or not agent.tools_enabled:
+        if not agent:
+            return []
+        
+        # 修复：避免在异步上下文中访问SQLAlchemy关系属性
+        tools_enabled = getattr(agent, 'tools_enabled', None)
+        if not tools_enabled:
             return []
         
         try:
@@ -41,16 +51,22 @@ class ChatToolHandler:
             
             # 使用Agent服务获取工具
             from backend.services.agent_service import agent_service
-            tools = await agent_service.get_agent_tools_for_chat(db, agent.public_id, user_id)
+            # 修复：使用getattr安全获取public_id
+            agent_public_id = getattr(agent, 'public_id', None)
+            if not agent_public_id:
+                api_logger.warning("Agent没有public_id，无法获取工具")
+                return []
             
-            api_logger.info(f"为Agent {agent.public_id} 配置了 {len(tools)} 个工具（包括MCP工具）")
+            tools = await agent_service.get_agent_tools_for_chat(db, agent_public_id, user_id)
+            
+            api_logger.info(f"为Agent {agent_public_id} 配置了 {len(tools)} 个工具（包括MCP工具）")
             return tools
             
         except Exception as e:
             api_logger.error(f"获取Agent工具失败: {e}")
             # 降级到内置工具
-            tools = tools_manager.get_agent_tools(agent.tools_enabled)
-            api_logger.info(f"降级为Agent {agent.public_id} 配置了 {len(tools)} 个内置工具")
+            tools = tools_manager.get_agent_tools(tools_enabled)
+            api_logger.info(f"降级为Agent配置了 {len(tools)} 个内置工具")
             return tools
     
     @staticmethod
@@ -234,10 +250,15 @@ class ChatToolHandler:
                         
                     else:
                         # 处理内置工具
+                        api_logger.info(f"开始执行内置工具: {function_name}")
+                        
                         # 使用工具管理器获取API密钥
                         api_key = None
-                        if agent and agent.tools_enabled:
-                            api_key = tools_manager.get_tool_api_key(function_name, agent.tools_enabled)
+                        if agent:
+                            # 修复：避免在异步上下文中访问SQLAlchemy关系属性
+                            tools_enabled = getattr(agent, 'tools_enabled', None)
+                            if tools_enabled:
+                                api_key = tools_manager.get_tool_api_key(function_name, tools_enabled)
                         
                         # 根据函数名执行相应的工具
                         tool_result = None
@@ -302,6 +323,8 @@ class ChatToolHandler:
                         
                         elif function_name == "note_reader":
                             # 处理笔记阅读工具
+                            api_logger.info(f"正在执行笔记阅读操作: {function_args}")
+                            
                             # 会话ID通过配置传递给工具构造函数，而不是作为参数
                             session_public_id = None
                             if session_id:
@@ -309,18 +332,39 @@ class ChatToolHandler:
                                 from backend.utils.id_converter import IDConverter
                                 session_public_id = await IDConverter.get_chat_public_id(db, session_id) if isinstance(session_id, int) else session_id
                             
-                            tool_result = await tools_service.execute_tool_async(
-                                tool_name="note_reader",
-                                action="read_note",
-                                params=function_args,  # 只传递函数的原始参数
-                                config={
-                                    "db_session": db,
-                                    "session_id": session_public_id
-                                }
-                            )
+                            # 为每次工具调用创建新的数据库会话，避免会话状态污染
+                            from backend.db.session import get_async_session
+                            async for fresh_db_session in get_async_session():
+                                try:
+                                    tool_result = await tools_service.execute_tool_async(
+                                        tool_name="note_reader",
+                                        action="read_note",
+                                        params=function_args,  # 只传递函数的原始参数
+                                        config={
+                                            "db_session": fresh_db_session,
+                                            "session_id": session_public_id
+                                        }
+                                    )
+                                    break  # 成功执行后退出循环
+                                except Exception as e:
+                                    api_logger.error(f"笔记阅读工具执行失败: {e}")
+                                    # 确保数据库会话被正确关闭
+                                    try:
+                                        await fresh_db_session.close()
+                                    except:
+                                        pass
+                                    raise e
+                                finally:
+                                    # 确保数据库会话被正确关闭
+                                    try:
+                                        await fresh_db_session.close()
+                                    except:
+                                        pass
                         
                         elif function_name == "note_editor":
-                            # 处理笔记编辑工具
+                            # 处理笔记编辑工具 - 为每次调用创建新的数据库会话
+                            api_logger.info(f"正在执行笔记编辑操作: {function_args}")
+                            
                             # 会话ID通过配置传递给工具构造函数，而不是作为参数
                             session_public_id = None
                             if session_id:
@@ -328,15 +372,36 @@ class ChatToolHandler:
                                 from backend.utils.id_converter import IDConverter
                                 session_public_id = await IDConverter.get_chat_public_id(db, session_id) if isinstance(session_id, int) else session_id
                             
-                            tool_result = await tools_service.execute_tool_async(
-                                tool_name="note_editor",
-                                action="edit_note",
-                                params=function_args,  # 只传递函数的原始参数
-                                config={
-                                    "db_session": db,
-                                    "session_id": session_public_id
-                                }
-                            )
+                            # 为每次工具调用创建新的数据库会话，避免会话状态污染
+                            from backend.db.session import get_async_session
+                            async for fresh_db_session in get_async_session():
+                                try:
+                                    api_logger.info(f"笔记编辑工具准备完成，使用新的数据库会话，开始执行编辑操作...")
+                                    tool_result = await tools_service.execute_tool_async(
+                                        tool_name="note_editor",
+                                        action="edit_note",
+                                        params=function_args,  # 只传递函数的原始参数
+                                        config={
+                                            "db_session": fresh_db_session,
+                                            "session_id": session_public_id
+                                        }
+                                    )
+                                    api_logger.info(f"笔记编辑工具执行完成")
+                                    break  # 成功执行后退出循环
+                                except Exception as e:
+                                    api_logger.error(f"笔记编辑工具执行失败: {e}")
+                                    # 确保数据库会话被正确关闭
+                                    try:
+                                        await fresh_db_session.close()
+                                    except:
+                                        pass
+                                    raise e
+                                finally:
+                                    # 确保数据库会话被正确关闭
+                                    try:
+                                        await fresh_db_session.close()
+                                    except:
+                                        pass
                         
                         else:
                             # 未知工具

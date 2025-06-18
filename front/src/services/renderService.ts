@@ -29,6 +29,10 @@ export const renderCodeBlocks = async (handleMarkMaps = true) => {
     const CodeBlockModule = await import('../components/rendering/CodeBlock.vue');
     const CodeBlock = CodeBlockModule.default;
     
+    // 导入HtmlRenderer组件
+    const HtmlRendererModule = await import('../components/rendering/HtmlRenderer.vue');
+    const HtmlRenderer = HtmlRendererModule.default;
+    
     // 如果需要处理思维导图，导入MarkMap组件
     let MarkMap: Component | null = null;
     if (handleMarkMaps) {
@@ -39,6 +43,35 @@ export const renderCodeBlocks = async (handleMarkMaps = true) => {
     // 处理代码块的函数
     const processCodeBlock = (block: Element, preElement: Element, code: string, language: string) => {
       console.log(`处理代码块，语言: ${language}`);
+      
+      // 检查是否为html语言，需要特殊处理
+      if (language === 'html') {
+        // 创建包装div替代pre标签
+        const wrapperDiv = document.createElement('div');
+        wrapperDiv.className = 'html-renderer-component-wrapper';
+        
+        // 在pre标签之后插入包装div
+        if (preElement.parentNode) {
+          preElement.parentNode.insertBefore(wrapperDiv, preElement.nextSibling);
+          
+          // 使用Vue创建HtmlRenderer组件
+          const htmlRendererApp = createApp({
+            render() {
+              return h(HtmlRenderer, {
+                htmlContent: code,
+              });
+            }
+          });
+          
+          // 挂载组件到DOM
+          htmlRendererApp.mount(wrapperDiv);
+          
+          // 隐藏原始pre标签
+          (preElement as HTMLElement).style.display = 'none';
+          preElement.classList.add('replaced-by-component');
+        }
+        return;
+      }
       
       // 检查是否为mermaid语言，需要特殊处理
       if (language === 'mermaid') {
@@ -85,8 +118,8 @@ export const renderCodeBlocks = async (handleMarkMaps = true) => {
         return;
       }
       
-      // 检查是否为markdown代码块，可能包含思维导图
-      if (handleMarkMaps && (language === 'markdown' || language === 'md') && !block.closest('.markmap-content')) {
+      // 检查是否为markdown代码块或markmap代码块，可能包含思维导图
+      if (handleMarkMaps && (language === 'markdown' || language === 'md' || language === 'markmap') && !block.closest('.markmap-content')) {
         // 首先检查是否在已包含思维导图的agent-response-paragraph中
         const agentResponseParent = block.closest('.agent-response-paragraph');
         if (agentResponseParent && (
@@ -105,8 +138,11 @@ export const renderCodeBlocks = async (handleMarkMaps = true) => {
           return;
         }
         
-        if (isMindMapContent(code)) {
-          console.log('在markdown代码块中检测到思维导图内容');
+        // 对于明确标识为 language-markmap 的代码块，直接认为是思维导图内容
+        const isMarkmap = language === 'markmap' || isMindMapContent(code);
+        
+        if (isMarkmap) {
+          console.log('在代码块中检测到思维导图内容，语言:', language);
           
           // 标记代码块为已处理
           block.classList.add('markmap-processed');
@@ -899,13 +935,33 @@ export const renderMarkMaps = async () => {
     const MarkMapModule = await import('../components/rendering/MarkMap.vue');
     const MarkMap = MarkMapModule.default;
     
-    // 简化锁检查逻辑
+    // 改进锁检查逻辑：确保正常工作的思维导图不被干扰
     const renderLockKey = 'markmap-rendering-in-progress';
+    
+    // 检查是否有正常工作的思维导图组件
+    const workingMarkmaps = document.querySelectorAll('.markmap-component-wrapper, .markmap-rendered');
+    let hasWorkingMarkmap = false;
+    
+    workingMarkmaps.forEach(el => {
+      const svgElement = el.querySelector('svg');
+      if (svgElement && svgElement.getBoundingClientRect().width > 0) {
+        hasWorkingMarkmap = true;
+      }
+    });
+    
+    // 如果有正常工作的思维导图，且渲染锁定，跳过渲染
+    if ((window as any)[renderLockKey] && hasWorkingMarkmap) {
+      console.log('已有正常工作的思维导图，跳过重复渲染');
+      return;
+    }
+    
+    // 如果渲染锁定时间过长，强制释放
     if ((window as any)[renderLockKey]) {
-      console.log('已有思维导图渲染进程，检查锁定时间');
-      // 如果锁定时间超过3秒，强制释放锁
       if (Date.now() - ((window as any)['markmap-lock-time'] || 0) > 3000) {
         console.log('检测到锁定时间超过3秒，强制释放锁');
+        (window as any)[renderLockKey] = false;
+      } else if (!hasWorkingMarkmap) {
+        console.log('没有正常工作的思维导图，允许重新渲染');
         (window as any)[renderLockKey] = false;
       } else {
         console.log('跳过本次渲染，等待现有渲染完成');
@@ -926,15 +982,31 @@ export const renderMarkMaps = async () => {
     const renderedMaps = new Set<string>();
     
     try {
-      // 简化清理逻辑，只移除组件实例，不做大量DOM操作
+      // 改进清理逻辑：只清理损坏的或无效的思维导图组件
       const existingMarkmaps = document.querySelectorAll('.markmap-component-wrapper, .markmap-rendered');
-      if (existingMarkmaps.length > 0) {
-        console.log(`移除${existingMarkmaps.length}个已存在的思维导图组件，重新渲染`);
-        existingMarkmaps.forEach(el => el.remove());
+      let removedCount = 0;
+      
+      existingMarkmaps.forEach(el => {
+        // 检查思维导图组件是否正常工作
+        const svgElement = el.querySelector('svg');
+        const hasValidSize = svgElement && svgElement.getBoundingClientRect().width > 0;
+        
+        // 只移除无效的思维导图组件
+        if (!hasValidSize) {
+          console.log('移除无效的思维导图组件');
+          el.remove();
+          removedCount++;
+        } else {
+          console.log('保留正常工作的思维导图组件');
+        }
+      });
+      
+      if (removedCount > 0) {
+        console.log(`移除了${removedCount}个无效的思维导图组件`);
       }
       
-      // 查找所有待处理的思维导图内容
-      const markdownBlocks = document.querySelectorAll('pre > code.language-markdown, pre > code.language-md, pre.markmap-to-process > code');
+      // 查找所有待处理的思维导图内容，排除已经被处理的
+      const markdownBlocks = document.querySelectorAll('pre > code.language-markdown:not(.markmap-processed), pre > code.language-md:not(.markmap-processed), pre > code.language-markmap:not(.markmap-processed), pre.markmap-to-process > code:not(.markmap-processed)');
       console.log(`找到${markdownBlocks.length}个可能包含思维导图的markdown代码块`);
       
       // 跟踪处理了多少个思维导图
@@ -968,8 +1040,17 @@ export const renderMarkMaps = async () => {
         }
         
         // 检查内容是否符合思维导图格式
-        if (isMindMapContent(code)) {
+        // 对于明确标识为 language-markmap 的代码块，直接认为是思维导图内容
+        const isMarkmap = block.classList.contains('language-markmap') || isMindMapContent(code);
+        
+        if (isMarkmap) {
           console.log('检测到思维导图内容，创建MarkMap组件');
+          
+          // 标记代码块和pre元素为已处理，避免重复处理
+          block.classList.add('markmap-processed');
+          block.setAttribute('data-markmap-processed', 'true');
+          preElement.classList.add('markmap-processed');
+          preElement.setAttribute('data-markmap-processed', 'true');
           
           // 标记为已处理
           if (elementId) {

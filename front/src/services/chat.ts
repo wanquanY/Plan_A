@@ -278,12 +278,29 @@ const processTextStream = async (
   const decoder = new TextDecoder();
   let buffer = '';
   let currentSessionId = sessionId || '';
+  let hasReceivedDone = false; // 追踪是否已收到完成信号
+  let lastActivityTime = Date.now(); // 追踪最后活动时间
+  const TIMEOUT_MS = 300000; // 5分钟超时
   
   // 🚀 性能优化：批量处理配置
   const BATCH_SIZE = 8192; // 8KB批处理大小
   const PARSE_INTERVAL = 16; // 16ms解析间隔
   let lastParseTime = 0;
   let pendingLines: string[] = [];
+
+  // 强制完成处理的函数
+  const forceComplete = (reason: string) => {
+    if (!hasReceivedDone) {
+      console.warn(`强制完成流式处理：${reason}`);
+      hasReceivedDone = true;
+      callback('', true, currentSessionId);
+    }
+  };
+
+  // 设置超时检测
+  const timeoutId = setTimeout(() => {
+    forceComplete('超时未收到完成信号');
+  }, TIMEOUT_MS);
 
   // 批量解析函数
   const batchParseLines = () => {
@@ -308,6 +325,8 @@ const processTextStream = async (
     while (true) {
       const { done, value } = await reader.read();
       
+      lastActivityTime = Date.now(); // 更新活动时间
+      
       if (done) {
         // 处理最后的缓冲区内容
         if (buffer.trim()) {
@@ -315,6 +334,14 @@ const processTextStream = async (
         }
         // 最终批量处理所有剩余行
         batchParseLines();
+        
+        // 确保发送完成信号
+        if (!hasReceivedDone) {
+          console.log('流式传输自然结束，发送完成信号');
+          hasReceivedDone = true;
+          callback('', true, currentSessionId);
+        }
+        
         console.log('流式传输完成，最终session_id:', currentSessionId);
         break;
       }
@@ -335,13 +362,23 @@ const processTextStream = async (
         batchParseLines();
       }
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('读取流时出错:', error);
+    forceComplete(`读取错误: ${error.message || '未知错误'}`);
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
   
   function processSSELine(line: string) {
-    if (!line || line === 'data: [DONE]') return;
+    if (!line || line === 'data: [DONE]') {
+      if (line === 'data: [DONE]' && !hasReceivedDone) {
+        console.log('收到 [DONE] 信号');
+        hasReceivedDone = true;
+        callback('', true, currentSessionId);
+      }
+      return;
+    }
     
     // 移除 'data: ' 前缀
     if (line.startsWith('data: ')) {
@@ -384,7 +421,9 @@ const processTextStream = async (
         }
         
         // 如果是完成状态
-        if (responseData.done) {
+        if (responseData.done && !hasReceivedDone) {
+          console.log('收到完成信号：done=true');
+          hasReceivedDone = true;
           callback(data, true, currentSessionId);
         }
       }
@@ -406,13 +445,21 @@ const processTextStream = async (
             if (data.session_id) {
               currentSessionId = data.session_id;
             }
-            callback('', true, currentSessionId);
+            if (!hasReceivedDone) {
+              console.log('收到完成信号：type=complete');
+              hasReceivedDone = true;
+              callback('', true, currentSessionId);
+            }
             break;
           case 'error':
             if (data.session_id) {
               currentSessionId = data.session_id;
             }
-            callback(data.error || '发生未知错误', true, currentSessionId);
+            if (!hasReceivedDone) {
+              console.log('收到错误信号，强制完成');
+              hasReceivedDone = true;
+              callback(data.error || '发生未知错误', true, currentSessionId);
+            }
             break;
         }
       }

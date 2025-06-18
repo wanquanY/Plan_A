@@ -6,6 +6,8 @@ export interface ToolCallStatus {
   name: string;
   status: 'preparing' | 'executing' | 'completed' | 'error';
   result?: string; // 添加工具调用结果字段
+  executionTime?: number;
+  progressMessage?: string;
 }
 
 export function useToolCallsStatus() {
@@ -67,37 +69,45 @@ export function useToolCallsStatus() {
   // 处理工具状态更新（从流式响应中）
   const handleToolStatus = (toolStatus: any) => {
     console.log('处理工具状态更新:', toolStatus);
-    const { type, tool_call_id, tool_name, status, result } = toolStatus;
+    const { type, tool_call_id, tool_name, status, result, execution_time, message } = toolStatus;
     
     console.log('当前工具调用列表（处理前）:', toolCalls.value.map(t => `${t.name}(${t.status})`));
     
-    if (type === 'tool_call_start' || type === 'tool_call_executing') {
-      // 添加新的工具调用或更新为执行中
-      if (type === 'tool_call_executing') {
-        // 如果是执行中状态，先检查是否已存在，不存在则添加
-        const existingTool = toolCalls.value.find(tool => tool.id === tool_call_id);
-        if (!existingTool) {
-          addToolCall(tool_call_id, tool_name, 'executing');
-          console.log('添加新的执行中工具:', tool_call_id, tool_name);
-        } else {
-          updateToolCallStatus(tool_call_id, 'executing');
-          console.log('更新工具状态为执行中:', tool_call_id);
-        }
+    if (type === 'tool_call_start') {
+      // 添加新的工具调用，状态为准备中
+      addToolCall(tool_call_id, tool_name, 'preparing');
+      console.log('添加新的准备中工具:', tool_call_id, tool_name);
+    } else if (type === 'tool_call_executing') {
+      // 更新为执行中状态，如果不存在则添加
+      const existingTool = toolCalls.value.find(tool => tool.id === tool_call_id);
+      if (!existingTool) {
+        addToolCall(tool_call_id, tool_name, 'executing');
+        console.log('添加新的执行中工具:', tool_call_id, tool_name);
       } else {
-        addToolCall(tool_call_id, tool_name, 'preparing');
-        console.log('添加新的准备中工具:', tool_call_id, tool_name);
+        updateToolCallStatus(tool_call_id, 'executing');
+        console.log('更新工具状态为执行中:', tool_call_id);
+      }
+      
+      // 更新执行时间和详细消息
+      const toolIndex = toolCalls.value.findIndex(tool => tool.id === tool_call_id);
+      if (toolIndex !== -1) {
+        toolCalls.value[toolIndex].executionTime = execution_time;
+        toolCalls.value[toolIndex].progressMessage = message || '正在执行中...';
+        console.log(`工具 ${tool_name} 执行时间: ${execution_time}s, 消息: ${message}`);
       }
     } else if (type === 'tool_call_completed') {
-      // 更新工具调用状态为完成，并保存结果
+      // 更新为完成状态
       updateToolCallStatus(tool_call_id, 'completed');
-      if (result) {
-        const tool = toolCalls.value.find(tool => tool.id === tool_call_id);
-        if (tool) {
-          tool.result = result;
-          console.log('保存工具调用结果:', tool_call_id, result.substring(0, 100) + '...');
-        }
-      }
       console.log('更新工具状态为完成:', tool_call_id);
+      
+      // 设置结果
+      const toolIndex = toolCalls.value.findIndex(tool => tool.id === tool_call_id);
+      if (toolIndex !== -1) {
+        toolCalls.value[toolIndex].result = result;
+        // 清除进度消息，显示完成状态
+        toolCalls.value[toolIndex].progressMessage = '执行完成';
+        console.log('设置工具结果和完成消息:', tool_call_id);
+      }
     } else if (type === 'tool_call_error') {
       // 更新工具调用状态为错误
       updateToolCallStatus(tool_call_id, 'error');
@@ -107,7 +117,7 @@ export function useToolCallsStatus() {
       console.log('所有工具处理完成，保持状态显示');
     }
     
-    console.log('当前工具调用状态（处理后）:', toolCalls.value.map(t => `${t.name}(${t.status})`));
+    console.log('当前工具调用列表（处理后）:', toolCalls.value.map(t => `${t.name}(${t.status})`));
     console.log('工具调用数组长度:', toolCalls.value.length);
   };
 

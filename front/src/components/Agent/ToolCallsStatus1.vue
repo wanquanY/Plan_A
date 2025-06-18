@@ -204,11 +204,26 @@ const getToolDisplayName = (toolName: string): string => {
 const getToolStatusText = (status: string): string => {
   const statusMap: Record<string, string> = {
     'preparing': '准备中...',
-    'executing': '执行中...',
+    'executing': '正在处理...',
     'completed': '执行完成',
     'error': '执行失败'
   };
   return statusMap[status] || status;
+};
+
+// 获取工具状态详细描述
+const getToolStatusDetails = (toolName: string, status: string): string => {
+  if (status === 'executing') {
+    const toolDetailsMap: Record<string, string> = {
+      'note_editor': '正在编辑笔记内容，请稍候...',
+      'note_reader': '正在读取笔记内容...',
+      'tavily_search': '正在搜索相关信息...',
+      'serper_search': '正在搜索相关信息...',
+      'default': '正在处理中，请稍候...'
+    };
+    return toolDetailsMap[toolName] || toolDetailsMap['default'];
+  }
+  return '';
 };
 
 // 获取进度条宽度

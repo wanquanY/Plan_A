@@ -134,7 +134,16 @@ const sendMessage = async () => {
       (content, done, conversationId, toolStatus, reasoningContent) => {
         // 处理工具状态更新
         if (toolStatus) {
+          console.log('🔧 [AgentChatBox] 接收到工具状态事件:', {
+            type: toolStatus.type,
+            tool_name: toolStatus.tool_name,
+            tool_call_id: toolStatus.tool_call_id,
+            status: toolStatus.status,
+            has_result: !!toolStatus.result
+          });
+          
           handleToolStatus(toolStatus);
+          console.log('🔧 [AgentChatBox] 工具状态处理完成');
         }
         
         // 处理思考内容

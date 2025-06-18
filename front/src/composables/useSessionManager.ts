@@ -160,6 +160,19 @@ export function useSessionManager() {
       // 记录当前用户消息内容
       currentUserMessageContent.value = data.content || '';
       
+      // 添加安全超时机制 - 如果6分钟后仍在响应中，强制重置状态
+      const safetyTimeoutId = setTimeout(() => {
+        if (sidebarIsAgentResponding.value) {
+          console.warn('[useSessionManager] 安全超时：6分钟后强制重置响应状态');
+          sidebarIsAgentResponding.value = false;
+          if (currentResponseController.value) {
+            currentResponseController.value.abort();
+            currentResponseController.value = null;
+          }
+          sidebarAgentResponse.value += '\n\n[响应超时，已自动停止]';
+        }
+      }, 360000); // 6分钟超时
+      
       // 获取笔记ID的值
       const noteIdValue = currentNoteId?.value;
       console.log('发送请求时的笔记ID:', noteIdValue);
@@ -281,6 +294,7 @@ export function useSessionManager() {
           console.log('流式响应完成');
           sidebarIsAgentResponding.value = false;
           currentResponseController.value = null; // 清空控制器引用
+          clearTimeout(safetyTimeoutId); // 清除安全超时
           
           // 注意：不再在末尾插入工具状态HTML，现在使用 contentChunks 系统
           
@@ -388,10 +402,12 @@ export function useSessionManager() {
       console.error('发送消息失败:', error);
       sidebarAgentResponse.value = `抱歉，AI助手出错了: ${error.message || '未知错误'}`;
       sidebarIsAgentResponding.value = false;
-      currentResponseController.value = null; // 清空控制器引用
-      currentResponseConversationId.value = null; // 清空当前响应的会话ID引用（异常）
-      currentUserMessageContent.value = ''; // 清空当前用户消息内容引用（异常）
-      throw error;
+      
+      // 清空当前响应的会话ID引用
+      currentResponseConversationId.value = null;
+      
+      // 清空当前用户消息内容引用
+      currentUserMessageContent.value = '';
     }
   };
 
@@ -580,6 +596,26 @@ export function useSessionManager() {
     }
   };
 
+  // 清理函数 - 用于清理状态和控制器
+  const cleanup = () => {
+    console.log('[useSessionManager] 执行清理操作');
+    
+    // 停止当前响应
+    if (currentResponseController.value) {
+      currentResponseController.value.abort();
+      currentResponseController.value = null;
+    }
+    
+    // 重置响应状态
+    sidebarIsAgentResponding.value = false;
+    
+    // 清空引用
+    currentResponseConversationId.value = null;
+    currentUserMessageContent.value = '';
+    
+    console.log('[useSessionManager] 清理操作完成');
+  };
+
   return {
     // 状态
     currentSessionId,
@@ -599,6 +635,7 @@ export function useSessionManager() {
     handleSidebarNavigateHistory,
     handleSidebarEditMessage,
     handleStopResponse,
-    fetchSessions
+    fetchSessions,
+    cleanup // 新增清理函数
   };
 } 

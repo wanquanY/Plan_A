@@ -554,13 +554,14 @@ class NoteEditorTool:
             from sqlalchemy import select, or_, and_
             
             # 确保在正确的异步上下文中执行数据库操作
-            api_logger.info(f"开始编辑笔记，参数: note_id={note_id}, edit_type={edit_type}")
+            api_logger.info(f"📝 步骤1/5: 开始编辑笔记，参数: note_id={note_id}, edit_type={edit_type}")
             
             # 获取用户权限
             user_id = None
             session_note_id = None
             if self.session_id:
                 try:
+                    api_logger.info(f"📝 步骤2/5: 正在获取会话信息...")
                     chat_stmt = select(Chat).where(Chat.public_id == self.session_id)
                     chat_result = await self.db_session.execute(chat_stmt)
                     chat = chat_result.scalar_one_or_none()
@@ -597,6 +598,7 @@ class NoteEditorTool:
             target_note = None
             
             try:
+                api_logger.info(f"📝 步骤3/5: 正在查找目标笔记...")
                 if note_id:
                     # 通过public_id查找笔记，需要转换为数据库ID
                     from backend.utils.id_converter import IDConverter
@@ -643,12 +645,18 @@ class NoteEditorTool:
             if not target_note:
                 return {"error": "未找到要编辑的笔记"}
             
+            api_logger.info(f"📝 成功找到目标笔记: {target_note.title}")
+            
             # 记录编辑前的状态
             original_content = target_note.content or ""
             original_title = target_note.title or ""
             target_note_id = target_note.public_id  # 使用public_id
             
+            # 提前保存可能需要的时间戳，避免在回滚后访问SQLAlchemy对象属性
+            target_note_updated_at = target_note.updated_at
+            
             # 执行编辑操作
+            api_logger.info(f"📝 步骤4/5: 正在执行编辑操作，类型: {edit_type}")
             new_content = original_content
             new_title = title if title is not None else original_title
             
@@ -733,16 +741,23 @@ class NoteEditorTool:
             if save_immediately:
                 # 提交更改到数据库
                 try:
+                    api_logger.info(f"📝 步骤5/5: 正在保存笔记到数据库...")
                     await self.db_session.commit()
+                    # 重新获取target_note对象以确保状态同步
                     await self.db_session.refresh(target_note)
+                    target_note_updated_at = target_note.updated_at  # 更新时间戳
                     api_logger.info(f"笔记 {target_note_id} 编辑已立即保存到数据库")
                 except Exception as e:
                     api_logger.error(f"提交数据库事务失败: {str(e)}", exc_info=True)
-                    await self.db_session.rollback()
+                    try:
+                        await self.db_session.rollback()
+                    except Exception as rollback_error:
+                        api_logger.error(f"回滚数据库事务失败: {str(rollback_error)}", exc_info=True)
                     return {"error": f"保存笔记失败: {str(e)}"}
             else:
                 # 预览模式：回滚数据库更改，但保留计算结果
                 try:
+                    api_logger.info(f"📝 步骤5/5: 生成预览内容（不保存到数据库）...")
                     await self.db_session.rollback()
                     api_logger.info(f"笔记 {target_note_id} 编辑为预览模式，未保存到数据库")
                 except Exception as e:
@@ -752,6 +767,8 @@ class NoteEditorTool:
             # 计算变化统计
             original_lines = original_content.split('\n')
             new_lines = new_content.split('\n')
+            
+            api_logger.info(f"📝 笔记编辑完成！原始内容: {len(original_content)}字符, 新内容: {len(new_content)}字符")
             
             result = {
                 "success": True,
@@ -767,7 +784,7 @@ class NoteEditorTool:
                     "new_lines": len(new_lines),
                     "title_changed": original_title != new_title
                 },
-                "updated_at": None if not save_immediately else (target_note.updated_at.isoformat() if hasattr(target_note, 'updated_at') and target_note.updated_at else None)
+                "updated_at": None if not save_immediately else (target_note_updated_at.isoformat() if target_note_updated_at else None)
             }
             
             # 如果是小的更改，显示预览
@@ -780,8 +797,12 @@ class NoteEditorTool:
         except Exception as e:
             api_logger.error(f"编辑笔记异常: {str(e)}", exc_info=True)
             try:
-                await self.db_session.rollback()
-                api_logger.info("已回滚数据库事务")
+                # 检查数据库会话状态，避免重复回滚
+                if self.db_session.in_transaction():
+                    await self.db_session.rollback()
+                    api_logger.info("已回滚数据库事务")
+                else:
+                    api_logger.info("数据库会话不在事务中，跳过回滚")
             except Exception as rollback_error:
                 api_logger.error(f"回滚数据库事务失败: {str(rollback_error)}", exc_info=True)
             return {"error": f"编辑笔记失败: {str(e)}"}

@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 import aiohttp
 import base64
+import asyncio
 
 from backend.schemas.chat import ChatRequest
 from backend.utils.logging import api_logger
@@ -38,7 +39,7 @@ class ChatStreamService:
         message_id: Optional[int] = None,
         interaction_flow: List[Dict[str, Any]] = None,
         user_id: Optional[int] = None,
-        max_iterations: int = 10  # 防止无限循环
+        max_iterations: int = 20  # 防止无限循环
     ):
         """
         递归处理工具调用，支持无限次调用（流式版本），并记录到交互流程中
@@ -50,10 +51,37 @@ class ChatStreamService:
         current_content = content
         current_tool_calls = tool_calls
         
+        # 记录工具调用历史，防止重复调用
+        tool_call_history = []
+        consecutive_failures = 0  # 连续失败计数
+        max_consecutive_failures = 3  # 最大连续失败次数
+        
         # 进行递归处理
         while current_tool_calls and iteration < max_iterations:
             iteration += 1
             api_logger.info(f"开始第 {iteration} 轮工具调用处理，共 {len(current_tool_calls)} 个工具调用")
+            
+            # 检测是否有重复的工具调用
+            current_tool_signature = []
+            for tc in current_tool_calls:
+                if tc is not None and tc.get('function'):
+                    signature = f"{tc['function']['name']}:{tc['function']['arguments']}"
+                    current_tool_signature.append(signature)
+            
+            # 检查是否与最近的工具调用重复
+            if tool_call_history and current_tool_signature == tool_call_history[-1]:
+                api_logger.warning(f"检测到重复的工具调用，停止处理：{current_tool_signature}")
+                break
+            
+            # 检查是否连续多次调用同一组工具
+            if len(tool_call_history) >= 3:
+                last_three = tool_call_history[-3:]
+                if all(sig == current_tool_signature for sig in last_three):
+                    api_logger.warning(f"检测到连续多次重复工具调用，停止处理：{current_tool_signature}")
+                    break
+            
+            # 记录当前工具调用
+            tool_call_history.append(current_tool_signature)
             
             # 验证工具调用参数的完整性
             valid_tool_calls = []
@@ -122,10 +150,25 @@ class ChatStreamService:
                     "id": tool_call_obj.id,
                     "name": tool_call_obj.function.name,
                     "arguments": json.loads(tool_call_obj.function.arguments),
-                    "status": "executing",
+                    "status": "preparing",  # 修改为preparing状态
                     "started_at": tool_call_start_time.isoformat()
                 }
                 interaction_flow.append(tool_call_record)
+                
+                # 发送工具调用开始状态
+                tool_status = {
+                    "type": "tool_call_start",
+                    "tool_call_id": tool_call_obj.id,
+                    "tool_name": tool_call_obj.function.name,
+                    "status": "preparing"
+                }
+                # 添加日志确认状态事件发送
+                api_logger.info(f"🚀 发送工具调用开始状态: {tool_call_obj.function.name} (ID: {tool_call_obj.id})")
+                # 统一使用四元组格式：(content, session_id, reasoning_content, tool_status)
+                yield ("", session_id, "", tool_status)
+                
+                # 立即发送一个空的内容响应，强制刷新异步生成器
+                yield ("", session_id, "", None)
                 
                 # 发送工具调用执行状态
                 tool_status = {
@@ -134,26 +177,101 @@ class ChatStreamService:
                     "tool_name": tool_call_obj.function.name,
                     "status": "executing"
                 }
+                # 添加日志确认状态事件发送
+                api_logger.info(f"⚙️ 发送工具调用执行状态: {tool_call_obj.function.name} (ID: {tool_call_obj.id})")
                 # 统一使用四元组格式：(content, session_id, reasoning_content, tool_status)
                 yield ("", session_id, "", tool_status)
+                
+                # 立即发送一个空的内容响应，强制刷新异步生成器
+                yield ("", session_id, "", None)
                 
                 # 执行单个工具调用（传递message_id关联到特定消息）
                 try:
                     # 获取agent的数据库ID，避免在handle_tool_calls中懒加载
-                    agent_db_id = agent.id if agent else None
+                    # 修复：避免在异步上下文中访问SQLAlchemy关系属性
+                    agent_db_id = getattr(agent, 'id', None) if agent else None
                     
-                    single_result, single_tool_data = await chat_tool_handler.handle_tool_calls(
-                        [tool_call_obj], 
-                        agent, 
-                        db,  # 传递数据库连接，保存工具调用记录
-                        session_id,
-                        message_id=message_id,  # 关联到特定消息
-                        user_id=user_id,  # 传递用户ID
-                        agent_id=agent_db_id  # 传递agent_id，避免懒加载
-                    )
+                    # 更新交互流程中的工具调用记录为执行中
+                    tool_call_record["status"] = "executing"
+                    
+                    # 创建异步任务来执行工具调用
+                    async def execute_tool():
+                        return await chat_tool_handler.handle_tool_calls(
+                            [tool_call_obj], 
+                            agent, 
+                            db,  # 传递数据库连接，保存工具调用记录
+                            session_id,
+                            message_id=message_id,  # 关联到特定消息
+                            user_id=user_id,  # 传递用户ID
+                            agent_id=agent_db_id  # 传递agent_id，避免懒加载
+                        )
+                    
+                    # 状态更新任务
+                    async def send_progress_updates():
+                        execution_time = 0
+                        while True:
+                            await asyncio.sleep(1)  # 每秒发送一次执行状态
+                            execution_time += 1
+                            
+                            # 发送持续的执行状态更新
+                            progress_status = {
+                                "type": "tool_call_executing",
+                                "tool_call_id": tool_call_obj.id,
+                                "tool_name": tool_call_obj.function.name,
+                                "status": "executing",
+                                "execution_time": execution_time,
+                                "message": f"工具正在执行中... ({execution_time}s)"
+                            }
+                            yield ("", session_id, "", progress_status)
+                            
+                            # 为执行时间较长的工具添加更详细的进度信息
+                            if tool_call_obj.function.name == "note_editor" and execution_time > 2:
+                                progress_status["message"] = f"正在编辑笔记内容，请稍候... ({execution_time}s)"
+                                yield ("", session_id, "", progress_status)
+                    
+                    # 同时运行工具执行和状态更新
+                    tool_task = asyncio.create_task(execute_tool())
+                    
+                    # 在工具执行期间持续发送状态更新
+                    execution_time = 0
+                    while not tool_task.done():
+                        try:
+                            # 等待1秒或工具完成
+                            await asyncio.wait_for(asyncio.shield(tool_task), timeout=1.0)
+                            break  # 工具执行完成
+                        except asyncio.TimeoutError:
+                            # 超时，发送进度更新
+                            execution_time += 1
+                            progress_status = {
+                                "type": "tool_call_executing",
+                                "tool_call_id": tool_call_obj.id,
+                                "tool_name": tool_call_obj.function.name,
+                                "status": "executing",
+                                "execution_time": execution_time,
+                                "message": f"工具正在执行中... ({execution_time}s)"
+                            }
+                            
+                            # 为不同工具添加特定的进度信息
+                            if tool_call_obj.function.name == "note_editor":
+                                if execution_time <= 2:
+                                    progress_status["message"] = f"正在分析笔记内容... ({execution_time}s)"
+                                elif execution_time <= 4:
+                                    progress_status["message"] = f"正在处理编辑操作... ({execution_time}s)"
+                                else:
+                                    progress_status["message"] = f"正在保存笔记更改... ({execution_time}s)"
+                            elif tool_call_obj.function.name == "note_reader":
+                                progress_status["message"] = f"正在读取笔记内容... ({execution_time}s)"
+                            
+                            yield ("", session_id, "", progress_status)
+                    
+                    # 获取工具执行结果
+                    single_result, single_tool_data = await tool_task
                     
                     # 收集工具结果
                     tool_results.extend(single_result)
+                    
+                    # 重置连续失败计数（工具执行成功）
+                    consecutive_failures = 0
                     
                     # 更新交互流程中的工具调用记录
                     tool_call_end_time = datetime.now()
@@ -170,6 +288,8 @@ class ChatStreamService:
                         "status": "completed",
                         "result": tool_result_content
                     }
+                    # 添加日志确认状态事件发送
+                    api_logger.info(f"✅ 发送工具调用完成状态: {tool_call_obj.function.name} (ID: {tool_call_obj.id}), 结果长度: {len(tool_result_content)}")
                     # 统一使用四元组格式：(content, session_id, reasoning_content, tool_status)
                     yield ("", session_id, "", tool_status)
                     
@@ -268,6 +388,9 @@ class ChatStreamService:
                     tool_call_record["completed_at"] = tool_call_end_time.isoformat()
                     tool_call_record["error"] = str(e)
                     
+                    # 更新连续失败计数
+                    consecutive_failures += 1
+                    
                     # 发送工具调用失败状态
                     tool_status = {
                         "type": "tool_call_failed",
@@ -277,6 +400,11 @@ class ChatStreamService:
                         "error": str(e)
                     }
                     yield ("", session_id, "", tool_status)
+                    
+                    # 如果连续失败次数过多，也要结束整个循环
+                    if consecutive_failures >= max_consecutive_failures:
+                        api_logger.warning(f"连续工具调用失败 {consecutive_failures} 次，结束所有工具处理")
+                        break
                     
                     # 跳过这个工具，继续下一个
                     tool_index += 1
