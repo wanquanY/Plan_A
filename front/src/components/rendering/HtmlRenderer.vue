@@ -63,17 +63,13 @@ const renderContent = () => {
   if (iframeRef.value && iframeRef.value.contentWindow) {
     const doc = iframeRef.value.contentWindow.document;
     doc.open();
-    doc.write(`
-      <html>
-        <head>
-          <style>${scrollbarStyle}</style>
-        </head>
-        <body>
-          ${props.htmlContent}
-        </body>
-      </html>
-    `);
+    doc.write(props.htmlContent);
     doc.close();
+
+    // 添加样式
+    const style = doc.createElement('style');
+    style.textContent = scrollbarStyle;
+    doc.head.appendChild(style);
   }
 };
 
